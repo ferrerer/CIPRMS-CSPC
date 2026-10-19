@@ -5,6 +5,7 @@ const compression = require('compression');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const net = require('net');
 const session = require('express-session');
 const passport = require('passport');
 const bcrypt = require('bcrypt');
@@ -6214,13 +6215,29 @@ async function logActivity(db, user, action, record, extra) {
   }
 }
 
-// Client IP for audit records. `app.set('trust proxy', 1)` (see near the top of this file) tells Express to
-// trust exactly the one hop in front of it (this app's own reverse proxy / platform load balancer) and parse
-// `X-Forwarded-For` only up to that hop — req.ip then already resolves to the real originating client address
-// rather than a header any client could forge by sending their own X-Forwarded-For directly. Using req.ip here
-// (instead of re-reading the header directly) is exactly what that trust-proxy setting exists for.
+// Client IP for audit records AND for every IP-scope lockout key (services/loginLockoutService.js). `app.set
+// ('trust proxy', 1)` (see near the top of this file) tells Express to trust exactly the one hop in front of
+// it (this app's own reverse proxy / platform load balancer) and parse `X-Forwarded-For` only up to that hop
+// — req.ip then already resolves to the real originating client address rather than a header any client
+// could forge by sending their own X-Forwarded-For directly. Using req.ip here (instead of re-reading the
+// header directly) is exactly what that trust-proxy setting exists for.
+//
+// Normalized to plain IPv4 when req.ip is the IPv4-mapped-IPv6 form (2026-10 lockout-bypass fix): Node can
+// represent the SAME real client as either "1.2.3.4" or "::ffff:1.2.3.4" depending on connection-level
+// details outside this app's control — proven directly in this project's own environment (test/helpers.js's
+// TEST_LOOPBACK_IPS lists all 3 forms ['::1', '::ffff:127.0.0.1', '127.0.0.1'] observed for ONE loopback
+// connection). Without normalizing, services/loginLockoutService.js would key the SAME real IP's failures
+// under two different strings, splitting what should be one shared lockout — reproduced directly: 5 failures
+// recorded under "127.0.0.1" left "::ffff:127.0.0.1" reporting not-locked. Only a well-formed IPv4-mapped
+// form is rewritten (net.isIPv4 validates the extracted octets, not just the string shape) — a genuine IPv6
+// address, or req.ip's own null/missing case, passes through completely unchanged. trust proxy itself is
+// untouched; this only canonicalizes the value Express already resolved.
 function getClientIp(req) {
-  return (req && req.ip) || null;
+  const ip = req && req.ip;
+  if (!ip) return null;
+  const match = /^::ffff:(.+)$/i.exec(ip);
+  if (match && net.isIPv4(match[1])) return match[1];
+  return ip;
 }
 
 // Capped to a sane length — User-Agent is client-supplied and unbounded; a hostile or malformed client

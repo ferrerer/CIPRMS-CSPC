@@ -307,6 +307,85 @@ describe('IP extraction depends on exactly one trusted hop in front of this proc
   }, 30000);
 });
 
+// IPv4-mapped-IPv6 normalization (2026-10 lockout-bypass fix). Root cause: Node/Express can represent the
+// SAME real client as either "1.2.3.4" or "::ffff:1.2.3.4" depending on connection-level details outside
+// this app's control (already proven in this project's own environment — see test/helpers.js's
+// TEST_LOOPBACK_IPS, which lists all 3 forms observed for ONE loopback connection). getClientIp() (cirl.js)
+// now rewrites the mapped form down to plain IPv4 before it is ever used as a lockout key, so both forms of
+// the same real address always share one lockout — reproduced directly beforehand: 5 failures recorded
+// under "127.0.0.1" left "::ffff:127.0.0.1" reporting not-locked under the old, unnormalized code.
+// X-Forwarded-For spoofing (same technique as the describe block above) is how these tests control exactly
+// what Express resolves req.ip to, since this is a direct, no-real-proxy-in-front test connection.
+describe('getClientIp() normalizes the IPv4-mapped-IPv6 form so both representations of one real address share a lockout', () => {
+  test('5 failures under plain IPv4 also lock the IPv4-mapped-IPv6 form of the SAME address', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      await clearLockouts(['127.0.0.1', '::ffff:127.0.0.1']);
+      for (let i = 0; i < 5; i++) {
+        await agent.get('/auth/google/callback').set('X-Forwarded-For', '127.0.0.1').set('x-test-google-email', uniqueEmail('normA'));
+      }
+      const sixth = await agent.get('/auth/google/callback').set('X-Forwarded-For', '::ffff:127.0.0.1').set('x-test-google-email', uniqueEmail('normA-6'));
+      expect(sixth.status).toBe(429);
+
+      // The stored key is the NORMALIZED form — confirms getClientIp() rewrote it before ever reaching the
+      // service, not merely that the two happen to collide some other way.
+      const docs = await db.collection('loginLockouts').find({ scope: 'ip', key: { $in: ['127.0.0.1', '::ffff:127.0.0.1'] } }).toArray();
+      expect(docs).toHaveLength(1);
+      expect(docs[0].key).toBe('127.0.0.1');
+    });
+  }, 30000);
+
+  test('reverse direction: 5 failures under the IPv4-mapped-IPv6 form also lock the plain IPv4 form', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      await clearLockouts(['127.0.0.1', '::ffff:127.0.0.1']);
+      for (let i = 0; i < 5; i++) {
+        await agent.get('/auth/google/callback').set('X-Forwarded-For', '::ffff:127.0.0.1').set('x-test-google-email', uniqueEmail('normB'));
+      }
+      const sixth = await agent.get('/auth/google/callback').set('X-Forwarded-For', '127.0.0.1').set('x-test-google-email', uniqueEmail('normB-6'));
+      expect(sixth.status).toBe(429);
+
+      const docs = await db.collection('loginLockouts').find({ scope: 'ip', key: { $in: ['127.0.0.1', '::ffff:127.0.0.1'] } }).toArray();
+      expect(docs).toHaveLength(1);
+      expect(docs[0].key).toBe('127.0.0.1'); // normalized even though every failure arrived in the mapped form
+    });
+  }, 30000);
+
+  test('native (non-mapped) IPv4 addresses are never rewritten and continue to be tracked independently', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      const ipA = '203.0.113.21', ipB = '203.0.113.22';
+      await clearLockouts([ipA, ipB]);
+      for (let i = 0; i < 5; i++) {
+        await agent.get('/auth/google/callback').set('X-Forwarded-For', ipA).set('x-test-google-email', uniqueEmail('nativeA'));
+      }
+      // A different real IPv4 address must NOT be caught up in ipA's lockout — proves normalization only
+      // rewrites the mapped form, never collapses genuinely distinct addresses together.
+      const otherIpAttempt = await agent.get('/auth/google/callback').set('X-Forwarded-For', ipB).set('x-test-google-email', uniqueEmail('nativeB'));
+      expect(otherIpAttempt.status).not.toBe(429);
+
+      const docA = await db.collection('loginLockouts').findOne({ scope: 'ip', key: ipA });
+      expect(docA.key).toBe(ipA); // stored exactly as submitted, not altered
+    });
+  }, 30000);
+
+  test('a genuine (non-mapped) IPv6 address is never rewritten and is tracked on its own', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      const genuineIpv6 = '2001:db8::4a2b';
+      await clearLockouts([genuineIpv6]);
+      for (let i = 0; i < 5; i++) {
+        await agent.get('/auth/google/callback').set('X-Forwarded-For', genuineIpv6).set('x-test-google-email', uniqueEmail('ipv6'));
+      }
+      const doc = await db.collection('loginLockouts').findOne({ scope: 'ip', key: genuineIpv6 });
+      expect(doc).toBeTruthy();
+      expect(doc.key).toBe(genuineIpv6); // untouched — not mistaken for the IPv4-mapped form
+      expect(doc.lockedUntil).toBeTruthy();
+    });
+  }, 30000);
+
+});
+
 describe('Progressive escalation is preserved end to end through the real route (not just the service in isolation)', () => {
   // 30s — 10 sequential real HTTP+MongoDB round trips plus two direct DB operations; same cross-suite
   // timing margin as the two tests above.

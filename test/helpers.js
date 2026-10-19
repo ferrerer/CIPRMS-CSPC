@@ -18,15 +18,16 @@ const TEST_TAG = 'jesttest';
 //   - TEST_LOOPBACK_IPS: what Express's req.ip resolves to for an in-process supertest connection (confirmed
 //     against every file that calls request(app) directly) — a real client, routed through Render's actual
 //     proxy chain (app.set('trust proxy', 1)), can never present as one of these.
-//   - TEST_SPOOFED_IPS: the exact 3 literal addresses test/google-oauth-rate-limit.test.js's own "IP
-//     extraction depends on exactly one trusted hop" describe block spoofs via X-Forwarded-For — drawn from
-//     RFC 5737 TEST-NET-3 (203.0.113.0/24), reserved by IANA specifically for documentation/example use and
-//     never routable as a real address anywhere.
+//   - TEST_SPOOFED_IPS: the literal addresses test/google-oauth-rate-limit.test.js's own "IP extraction
+//     depends on exactly one trusted hop" and "getClientIp() normalizes the IPv4-mapped-IPv6 form" describe
+//     blocks spoof via X-Forwarded-For — drawn from RFC 5737 TEST-NET-3 (203.0.113.0/24, IPv4) and RFC 3849
+//     (2001:db8::/32, IPv6), both reserved by IANA specifically for documentation/example use and never
+//     routable as a real address anywhere.
 // Matching on this exact, finite list — combined with restricting to the specific auth-flow action types
 // below — is an exact-value correlation to code that only exists in this test suite, not a resemblance
 // heuristic on `by`/`email`/IP shape.
 const TEST_LOOPBACK_IPS = ['::1', '::ffff:127.0.0.1', '127.0.0.1'];
-const TEST_SPOOFED_IPS = ['203.0.113.10', '203.0.113.11', '203.0.113.12'];
+const TEST_SPOOFED_IPS = ['203.0.113.10', '203.0.113.11', '203.0.113.12', '203.0.113.21', '203.0.113.22', '2001:db8::4a2b'];
 const TEST_IPS = [...TEST_LOOPBACK_IPS, ...TEST_SPOOFED_IPS];
 const TEST_AUTH_FLOW_ACTIONS = ['GOOGLE_AUTH_INITIATED', 'GOOGLE_AUTH_CALLBACK', 'LOGIN_FAILED', 'LOGIN_BLOCKED', 'LOGIN_SUCCESS'];
 
