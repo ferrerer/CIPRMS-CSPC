@@ -182,7 +182,23 @@ const PASSWORD_ACCOUNT_SCOPE = 'account-password';
 
 async function checkSignInLockout(req, res, scope, key, identifierForAudit, method) {
   if (process.env.NODE_ENV === 'test') return false;
+  // TEMPORARY DIAGNOSTIC (2026-10) — remove once the reported "authorized account still gets in during an
+  // active IP lockout" issue is confirmed fixed in production. Logs only what's needed to see whether
+  // req.ip/X-Forwarded-For are resolving consistently across requests from what should be the same real
+  // client. reqId (req.sessionID — already the established correlation id this file's own logActivity()
+  // calls use elsewhere, e.g. `requestId: req.sessionID || null`) lets two log lines from the SAME request
+  // be matched without needing anything more identifying. Never logs an email, a credential, a cookie value,
+  // or a database connection string. The raw X-Forwarded-For line is included because this investigation's
+  // actual open question is whether Render's real proxy chain has more than the one hop `trust proxy: 1`
+  // assumes — req.ip alone (the already-resolved value) cannot show that, only the full header can; pending
+  // your explicit approval before this is deployed, per your own review request.
+  if (scope === 'ip') {
+    console.log(`[lockout-diag] reqId=${req.sessionID || null} scope=ip key=${key} xff=${JSON.stringify(req.headers['x-forwarded-for'] || null)} reqIp=${req.ip}`);
+  }
   const status = await loginLockoutService.getLockoutStatus(getDb(), scope, key);
+  if (scope === 'ip') {
+    console.log(`[lockout-diag] reqId=${req.sessionID || null} scope=ip key=${key} locked=${status.locked}${status.locked ? ' retryAfterSeconds=' + status.retryAfterSeconds : ''}`);
+  }
   if (!status.locked) return false;
   const attemptedId = safeLoginIdentifier(identifierForAudit);
   await logActivity(getDb(), null, 'LOGIN_BLOCKED', `Sign-in rate-limited${attemptedId ? ' for ' + attemptedId : ''}`,
