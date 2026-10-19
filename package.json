@@ -10,7 +10,9 @@
   "scripts": {
     "start": "node cirl.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:db:up": "docker run -d --name ciprms-mongo-test -p 127.0.0.1:27018:27017 mongo:7",
+    "test:db:down": "docker rm -f ciprms-mongo-test"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

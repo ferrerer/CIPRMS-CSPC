@@ -2,13 +2,17 @@
 // suite (`npm test`), which never touches a real browser. Run with `npm run test:e2e`.
 //
 // Drives a disposable server on its own port (3999, matching this project's established safe pattern for
-// throwaway test servers — never the real dev server on 3000) against the SAME real MONGO_URI every other
-// test in this project uses (there is no separate test database); every spec under test/e2e is responsible
-// for tagging and cleaning up whatever it creates, the same discipline test/helpers.js's cleanupAll()
-// already enforces for the Jest suite.
+// throwaway test servers — never the real dev server on 3000) against the same dedicated local TEST database
+// the Jest suite uses (2026-10 authentication hardening, Phase 0 — this used to inherit the real MONGO_URI
+// from .env). resolveTestDatabaseUri() throws before any server starts if that URI is not a loopback
+// mongodb:// database whose name ends in "_test", and db.js refuses it again on its own under NODE_ENV=test.
+// Specs still tag and clean up whatever they create, the same discipline test/helpers.js's cleanupAll()
+// enforces for the Jest suite.
 const { defineConfig } = require('@playwright/test');
+const { resolveTestDatabaseUri } = require('./services/testDatabaseGuard');
 
 const PORT = 3999;
+const TEST_MONGO_URI = resolveTestDatabaseUri(process.env);
 
 module.exports = defineConfig({
   testDir: './test/e2e',
@@ -29,6 +33,7 @@ module.exports = defineConfig({
     env: {
       PORT: String(PORT),
       NODE_ENV: 'test',
+      MONGO_URI: TEST_MONGO_URI,
       // Same safe-collection convention test/setup-env.js enforces for the Jest suite — this server must
       // never read/write the organization's real Google Calendar/Docs connection.
       GOOGLE_CALENDAR_INTEGRATION_COLLECTION: 'jesttest_googleCalendarIntegration',

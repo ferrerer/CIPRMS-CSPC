@@ -28,10 +28,19 @@ jest.mock('passport', () => ({
       const testEmail = req.headers['x-test-google-email'];
       if (!testEmail) return callback(null, false, { message: 'no test identity supplied' });
       const testPhoto = req.headers['x-test-google-photo'];
+      // x-test-google-email-verified (2026-10 authentication hardening): 'false' → verified:false,
+      // 'missing' → no verified key at all (an older/unusual Google profile shape), anything else/absent →
+      // verified:true, so every pre-existing test in this file (none of which sets this header) keeps
+      // getting a verified profile unchanged.
+      const verifiedHeader = req.headers['x-test-google-email-verified'];
+      const emailEntry = { value: testEmail };
+      if (verifiedHeader === 'missing') { /* leave .verified unset */ }
+      else if (verifiedHeader === 'false') emailEntry.verified = false;
+      else emailEntry.verified = true;
       return callback(null, {
         id: 'test-google-id-' + testEmail,
         displayName: req.headers['x-test-google-name'] || 'Test Google User',
-        emails: [{ value: testEmail }],
+        emails: [emailEntry],
         ...(testPhoto ? { photos: [{ value: testPhoto }] } : {})
       }, null);
     };
@@ -153,6 +162,43 @@ describe('Google OAuth allowlist — /auth/google/callback', () => {
 
     const created = await db.collection('users').findOne({ email });
     expect(created).toBeNull();
+  });
+});
+
+// Google's own email_verified claim (2026-10 authentication hardening): signing in with an email Google has
+// NOT itself confirmed belongs to this account must never be trusted, even for an otherwise-real, allowlisted
+// CIPRMS user — it is rejected before the allowlist lookup ever runs, so it reads identically to
+// "not authorized" from the outside, and never creates a session.
+describe('Google sign-in requires emails[0].verified === true', () => {
+  test('verified: false is rejected with a generic message, even for a real allowlisted account', async () => {
+    const user = await createTestUser({ role: 'Staff' });
+    const agent = request.agent(app);
+    const res = await agent.get('/auth/google/callback').set('x-test-google-email', user.email).set('x-test-google-email-verified', 'false');
+    expect(res.status).toBe(200); // re-rendered sign-in page with an error, not a redirect into the app
+    expect(res.text).toMatch(/could not be verified/i);
+    expect(res.text).not.toMatch(/not authorized to access CIPRMS/i); // a different, specific message — not reused verbatim from the allowlist-rejection path
+
+    const meRes = await agent.get('/api/me');
+    expect(meRes.status).toBe(302); // no session was created
+  });
+
+  test('a missing verified field entirely (an older/unusual profile shape) is treated the same as false, not assumed true', async () => {
+    const user = await createTestUser({ role: 'Administrator' });
+    const agent = request.agent(app);
+    const res = await agent.get('/auth/google/callback').set('x-test-google-email', user.email).set('x-test-google-email-verified', 'missing');
+    expect(res.status).toBe(200);
+    expect(res.text).toMatch(/could not be verified/i);
+
+    const meRes = await agent.get('/api/me');
+    expect(meRes.status).toBe(302);
+  });
+
+  test('verified: true (the normal case) signs in exactly as before — this requirement never blocks a real verified account', async () => {
+    const user = await createTestUser({ role: 'Staff' });
+    const agent = request.agent(app);
+    const res = await agent.get('/auth/google/callback').set('x-test-google-email', user.email).set('x-test-google-email-verified', 'true');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/staff/dashboard');
   });
 });
 

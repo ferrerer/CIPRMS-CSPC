@@ -18,6 +18,16 @@ if (!uri) {
   uri = LOCAL_FALLBACK_URI;
   console.warn(`⚠️  MONGO_URI is not set — using the local development fallback (${LOCAL_FALLBACK_URI}) because NODE_ENV=${NODE_ENV}.`);
 }
+// 2026-10 authentication hardening, Phase 0: an automated test run (Jest sets JEST_WORKER_ID; the Playwright
+// server is started with NODE_ENV=test) may only ever touch a dedicated local test database. Before this, the
+// suites simply inherited the real MONGO_URI from .env and wrote to the shared database. Fails closed: a test
+// process with any other URI refuses to load this module at all. The URI itself is never printed.
+if (NODE_ENV === 'test' || process.env.JEST_WORKER_ID) {
+  const { isSafeTestDatabaseUri } = require('./services/testDatabaseGuard');
+  if (!isSafeTestDatabaseUri(uri)) {
+    throw new Error('Refusing to connect: test runs may only use a local MongoDB database whose name ends in "_test" (see services/testDatabaseGuard.js).');
+  }
+}
 let client;
 let db;
 

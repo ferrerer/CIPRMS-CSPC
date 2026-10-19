@@ -38,7 +38,10 @@ jest.mock('passport', () => ({
       if (!callback) return res.redirect('/');
       const testEmail = req.headers['x-test-google-email'];
       if (!testEmail) return callback(null, false, { message: 'no test identity supplied' });
-      return callback(null, { id: 'test-google-id-' + testEmail, displayName: 'Test Google User', emails: [{ value: testEmail }] }, null);
+      // verified: true by default (2026-10 authentication hardening added this requirement to the real
+      // callback) — every test in this file is about rate-limiting/escalation, not verification, and none
+      // of them sets this header, so they must keep getting a verified profile unchanged.
+      return callback(null, { id: 'test-google-id-' + testEmail, displayName: 'Test Google User', emails: [{ value: testEmail, verified: true }] }, null);
     };
   }
 }));
@@ -282,7 +285,7 @@ describe('IP extraction depends on exactly one trusted hop in front of this proc
       }
       const docs = await db.collection('loginLockouts').find({ scope: 'ip', key: { $in: spoofedIps } }).toArray();
       expect(docs).toHaveLength(spoofedIps.length); // each spoofed value was tracked as its own distinct key
-      docs.forEach((doc) => expect(doc.failCount).toBe(1));
+      docs.forEach((doc) => expect(doc.recentFailures).toHaveLength(1));
     });
   });
 
@@ -307,15 +310,15 @@ describe('IP extraction depends on exactly one trusted hop in front of this proc
 describe('Progressive escalation is preserved end to end through the real route (not just the service in isolation)', () => {
   // 30s — 10 sequential real HTTP+MongoDB round trips plus two direct DB operations; same cross-suite
   // timing margin as the two tests above.
-  test('a second lockout for the same IP, after the first expires, is the 5-minute tier — not reset back to 1 minute', async () => {
+  test('a second lockout for the same IP, after the first expires, is the 01:45 tier — not reset back to 00:45', async () => {
     await withRealLockout(async () => {
       const agent = request.agent(app);
       await clearLockouts(['::1', '::ffff:127.0.0.1', '127.0.0.1']);
       for (let i = 0; i < 5; i++) {
         await agent.get('/auth/google/callback').set('x-test-google-email', uniqueEmail('oauthescalate'));
       }
-      // Simulate the first (1-minute) lockout having already expired, the same safe technique
-      // test/login-lockout.test.js uses — no real 60-second wait needed to prove the schedule.
+      // Simulate the first (00:45) lockout having already expired, the same safe technique
+      // test/login-lockout.test.js uses — no real wait needed to prove the schedule.
       await db.collection('loginLockouts').updateMany({ scope: 'ip', key: { $in: ['::1', '::ffff:127.0.0.1', '127.0.0.1'] } }, { $set: { lockedUntil: new Date(Date.now() - 1000) } });
 
       for (let i = 0; i < 5; i++) {
@@ -323,8 +326,8 @@ describe('Progressive escalation is preserved end to end through the real route 
       }
       const doc = await db.collection('loginLockouts').findOne({ scope: 'ip', key: { $in: ['::1', '::ffff:127.0.0.1', '127.0.0.1'] }, lockedUntil: { $ne: null } });
       expect(doc).toBeTruthy();
-      const minutes = Math.round((new Date(doc.lockedUntil).getTime() - Date.now()) / 60000);
-      expect(minutes).toBe(5);
+      const seconds = Math.round((new Date(doc.lockedUntil).getTime() - Date.now()) / 1000);
+      expect(seconds).toBe(105);
     });
   }, 30000);
 });

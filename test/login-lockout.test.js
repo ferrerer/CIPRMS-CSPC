@@ -1,5 +1,5 @@
 // services/loginLockoutService.js — the progressive sign-in lockout behind POST /login and the Google
-// OAuth routes (2026-11 Google-only sign-in / progressive rate limiting).
+// OAuth routes, and the 2026-10 authentication hardening rolling-15-minute-window redesign of it.
 //
 // cirl.js's own wiring (checkSignInLockout/recordSignInFailure/recordSignInSuccess) is bypassed entirely
 // under NODE_ENV=test — the same reason the old flat limiters were (this suite's many independent logins,
@@ -7,11 +7,9 @@
 // fail unrelated tests; see test/brute-force-protection.test.js's own header comment). That bypass means
 // the real HTTP route can never be used to test the lockout's actual trip/escalate/expire/decay behavior
 // inside this process. This file tests the SERVICE directly instead — no HTTP, no cirl.js, no NODE_ENV
-// bypass — against the real test MongoDB, with time-sensitive states (an already-expired lockout, a
-// decayed tier) created by writing the stored timestamps directly rather than waiting real wall-clock
-// minutes. The real HTTP route wiring (5 wrong passwords → 429, Google routes also blocked, recovery after
-// the real 60-second wait) was verified live against a real, non-test-mode server — see the chat response
-// for that result, not claimed as Jest coverage here.
+// bypass — against the real guarded test database, with time-sensitive states (an already-expired lockout,
+// a decayed tier, a failure that has aged out of the rolling window) created by writing the stored
+// timestamps/arrays directly rather than waiting real wall-clock minutes.
 const { connectDB, closeDB, getDb } = require('../db');
 const svc = require('../services/loginLockoutService');
 
@@ -39,16 +37,15 @@ describe('Reaching the limit triggers a lockout; staying under it never does', (
     expect((await svc.getLockoutStatus(db, SCOPE, key)).locked).toBe(false);
   });
 
-  test(`the MAX_ATTEMPTS-th (${svc.MAX_ATTEMPTS}th) consecutive failure locks the key for the first tier's duration (1 minute)`, async () => {
+  test(`the MAX_ATTEMPTS-th (${svc.MAX_ATTEMPTS}th) consecutive failure locks the key for the first tier's duration (00:45)`, async () => {
     const key = uniqueKey('fifth-fail');
     let result;
     for (let i = 0; i < svc.MAX_ATTEMPTS; i++) result = await svc.recordFailure(db, SCOPE, key);
     expect(result.locked).toBe(true);
-    expect(result.retryAfterSeconds).toBeGreaterThan(0);
-    expect(result.retryAfterSeconds).toBeLessThanOrEqual(60);
+    expect(result.retryAfterSeconds).toBe(45);
     const status = await svc.getLockoutStatus(db, SCOPE, key);
     expect(status.locked).toBe(true);
-    expect(status.retryAfterSeconds).toBeLessThanOrEqual(60);
+    expect(status.retryAfterSeconds).toBe(45);
   });
 });
 
@@ -64,59 +61,126 @@ describe('A sixth attempt while locked is still blocked, and the lockout expires
     const key = uniqueKey('expired');
     for (let i = 0; i < svc.MAX_ATTEMPTS; i++) await svc.recordFailure(db, SCOPE, key);
     expect((await svc.getLockoutStatus(db, SCOPE, key)).locked).toBe(true);
-    // Simulates real time having passed, the same way a live 60-second wait would — no fake timer needed
+    // Simulates real time having passed, the same way a live 45-second wait would — no fake timer needed
     // since the service always re-reads the stored timestamp rather than caching anything in memory.
     await db.collection('loginLockouts').updateOne({ scope: SCOPE, key }, { $set: { lockedUntil: new Date(Date.now() - 1000) } });
     expect((await svc.getLockoutStatus(db, SCOPE, key)).locked).toBe(false);
   });
 });
 
-describe('Repeated lockouts escalate: 1 → 5 → 15 → 30 → 60 minutes, then capped', () => {
+describe('Only failures within a rolling 15-minute window count toward the threshold (2026-10 authentication hardening)', () => {
+  test('4 failures older than the 15-minute window plus 1 fresh one do NOT lock — the stale ones have aged out', async () => {
+    const key = uniqueKey('rolling-stale');
+    const staleTimestamp = new Date(Date.now() - svc.ROLLING_WINDOW_MS - 60000); // 16 minutes ago
+    // Seed the document with 4 failures that are already outside the window, as if they happened long ago —
+    // written directly (not via 4 real recordFailure() calls) so the test controls their age precisely.
+    await db.collection('loginLockouts').updateOne(
+      { scope: SCOPE, key },
+      { $set: { recentFailures: [staleTimestamp, staleTimestamp, staleTimestamp, staleTimestamp], tier: 0, lockedUntil: null, lastFailureAt: staleTimestamp } },
+      { upsert: true }
+    );
+    const result = await svc.recordFailure(db, SCOPE, key); // the 5th failure overall, but only the 2nd within the window
+    expect(result.locked).toBe(false);
+    const doc = await db.collection('loginLockouts').findOne({ scope: SCOPE, key });
+    expect(doc.recentFailures).toHaveLength(1); // the 4 stale entries were filtered out, only the fresh one remains
+  });
+
+  test('4 failures still inside the window plus 1 fresh one DOES lock — they have not aged out', async () => {
+    const key = uniqueKey('rolling-fresh');
+    const recentTimestamp = new Date(Date.now() - 10 * 60 * 1000); // 10 minutes ago — inside the 15-minute window
+    await db.collection('loginLockouts').updateOne(
+      { scope: SCOPE, key },
+      { $set: { recentFailures: [recentTimestamp, recentTimestamp, recentTimestamp, recentTimestamp], tier: 0, lockedUntil: null, lastFailureAt: recentTimestamp } },
+      { upsert: true }
+    );
+    const result = await svc.recordFailure(db, SCOPE, key); // the 5th, and all 5 are within the window
+    expect(result.locked).toBe(true);
+    expect(result.retryAfterSeconds).toBe(45);
+  });
+
+  test('boundary (2026-10 Phase 1.1, made explicit): a failure just OUTSIDE 15 minutes ago does not count, one just INSIDE does', async () => {
+    // Deterministic via controlled timestamps, not a real 15-minute wait — no injectable clock exists on the
+    // service (recordFailure always calls `new Date()` internally), so a literal millisecond-exact boundary
+    // isn't reachable without one; a tight, fixed 500ms margin on each side of ROLLING_WINDOW_MS is enough to
+    // prove the documented half-open-interval decision (now-15m, now] without being racy against real DB
+    // round-trip latency the way testing at exactly 0ms margin would be.
+    const justOutsideKey = uniqueKey('boundary-outside');
+    const justOutsideTimestamp = new Date(Date.now() - svc.ROLLING_WINDOW_MS - 500); // 15:00.5 ago — expired
+    await db.collection('loginLockouts').updateOne(
+      { scope: SCOPE, key: justOutsideKey },
+      { $set: { recentFailures: [justOutsideTimestamp, justOutsideTimestamp, justOutsideTimestamp, justOutsideTimestamp], tier: 0, lockedUntil: null, lastFailureAt: justOutsideTimestamp } },
+      { upsert: true }
+    );
+    const outsideResult = await svc.recordFailure(db, SCOPE, justOutsideKey);
+    expect(outsideResult.locked).toBe(false); // only the 1 fresh failure remains after the 4 stale ones are trimmed
+
+    const justInsideKey = uniqueKey('boundary-inside');
+    const justInsideTimestamp = new Date(Date.now() - svc.ROLLING_WINDOW_MS + 500); // 14:59.5 ago — still inside
+    await db.collection('loginLockouts').updateOne(
+      { scope: SCOPE, key: justInsideKey },
+      { $set: { recentFailures: [justInsideTimestamp, justInsideTimestamp, justInsideTimestamp, justInsideTimestamp], tier: 0, lockedUntil: null, lastFailureAt: justInsideTimestamp } },
+      { upsert: true }
+    );
+    const insideResult = await svc.recordFailure(db, SCOPE, justInsideKey);
+    expect(insideResult.locked).toBe(true); // all 5 (4 still-valid + 1 fresh) count
+  });
+
+  test('5 truly concurrent failures for one key lock it exactly once, with no lost increments — the atomicity the rolling-window redesign must not regress', async () => {
+    // Same reproduction technique the service's own header comment describes for the original failCount
+    // race: fire every call before any of them has resolved.
+    const key = uniqueKey('concurrent');
+    const results = await Promise.all(Array.from({ length: 5 }, () => svc.recordFailure(db, SCOPE, key)));
+    const lockedCount = results.filter((r) => r.locked).length;
+    expect(lockedCount).toBe(1); // exactly one call observes crossing the threshold, never zero, never more than one
+    expect((await svc.getLockoutStatus(db, SCOPE, key)).locked).toBe(true);
+  });
+});
+
+describe('Repeated lockouts escalate: 00:45 → 01:45 → 03:45 → 07:45 → 15:45, then capped', () => {
   async function expireCurrentLockout(key) {
     await db.collection('loginLockouts').updateOne({ scope: SCOPE, key }, { $set: { lockedUntil: new Date(Date.now() - 1000) } });
   }
 
-  test('a second lockout for the same key is 5 minutes, not 1 — the escalation actually carries over', async () => {
+  test('a second lockout for the same key is 01:45 (105s), not 00:45 again — the escalation actually carries over', async () => {
     const key = uniqueKey('escalate-2');
     for (let i = 0; i < svc.MAX_ATTEMPTS; i++) await svc.recordFailure(db, SCOPE, key);
     await expireCurrentLockout(key);
     let result;
     for (let i = 0; i < svc.MAX_ATTEMPTS; i++) result = await svc.recordFailure(db, SCOPE, key);
     expect(result.locked).toBe(true);
-    expect(result.retryAfterSeconds).toBeGreaterThan(60);
-    expect(result.retryAfterSeconds).toBeLessThanOrEqual(5 * 60);
+    expect(result.retryAfterSeconds).toBe(105);
   });
 
-  test('the full brief-specified schedule — 1, 5, 15, 30, then 60 minutes and capped there for every lockout after', async () => {
+  test('the full approved schedule — 45, 105, 225, 465, then 945 seconds and capped there for every lockout after', async () => {
     const key = uniqueKey('escalate-full');
-    const expectedMinutes = [1, 5, 15, 30, 60, 60, 60]; // two extra rounds past the cap, to prove it never grows further
-    const actualMinutes = [];
-    for (const _ of expectedMinutes) {
+    const expectedSeconds = [45, 105, 225, 465, 945, 945, 945]; // two extra rounds past the cap, to prove it never grows further
+    const actualSeconds = [];
+    for (const _ of expectedSeconds) {
       let result;
       for (let i = 0; i < svc.MAX_ATTEMPTS; i++) result = await svc.recordFailure(db, SCOPE, key);
       expect(result.locked).toBe(true);
-      actualMinutes.push(Math.round(result.retryAfterSeconds / 60));
+      actualSeconds.push(result.retryAfterSeconds);
       await expireCurrentLockout(key);
     }
-    expect(actualMinutes).toEqual(expectedMinutes);
+    expect(actualSeconds).toEqual(expectedSeconds);
   });
 });
 
 describe('The escalation tier decays after a quiet period, but a lone success never launders it', () => {
-  test('a success clears the current fail count and any lockout, but leaves the escalation tier exactly where it was', async () => {
+  test('a success clears the current rolling-window failures and any lockout, but leaves the escalation tier exactly where it was', async () => {
     const key = uniqueKey('success-no-launder');
     for (let i = 0; i < svc.MAX_ATTEMPTS; i++) await svc.recordFailure(db, SCOPE, key); // tier -> 1, now locked
     await svc.recordSuccess(db, SCOPE, key);
     const docAfterSuccess = await db.collection('loginLockouts').findOne({ scope: SCOPE, key });
-    expect(docAfterSuccess.failCount).toBe(0);
+    expect(docAfterSuccess.recentFailures).toEqual([]);
     expect(docAfterSuccess.lockedUntil).toBeNull();
     expect(docAfterSuccess.tier).toBe(1); // NOT reset by the success
 
     // Prove the tier really did carry over: the next lockout for this key is still the 2nd-tier duration
-    // (5 minutes), not back down to the 1st (1 minute) — a success never "launders" the escalation.
+    // (105s), not back down to the 1st (45s) — a success never "launders" the escalation.
     let result;
     for (let i = 0; i < svc.MAX_ATTEMPTS; i++) result = await svc.recordFailure(db, SCOPE, key);
-    expect(Math.round(result.retryAfterSeconds / 60)).toBe(5);
+    expect(result.retryAfterSeconds).toBe(105);
   });
 
   test(`${svc.TIER_DECAY_MS / 3600000} hours with no failure resets the tier back to the start — a lone old incident can never compound forever`, async () => {
@@ -128,7 +192,7 @@ describe('The escalation tier decays after a quiet period, but a lone success ne
     let result;
     for (let i = 0; i < svc.MAX_ATTEMPTS; i++) result = await svc.recordFailure(db, SCOPE, key);
     expect(result.locked).toBe(true);
-    expect(Math.round(result.retryAfterSeconds / 60)).toBe(1); // back to the first tier's duration, not the 2nd
+    expect(result.retryAfterSeconds).toBe(45); // back to the first tier's duration, not the 2nd
   });
 
   test('a quiet period just UNDER the decay window does NOT reset the tier', async () => {
@@ -139,7 +203,7 @@ describe('The escalation tier decays after a quiet period, but a lone success ne
     });
     let result;
     for (let i = 0; i < svc.MAX_ATTEMPTS; i++) result = await svc.recordFailure(db, SCOPE, key);
-    expect(Math.round(result.retryAfterSeconds / 60)).toBe(5); // still escalated, decay had not actually elapsed yet
+    expect(result.retryAfterSeconds).toBe(105); // still escalated, decay had not actually elapsed yet
   });
 });
 
@@ -151,6 +215,13 @@ describe('IP scope and account scope are tracked completely independently', () =
     expect((await svc.getLockoutStatus(db, 'account', accountA)).locked).toBe(true);
     expect((await svc.getLockoutStatus(db, 'account', accountB)).locked).toBe(false);
     expect((await svc.getLockoutStatus(db, 'ip', accountA)).locked).toBe(false); // same string, different scope — never cross-read
+  });
+
+  test('the password route\'s own scope label is independent of the Google route\'s "account" scope for the SAME e-mail (2026-10 authentication hardening)', async () => {
+    const email = uniqueKey('cross-route');
+    for (let i = 0; i < svc.MAX_ATTEMPTS; i++) await svc.recordFailure(db, 'account-password', email);
+    expect((await svc.getLockoutStatus(db, 'account-password', email)).locked).toBe(true);
+    expect((await svc.getLockoutStatus(db, 'account', email)).locked).toBe(false); // the Google-flow scope for this same email is untouched
   });
 });
 
@@ -165,13 +236,19 @@ describe('normalizeAccountKey matches the real login lookup\'s own normalization
   });
 });
 
-describe('lockoutMessage never reveals the scope, the attempt threshold, or any account-existence signal', () => {
-  test('a sub-minute remaining time reads naturally, not "0 minutes"', () => {
-    expect(svc.lockoutMessage(30)).toBe('Too many sign-in attempts. Please try again in a minute.');
+describe('lockoutMessage is an exact MM:SS countdown, and never reveals the scope, the attempt threshold, or any account-existence signal', () => {
+  test('the approved policy\'s own example value renders exactly as specified: "00:45"', () => {
+    expect(svc.lockoutMessage(45)).toBe('Too many sign-in attempts. Please try again in 00:45.');
   });
-  test('longer waits are rounded up to whole minutes so the stated time is never an underestimate', () => {
-    expect(svc.lockoutMessage(61)).toBe('Too many sign-in attempts. Please try again in 2 minutes.');
-    expect(svc.lockoutMessage(300)).toBe('Too many sign-in attempts. Please try again in 5 minutes.');
+  test('sub-10-second and sub-10-minute values are zero-padded on both sides of the colon', () => {
+    expect(svc.lockoutMessage(5)).toBe('Too many sign-in attempts. Please try again in 00:05.');
+    expect(svc.lockoutMessage(65)).toBe('Too many sign-in attempts. Please try again in 01:05.');
+  });
+  test('the full escalation schedule\'s own values render exactly: 01:45, 03:45, 07:45, 15:45', () => {
+    expect(svc.lockoutMessage(105)).toBe('Too many sign-in attempts. Please try again in 01:45.');
+    expect(svc.lockoutMessage(225)).toBe('Too many sign-in attempts. Please try again in 03:45.');
+    expect(svc.lockoutMessage(465)).toBe('Too many sign-in attempts. Please try again in 07:45.');
+    expect(svc.lockoutMessage(945)).toBe('Too many sign-in attempts. Please try again in 15:45.');
   });
   test('never mentions "account", "ip", a specific attempt count, or the word "scope"', () => {
     const msg = svc.lockoutMessage(900);

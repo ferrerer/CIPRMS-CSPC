@@ -169,6 +169,16 @@ function makeRateLimiter(jsonMessage, htmlHandler, extraOptions) {
 // single place in the route that already decides success/failure (the existing audit() closures' own call
 // sites) — never inferred from the HTTP status code, and never called from more than one middleware layer,
 // so one authentication event is never double-counted.
+// POST /login has no UI entry point at all (views/index.ejs is Google-only sign-in) — a real user never
+// reaches it, so any traffic there is either a direct API probe or an attacker. Before this (2026-10
+// authentication hardening), its account-scope key was the SAME 'account' scope the Google callback uses,
+// specifically so switching sign-in methods couldn't dodge a lockout — but that also meant anyone who knew a
+// victim's e-mail could grief their Google sign-in for free, with zero credentials, by sending 5 POST /login
+// requests for that address through a form nobody legitimately uses. A separate scope closes that griefing
+// vector; the shared 'ip' scope (unchanged, used by both routes) still caps how much budget one attacker's
+// own traffic gets regardless of which route they hit.
+const PASSWORD_ACCOUNT_SCOPE = 'account-password';
+
 async function checkSignInLockout(req, res, scope, key, identifierForAudit, method) {
   if (process.env.NODE_ENV === 'test') return false;
   const status = await loginLockoutService.getLockoutStatus(getDb(), scope, key);
@@ -316,7 +326,11 @@ app.use(passport.session());
 // session instead — still catches a revoked/edited account within a few
 // seconds (nowhere near the old 2-hour session-expiry fallback), just not on
 // literally every click.
-const REVALIDATE_INTERVAL_MS = 15000;
+// 0 under NODE_ENV=test (same precedent as the rate limiters above) — a real Jest run needs the
+// session-version revocation check (2026-10 authentication hardening, added below) to be observable on the
+// very next request, not after a real 15-second wait; production behavior (the throttle itself) is
+// untouched.
+const REVALIDATE_INTERVAL_MS = process.env.NODE_ENV === 'test' ? 0 : 15000;
 app.use(async (req, res, next) => {
   if (!req.session || !req.session.user) return next();
   const now = Date.now();
@@ -328,6 +342,21 @@ app.use(async (req, res, next) => {
       { projection: { password: 0 } }
     );
     if (!dbUser || dbUser.status === 'Inactive') {
+      return req.session.destroy(() => {
+        res.clearCookie('connect.sid');
+        res.redirect('/');
+      });
+    }
+    // Session-version revocation (2026-10 authentication hardening): a password change / admin password
+    // reset / admin email change bumps the user document's sessionVersion, but has no way to reach any
+    // OTHER already-open session for that account directly (express-session's MemoryStore has no index by
+    // user id to look sessions up by). This revalidation cycle — which already re-fetches the real user
+    // document on a short interval for the role/status checks below — is reused as that reach: a session
+    // whose own stored version no longer matches the account's current one is stale and gets the same
+    // destroy-and-redirect treatment as a deactivated account. Both sides default to 0 when absent, so a
+    // session/account created before this field existed is never spuriously treated as revoked.
+    const currentSessionVersion = dbUser.sessionVersion || 0;
+    if ((req.session.user.sessionVersion || 0) !== currentSessionVersion) {
       return req.session.destroy(() => {
         res.clearCookie('connect.sid');
         res.redirect('/');
@@ -681,13 +710,53 @@ app.get('/signup', (req, res) => {
 
 // ── GOOGLE AUTH ROUTES ────────────────────────────────────────────────────────
 
-function getCallbackUrl(req) {
-  const host = req.get('host') || 'localhost:3000';
-  if (host.includes('localhost') || host.includes('127.0.0.1')) {
-    return `http://${host}/auth/google/callback`;
+// Builds this route's own public callback URL. 2026-10 authentication hardening: previously derived entirely
+// from the incoming request's own Host header (and X-Forwarded-Proto) — a value a direct, un-proxied client
+// can set to anything, including when trust-proxy's one trusted hop isn't actually what's in front of this
+// process in some future deployment topology. APP_BASE_URL (already defined in render.yaml and already used
+// by services/emailService.js for the exact same "the one trustworthy public address of this deployment"
+// purpose) is the only source trusted for it.
+//
+// Corrected 2026-10 Phase 1.1: the original version fell back to Host-derived logic whenever APP_BASE_URL
+// was simply unset, with no check on WHERE that was happening — a misconfigured production deploy that
+// forgot to set it would silently keep accepting attacker-controlled Host/X-Forwarded-Proto headers to build
+// a real OAuth callback URL. In production (NODE_ENV=production), a missing or invalid APP_BASE_URL now
+// fails the request instead of falling back to those headers; local development may still use the existing
+// Host-derived fallback (see the NODE_ENV check further below for exactly which value gates this, and why).
+// Never logs the actual header/URL values — only that configuration is missing or malformed.
+function publicBaseUrl(req) {
+  const configured = process.env.APP_BASE_URL;
+  if (configured) {
+    const trimmed = configured.replace(/\/+$/, '');
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return trimmed;
+    } catch (e) { /* falls through to the invalid-configuration error below */ }
+    console.error('❌ APP_BASE_URL is set but is not a valid absolute http(s) URL — refusing to fall back to request headers.');
+    throw new Error('Public base URL is misconfigured.');
   }
+  // Deny-lists 'production' rather than allow-listing 'development'/'test' (the pattern db.js's own
+  // MONGO_URI fallback uses) — confirmed directly that this project's actual local `node cirl.js` runs have
+  // NODE_ENV UNSET (not 'development'): render.yaml is the only place NODE_ENV=production is ever set, so
+  // an allow-list would misidentify a normal local run as "production" and break local OAuth testing
+  // whenever APP_BASE_URL happens to be unset, the exact opposite of this requirement. db.js's allow-list
+  // gets away with the stricter shape only because its fallback is rarely exercised in practice (this
+  // project's .env always carries a real MONGO_URI); this one is hit on every single OAuth attempt, so
+  // getting the local-dev case wrong here is immediately disruptive, not a rare edge case.
+  if (process.env.NODE_ENV === 'production') {
+    console.error('❌ APP_BASE_URL is not set and NODE_ENV is production — refusing to derive a public URL from request headers in production.');
+    throw new Error('Public base URL is not configured.');
+  }
+  // Local dev/test fallback only — unreachable once APP_BASE_URL is correctly set, and never reached at all
+  // when NODE_ENV=production regardless of APP_BASE_URL's state.
+  const host = req.get('host') || 'localhost:3000';
+  if (host.includes('localhost') || host.includes('127.0.0.1')) return `http://${host}`;
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  return `${protocol}://${host}/auth/google/callback`;
+  return `${protocol}://${host}`;
+}
+
+function getCallbackUrl(req) {
+  return `${publicBaseUrl(req)}/auth/google/callback`;
 }
 
 // Shares the exact same progressive lockout as POST /login (checkSignInLockout/recordSignInFailure/
@@ -711,7 +780,14 @@ app.get('/auth/google', async (req, res, next) => {
   const userAgent = getClientUserAgent(req);
   const requestId = req.sessionID || null;
   if (await checkSignInLockout(req, res, 'ip', ip, null, 'google')) return;
-  const callbackUrl = getCallbackUrl(req);
+  let callbackUrl;
+  try {
+    callbackUrl = getCallbackUrl(req);
+  } catch (configErr) {
+    // publicBaseUrl()'s own console.error already logged the sanitized specifics — this is the safe,
+    // generic response for the person who clicked "Sign in with Google", never the config detail itself.
+    return res.status(500).render('index', { activePage: '', error: 'Sign-in is temporarily unavailable. Please try again shortly or contact the CIRL Administrator.' });
+  }
   console.log(`[AUTH] Redirecting to Google with callback URL: ${callbackUrl}`);
   await logActivity(getDb(), null, 'GOOGLE_AUTH_INITIATED', 'Google sign-in initiated',
     { category: 'Authentication', targetType: 'login_attempt', ip, userAgent, requestId, details: { method: 'google' } });
@@ -727,7 +803,12 @@ app.get('/auth/google/callback', async (req, res, next) => {
   const requestId = req.sessionID || null;
   const db = getDb();
   if (await checkSignInLockout(req, res, 'ip', ip, null, 'google')) return;
-  const callbackUrl = getCallbackUrl(req);
+  let callbackUrl;
+  try {
+    callbackUrl = getCallbackUrl(req);
+  } catch (configErr) {
+    return res.status(500).render('index', { activePage: '', error: 'Sign-in is temporarily unavailable. Please try again shortly or contact the CIRL Administrator.' });
+  }
   await logActivity(db, null, 'GOOGLE_AUTH_CALLBACK', 'Google OAuth callback received',
     { category: 'Authentication', targetType: 'login_attempt', ip, userAgent, requestId, details: { method: 'google' } });
 
@@ -775,6 +856,21 @@ app.get('/auth/google/callback', async (req, res, next) => {
 
       const accountKey = loginLockoutService.normalizeAccountKey(googleEmail);
       if (await checkSignInLockout(req, res, 'account', accountKey, googleEmail, 'google')) return;
+
+      // Google's own email_verified claim (2026-10 authentication hardening) — Google allows signing in
+      // with an email address it has NOT itself confirmed belongs to this account (e.g. a freshly-added,
+      // not-yet-confirmed secondary address). Trusting an unverified claim here would let someone assert an
+      // email they don't actually control, including a real CIPRMS user's address, to try sliding through
+      // the allowlist lookup below as that person. Counted the same as any other pre-allowlist Google
+      // failure (ip AND account scope — this is a real, specific targeted email, not an anonymous probe).
+      if (googleUser.emails[0].verified !== true) {
+        await Promise.all([
+          recordSignInFailure('ip', ip), recordSignInFailure('account', accountKey),
+          logActivity(db, null, 'LOGIN_FAILED', `Failed Google sign-in for ${googleEmail} (email_not_verified)`,
+            { category: 'Authentication', status: 'failure', targetType: 'login_attempt', targetId: googleEmail, ip, userAgent, requestId, details: { method: 'google', reason: 'email_not_verified' } })
+        ]);
+        return res.render('index', { activePage: '', error: 'Your Google account email could not be verified. Please use a verified Google account or contact the CIRL Administrator.' });
+      }
 
       // Strict allowlist (2026-09-05): Google/CSPC authentication only proves
       // WHO the person is. It never determines WHETHER they may access
@@ -828,7 +924,8 @@ app.get('/auth/google/callback', async (req, res, next) => {
           role: dbUser.role,
           unit: dbUser.unit || '',
           activated: isActivated(dbUser),
-          avatarUrl: avatarUrlFor(dbUser)
+          avatarUrl: avatarUrlFor(dbUser),
+          sessionVersion: dbUser.sessionVersion || 0 // see the revalidation middleware's own comment
         };
         req.session.save(async (saveErr) => {
           if (saveErr) return next(saveErr);
@@ -876,22 +973,19 @@ app.post('/login', async (req, res) => {
   const audit = (status, reason, user, extraDetails) => logActivity(db, user || null, status === 'success' ? 'LOGIN_SUCCESS' : 'LOGIN_FAILED',
     status === 'success' ? `Successful login: ${user.email}` : `Failed login attempt${attemptedId ? ' for ' + attemptedId : ''} (${reason})`,
     { category: 'Authentication', status, targetType: 'login_attempt', targetId: user ? user.email : attemptedId, ip, userAgent, requestId, details: { reason, ...extraDetails } });
-  // Counts a failure toward BOTH the IP and (when a usable identifier was submitted) the account scope —
-  // except google_account_only, which must never count here: this account-scope key is shared with the
-  // Google OAuth callback below specifically so an attacker can't dodge a lockout by switching sign-in
-  // method, and counting a password attempt against a Google-only account would let someone lock that
-  // account out of Google sign-in too, through a form they never use. system_error is the server's own
-  // fault, not a signal about the attempt, so it never counts either.
+  // Counts a failure toward BOTH the IP and (when a usable identifier was submitted) this route's OWN
+  // account scope — except google_account_only, which must never count here (see PASSWORD_ACCOUNT_SCOPE's
+  // own comment above), and system_error, which is the server's own fault, not a signal about the attempt.
   const countableReasons = new Set(['validation_error', 'account_not_found', 'account_disabled', 'legacy_account_needs_reset', 'invalid_credentials']);
   const recordOutcome = (reason) => {
     if (reason && !countableReasons.has(reason)) return Promise.resolve();
     const scopes = [recordSignInFailure('ip', ip)];
-    if (accountKey) scopes.push(recordSignInFailure('account', accountKey));
+    if (accountKey) scopes.push(recordSignInFailure(PASSWORD_ACCOUNT_SCOPE, accountKey));
     return Promise.all(scopes);
   };
 
   if (await checkSignInLockout(req, res, 'ip', ip, username)) return;
-  if (accountKey && await checkSignInLockout(req, res, 'account', accountKey, username)) return;
+  if (accountKey && await checkSignInLockout(req, res, PASSWORD_ACCOUNT_SCOPE, accountKey, username)) return;
 
   // F-04: reject non-string values (e.g. JSON objects with MongoDB operators)
   // before any string method (.trim, .toLowerCase) is called, preventing a
@@ -963,7 +1057,8 @@ app.post('/login', async (req, res) => {
         role: user.role,
         unit: user.unit || '',
         activated: isActivated(user),
-        avatarUrl: avatarUrlFor(user)
+        avatarUrl: avatarUrlFor(user),
+        sessionVersion: user.sessionVersion || 0 // see the revalidation middleware's own comment
       };
 
       req.session.save(async (saveErr) => {
@@ -981,7 +1076,7 @@ app.post('/login', async (req, res) => {
         await audit('success', null, user);
         // Account scope only — NOT 'ip'; see the matching comment on the Google callback's own success
         // handler for why a shared/NAT IP's failure count must never be cleared by one account's success.
-        await recordSignInSuccess('account', accountKey);
+        await recordSignInSuccess(PASSWORD_ACCOUNT_SCOPE, accountKey);
         console.log(`✓ Login: ${user.name} (${user.role})`);
         res.redirect(landingFor(user));
       });
@@ -5959,7 +6054,30 @@ app.patch('/api/users/:id', requireStaffAccess, async (req, res) => {
       }
       updateData.password = await hashPassword(updateData.password);
     }
-    await db.collection('users').updateOne({ id }, { $set: updateData });
+    // Session-version revocation (2026-10 authentication hardening; corrected 2026-10 Phase 1.1 — the real
+    // "Edit User" form (views/users.ejs) always resends the account's CURRENT email on every single edit,
+    // even when only role/unit/status/etc. changed, pre-filled from the record being edited. The original
+    // "was `email` present in the request body" check therefore revoked the target's other sessions on
+    // EVERY edit, not just a real email change — contradicts the approved "unrelated edits must not
+    // increment it" requirement. Fixed by comparing the submitted (already-normalized, see above) email
+    // against the document's OWN current `$email` field — not against a separately-read snapshot, which
+    // would leave a race window for a concurrent write to change the email between that read and this
+    // write. Doing the comparison inside the SAME aggregation-pipeline update MongoDB evaluates atomically
+    // against the document's state at the moment of the write closes that window entirely; a real password
+    // reset still always revokes, independent of whether email also changed.
+    const newPasswordProvided = updateData.password !== undefined;
+    const newEmailProvided = updateData.email !== undefined;
+    const emailActuallyChangedExpr = newEmailProvided ? { $ne: ['$email', updateData.email] } : false;
+    const sessionVersionExpr = {
+      $cond: [
+        { $or: [newPasswordProvided, emailActuallyChangedExpr] },
+        { $add: [{ $ifNull: ['$sessionVersion', 0] }, 1] },
+        { $ifNull: ['$sessionVersion', 0] }
+      ]
+    };
+    await db.collection('users').updateOne({ id }, [
+      { $set: { ...updateData, sessionVersion: sessionVersionExpr } }
+    ]);
     const updated = await db.collection('users').findOne({ id }, { projection: { password: 0 } });
     if (!updated) return res.status(404).json({ error: 'Not found.' });
     await logActivity(db, req.session.user, 'EDIT', `User updated: ${updated.name} — role: ${updated.role}, status: ${updated.status}`);
@@ -7683,13 +7801,10 @@ app.get('/api/calendarevents/:id/attendance', requireStaffAccess, async (req, re
 // fully independent of the passport-google-oauth20 *login* flow above (which
 // discards its tokens) — it talks to googleapis's own OAuth2Client directly
 // so it can capture and persist a refresh token.
+// 2026-10 authentication hardening: same APP_BASE_URL-preferred, Host-header-fallback construction as
+// getCallbackUrl() above — see its own comment for the full reasoning.
 function getGoogleCalendarCallbackUrl(req) {
-  const host = req.get('host') || 'localhost:3000';
-  if (host.includes('localhost') || host.includes('127.0.0.1')) {
-    return `http://${host}/api/google-calendar/callback`;
-  }
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  return `${protocol}://${host}/api/google-calendar/callback`;
+  return `${publicBaseUrl(req)}/api/google-calendar/callback`;
 }
 
 // Settings → Integrations reads this. Only non-secret facts are ever returned:
@@ -7737,7 +7852,13 @@ app.get('/api/google-calendar/connect', requireAdmin, (req, res) => {
   // checked (and consumed) below before any token exchange happens.
   const state = crypto.randomBytes(16).toString('hex');
   req.session.googleCalendarOAuthState = state;
-  const url = googleCalendarService.getAuthUrl(getGoogleCalendarCallbackUrl(req), state);
+  let callbackUrl;
+  try {
+    callbackUrl = getGoogleCalendarCallbackUrl(req);
+  } catch (configErr) {
+    return googleCalendarFailure(res, 'config'); // publicBaseUrl()'s own console.error already logged the sanitized specifics
+  }
+  const url = googleCalendarService.getAuthUrl(callbackUrl, state);
   res.redirect(url);
 });
 
@@ -7808,11 +7929,10 @@ app.post('/api/google-calendar/disconnect', requireAdmin, async (req, res) => {
 // Partnership Request, which is shared by e-mail with: every active Administrator and CIRL Staff (edit), the
 // partner who submitted the request (comment) and the College Deans of the request's unit (view). Google enforces
 // those permissions; CIPRMS only shows the link to the reviewers and the request's own submitter.
+// 2026-10 authentication hardening: same APP_BASE_URL-preferred, Host-header-fallback construction as
+// getCallbackUrl() above — see its own comment for the full reasoning.
 function getGoogleDocsCallbackUrl(req) {
-  const host = req.get('host') || 'localhost:3000';
-  if (host.includes('localhost') || host.includes('127.0.0.1')) return `http://${host}/api/google-docs/callback`;
-  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-  return `${protocol}://${host}/api/google-docs/callback`;
+  return `${publicBaseUrl(req)}/api/google-docs/callback`;
 }
 
 function googleDocsFailure(res, reason) {
@@ -7862,7 +7982,13 @@ app.get('/api/google-docs/connect', requireAdmin, (req, res) => {
   if (!googleCalendarConfigured()) return googleDocsFailure(res, 'not_configured');
   const state = crypto.randomBytes(16).toString('hex');
   req.session.googleDocsOAuthState = state;
-  res.redirect(googleDocsService.getAuthUrl(getGoogleDocsCallbackUrl(req), state));
+  let callbackUrl;
+  try {
+    callbackUrl = getGoogleDocsCallbackUrl(req);
+  } catch (configErr) {
+    return googleDocsFailure(res, 'config'); // publicBaseUrl()'s own console.error already logged the sanitized specifics
+  }
+  res.redirect(googleDocsService.getAuthUrl(callbackUrl, state));
 });
 
 app.get('/api/google-docs/callback', requireAdmin, async (req, res) => {
@@ -8146,7 +8272,10 @@ app.post('/api/admin/password', adminPasswordLimiter, requireAdmin, async (req, 
       return res.status(400).json({ error: 'Current password is incorrect.' });
     if (!isStrongPassword(newPassword))
       return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
-    await db.collection('users').updateOne({ id: userId }, { $set: { password: await hashPassword(newPassword) } });
+    // $inc sessionVersion (2026-10 authentication hardening): revokes every OTHER already-open session for
+    // this same account (picked up by the revalidation middleware above) — endSessionAfterPasswordChange()
+    // below only ever ends THIS one request's own session, never reaches any other device/browser.
+    await db.collection('users').updateOne({ id: userId }, { $set: { password: await hashPassword(newPassword) }, $inc: { sessionVersion: 1 } });
     return endSessionAfterPasswordChange(req, res);
   } catch (err) {
     // 2026-09-06 security hardening (Finding #6): every real validation
@@ -8177,7 +8306,10 @@ app.post('/api/personnel/password', personnelPasswordLimiter, requirePersonnel, 
       return res.status(400).json({ error: 'Current password is incorrect.' });
     if (!isStrongPassword(newPassword))
       return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
-    await db.collection('users').updateOne({ id: userId }, { $set: { password: await hashPassword(newPassword) } });
+    // $inc sessionVersion (2026-10 authentication hardening): revokes every OTHER already-open session for
+    // this same account (picked up by the revalidation middleware above) — endSessionAfterPasswordChange()
+    // below only ever ends THIS one request's own session, never reaches any other device/browser.
+    await db.collection('users').updateOne({ id: userId }, { $set: { password: await hashPassword(newPassword) }, $inc: { sessionVersion: 1 } });
     return endSessionAfterPasswordChange(req, res);
   } catch (err) {
     console.error('❌ Personnel password change error:', err);
@@ -8204,7 +8336,10 @@ app.post('/api/staff/password', staffPasswordLimiter, requireStaffAccess, async 
       return res.status(400).json({ error: 'Current password is incorrect.' });
     if (!isStrongPassword(newPassword))
       return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
-    await db.collection('users').updateOne({ id: userId }, { $set: { password: await hashPassword(newPassword) } });
+    // $inc sessionVersion (2026-10 authentication hardening): revokes every OTHER already-open session for
+    // this same account (picked up by the revalidation middleware above) — endSessionAfterPasswordChange()
+    // below only ever ends THIS one request's own session, never reaches any other device/browser.
+    await db.collection('users').updateOne({ id: userId }, { $set: { password: await hashPassword(newPassword) }, $inc: { sessionVersion: 1 } });
     return endSessionAfterPasswordChange(req, res);
   } catch (err) {
     console.error('❌ Staff password change error:', err);
@@ -9055,7 +9190,10 @@ app.post('/api/partner/password', partnerPasswordLimiter, requirePartner, async 
       return res.status(400).json({ error: 'Current password is incorrect.' });
     if (!isStrongPassword(newPassword))
       return res.status(400).json({ error: PASSWORD_POLICY_MESSAGE });
-    await db.collection('users').updateOne({ id: userId }, { $set: { password: await hashPassword(newPassword) } });
+    // $inc sessionVersion (2026-10 authentication hardening): revokes every OTHER already-open session for
+    // this same account (picked up by the revalidation middleware above) — endSessionAfterPasswordChange()
+    // below only ever ends THIS one request's own session, never reaches any other device/browser.
+    await db.collection('users').updateOne({ id: userId }, { $set: { password: await hashPassword(newPassword) }, $inc: { sessionVersion: 1 } });
     return endSessionAfterPasswordChange(req, res);
   } catch (err) {
     console.error('❌ Partner password change error:', err);

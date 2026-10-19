@@ -22,14 +22,18 @@
 //               from many different IPs, and what keeps a password-flow attempt and a Google-flow attempt
 //               against the SAME account from each getting their own separate budget.
 //
-// Escalation policy (brief-specified): 5 failed attempts triggers a lockout. Each time a key is locked out
-// again, the NEXT lockout is longer, up to a defined cap — never permanent and never unbounded:
-//   1st lockout: 1 minute   2nd: 5 minutes   3rd: 15 minutes   4th: 30 minutes   5th and later: 60 minutes
-// A key's escalation tier decays back to the start (next lockout is 1 minute again) once TIER_DECAY_MS has
-// passed with no further failure — "a clearly defined period without further failed attempts" per the
-// brief — so a single stale old incident can never compound into a permanent-feeling block.
+// Escalation policy (2026-10 authentication hardening, approved schedule): 5 qualifying failures within a
+// ROLLING 15-minute window triggers a lockout — not simply "5 in a row no matter how spread out," which is
+// what a plain incrementing counter gives you. Each time a key is locked out again, the NEXT lockout is
+// longer, up to a defined cap — never permanent and never unbounded:
+//   1st: 00:45   2nd: 01:45   3rd: 03:45   4th: 07:45   5th and later: 15:45 (cap)
+// A key's escalation tier decays back to the start (next lockout is 00:45 again) once TIER_DECAY_MS has
+// passed with no further failure — unchanged from the original policy, and a SEPARATE concept from the
+// rolling window above: the window decides whether a given lockout triggers at all, the tier decay decides
+// how severe the NEXT one is once it does.
 const MAX_ATTEMPTS = 5;
-const LOCKOUT_DURATIONS_MS = [60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000, 30 * 60 * 1000, 60 * 60 * 1000];
+const LOCKOUT_DURATIONS_MS = [45 * 1000, 105 * 1000, 225 * 1000, 465 * 1000, 945 * 1000];
+const ROLLING_WINDOW_MS = 15 * 60 * 1000; // only failures within this trailing window count toward MAX_ATTEMPTS
 const TIER_DECAY_MS = 24 * 60 * 60 * 1000; // 24 hours of no failures resets the escalation tier to 0
 const COLLECTION = 'loginLockouts';
 
@@ -62,57 +66,69 @@ async function getLockoutStatus(db, scope, key) {
 }
 
 /**
- * Records one failed sign-in attempt for the given scope/key. If this is the MAX_ATTEMPTS-th consecutive
- * failure since the tier last decayed, locks the key out for the current tier's duration and advances the
+ * Records one failed sign-in attempt for the given scope/key. If this is the MAX_ATTEMPTS-th failure to land
+ * within the trailing ROLLING_WINDOW_MS, locks the key out for the current tier's duration and advances the
  * tier for next time.
  *
  * MUST be a single atomic MongoDB operation, never a separate findOne() followed by updateOne() — a 2026-11
  * live-testing report (5 different Google accounts from one IP "continued past the expected five-attempt
  * limit") traced to exactly that read-then-write gap: two concurrent failures (e.g. the account-not-found
  * rejection for account #3 arriving while account #2's own rejection was still being written) could both
- * read the SAME pre-increment failCount and each write back count+1, silently losing one of the two real
- * failures — under concurrent load this can lose enough increments that the threshold is never reached at
- * all. Reproduced directly: 5 truly concurrent recordFailure() calls against the old read-then-write
- * version left failCount at 1, not 5, and none of them reported locked. Fixed by doing the entire read-
- * decide-write as one aggregation-pipeline findOneAndUpdate() — MongoDB applies a single update operation
- * to a document as one atomic unit regardless of how many concurrent callers target the same document, so
- * concurrent requests serialize into the document one at a time with no lost increments, no double
- * lockouts, and no risk of an attacker exploiting the gap by firing attempts in quick succession.
+ * read the SAME pre-update document and each write back their own version, silently losing one of the two
+ * real failures — under concurrent load this can lose enough of them that the threshold is never reached at
+ * all. Reproduced directly against the old read-then-write version: 5 truly concurrent calls for one key
+ * left it with only 1 recorded failure, and none reported locked. Fixed by doing the entire read-decide-
+ * write as one aggregation-pipeline findOneAndUpdate() — MongoDB applies a single update operation to a
+ * document as one atomic unit regardless of how many concurrent callers target the same document, so
+ * concurrent requests serialize into the document one at a time with no lost failures, no double lockouts,
+ * and no risk of an attacker exploiting the gap by firing attempts in quick succession. The 2026-10 rolling-
+ * window redesign below keeps this same atomicity guarantee: appending to, and trimming, the `recentFailures`
+ * timestamp array happens inside the SAME single pipeline, not as a separate read-modify-write.
  * @returns {Promise<{locked:boolean, lockedUntil?:Date, retryAfterSeconds?:number}>}
  */
 async function recordFailure(db, scope, key) {
   if (!key) return { locked: false };
   try {
     const now = new Date();
-    // Stage 1: decide whether the PREVIOUS cycle decayed (purely from the document's existing
-    // lastFailureAt — never from a value read in a separate round trip), then increment failCount either
-    // from 0 (decayed / first-ever failure) or from its current stored value.
-    // Stage 2: having just computed the post-increment failCount, decide in the SAME operation whether
-    // this failure is the one that crosses MAX_ATTEMPTS — if so, set lockedUntil from the tier the
-    // document already had (BEFORE this operation bumps it), advance the tier, and reset failCount to 0
-    // for the next cycle. Everything here reads/writes only fields on the one document being updated, so
-    // there is nothing for a concurrent call on the SAME key to race against — each call sees the result
-    // of whichever earlier calls MongoDB has already applied, never a stale snapshot.
+    // Stage 1: tier decay check — purely from the document's existing lastFailureAt (never a value read in
+    // a separate round trip). Unchanged concept from before: 24h with no failure resets the escalation tier,
+    // independent of the (much shorter) rolling window below.
+    // Stage 2: append `now` to recentFailures, then filter the array down to only entries still inside the
+    // trailing ROLLING_WINDOW_MS — both in the same $set, so a concurrent caller on this same key can never
+    // observe (or race against) a half-updated array. Boundary decision (2026-10 Phase 1.1, made explicit):
+    // a failure timestamped EXACTLY ROLLING_WINDOW_MS before `now` is treated as expired, not still inside
+    // the window — `$gt` (strict), not `$gte`. "Within the trailing 15 minutes" is read as a half-open
+    // interval (now-15m, now], and a failure sitting precisely on the open end has, at that exact instant,
+    // already aged out of the 15-minute window rather than still being counted in it.
+    // Stage 3: decide, from the TRIMMED array's own length, whether this failure is the one that crosses
+    // MAX_ATTEMPTS within the window — if so, set lockedUntil from the tier the document already had
+    // (BEFORE this operation bumps it), advance the tier, and reset recentFailures for the next cycle.
     const durationsExpr = { $arrayElemAt: [LOCKOUT_DURATIONS_MS, { $min: ['$tier', LOCKOUT_DURATIONS_MS.length - 1] }] };
     const pipeline = [
       { $set: {
-          _decayed: { $or: [
+          _tierDecayed: { $or: [
             { $eq: [{ $ifNull: ['$lastFailureAt', null] }, null] },
             { $gt: [{ $subtract: [now, '$lastFailureAt'] }, TIER_DECAY_MS] }
           ] }
       } },
       { $set: {
-          failCount: { $add: [{ $cond: ['$_decayed', 0, { $ifNull: ['$failCount', 0] }] }, 1] },
-          tier: { $cond: ['$_decayed', 0, { $ifNull: ['$tier', 0] }] }
+          tier: { $cond: ['$_tierDecayed', 0, { $ifNull: ['$tier', 0] }] },
+          recentFailures: {
+            $filter: {
+              input: { $concatArrays: [{ $ifNull: ['$recentFailures', []] }, [now]] },
+              as: 'ts',
+              cond: { $gt: ['$$ts', { $subtract: [now, ROLLING_WINDOW_MS] }] }
+            }
+          }
       } },
-      { $set: { _justLocked: { $gte: ['$failCount', MAX_ATTEMPTS] } } },
+      { $set: { _justLocked: { $gte: [{ $size: '$recentFailures' }, MAX_ATTEMPTS] } } },
       { $set: {
           lockedUntil: { $cond: ['$_justLocked', { $add: [now, durationsExpr] }, { $ifNull: ['$lockedUntil', null] }] },
           tier: { $cond: ['$_justLocked', { $add: ['$tier', 1] }, '$tier'] },
-          failCount: { $cond: ['$_justLocked', 0, '$failCount'] },
+          recentFailures: { $cond: ['$_justLocked', [], '$recentFailures'] },
           lastFailureAt: now
       } },
-      { $unset: ['_decayed', '_justLocked'] }
+      { $unset: ['_tierDecayed', '_justLocked'] }
     ];
     const doc = await db.collection(COLLECTION).findOneAndUpdate(
       { scope, key },
@@ -143,30 +159,38 @@ async function recordSuccess(db, scope, key) {
   try {
     await db.collection(COLLECTION).updateOne(
       { scope, key },
-      { $set: { failCount: 0, lockedUntil: null } }
+      { $set: { recentFailures: [], lockedUntil: null } }
     );
   } catch (err) {
     console.error('❌ recordSuccess error (non-fatal):', err.message);
   }
 }
 
-// Human-readable, never exposes the scope (ip vs account), the attempt threshold, or any account-existence
-// signal — matches the plain-language, information-minimal style every other client-facing auth message in
-// this file already uses.
+// MM:SS — the approved policy's own durations include odd, sub-minute and ":45"-second values (00:45 up to
+// 15:45), where the previous whole-minutes-rounded-up wording ("in 2 minutes" for a 1:45 lockout) would be
+// measurably imprecise. Never exposes the scope (ip vs account), the attempt threshold, or any
+// account-existence signal — matches the plain-language, information-minimal style every other client-facing
+// auth message in this file already uses.
+function formatMMSS(totalSeconds) {
+  const s = Math.max(0, Math.ceil(totalSeconds));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+}
 function lockoutMessage(retryAfterSeconds) {
-  if (retryAfterSeconds <= 60) return 'Too many sign-in attempts. Please try again in a minute.';
-  const minutes = Math.ceil(retryAfterSeconds / 60);
-  return `Too many sign-in attempts. Please try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+  return `Too many sign-in attempts. Please try again in ${formatMMSS(retryAfterSeconds)}.`;
 }
 
 module.exports = {
   MAX_ATTEMPTS,
   LOCKOUT_DURATIONS_MS,
+  ROLLING_WINDOW_MS,
   TIER_DECAY_MS,
   lockoutDurationForTier,
   normalizeAccountKey,
   getLockoutStatus,
   recordFailure,
   recordSuccess,
+  formatMMSS,
   lockoutMessage
 };

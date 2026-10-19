@@ -1,7 +1,8 @@
-// Shared test utilities. Tests run against the real MONGO_URI (there is no
-// separate test database in this project), so every helper here is built
-// around leaving zero trace: create with a unique, clearly-marked identity,
-// and always clean up in the calling test's afterAll.
+// Shared test utilities. Tests run against a dedicated local test database
+// (test/setup-env.js + services/testDatabaseGuard.js; start it with
+// `npm run test:db:up`) — never the real MONGO_URI. Helpers still create with
+// a unique, clearly-marked identity and clean up in the calling test's
+// afterAll, so tests stay independent of each other within one run.
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
@@ -9,6 +10,25 @@ const bcrypt = require('bcrypt');
 const { connectDB, getDb } = require('../db');
 
 const TEST_TAG = 'jesttest';
+
+// loginLockouts/activitylogs rows created by an IP-scope lockout attempt have no account identity to carry
+// a TEST_TAG — the attempt is, by definition, pre-identification (brute-force-protection.test.js,
+// google-oauth-rate-limit.test.js). This is the COMPLETE, closed set of IP values the test suite's own
+// source is grepped to ever produce, not a "looks like a test IP" guess:
+//   - TEST_LOOPBACK_IPS: what Express's req.ip resolves to for an in-process supertest connection (confirmed
+//     against every file that calls request(app) directly) — a real client, routed through Render's actual
+//     proxy chain (app.set('trust proxy', 1)), can never present as one of these.
+//   - TEST_SPOOFED_IPS: the exact 3 literal addresses test/google-oauth-rate-limit.test.js's own "IP
+//     extraction depends on exactly one trusted hop" describe block spoofs via X-Forwarded-For — drawn from
+//     RFC 5737 TEST-NET-3 (203.0.113.0/24), reserved by IANA specifically for documentation/example use and
+//     never routable as a real address anywhere.
+// Matching on this exact, finite list — combined with restricting to the specific auth-flow action types
+// below — is an exact-value correlation to code that only exists in this test suite, not a resemblance
+// heuristic on `by`/`email`/IP shape.
+const TEST_LOOPBACK_IPS = ['::1', '::ffff:127.0.0.1', '127.0.0.1'];
+const TEST_SPOOFED_IPS = ['203.0.113.10', '203.0.113.11', '203.0.113.12'];
+const TEST_IPS = [...TEST_LOOPBACK_IPS, ...TEST_SPOOFED_IPS];
+const TEST_AUTH_FLOW_ACTIONS = ['GOOGLE_AUTH_INITIATED', 'GOOGLE_AUTH_CALLBACK', 'LOGIN_FAILED', 'LOGIN_BLOCKED', 'LOGIN_SUCCESS'];
 
 function uniqueEmail(label) {
   return `${TEST_TAG}.${label}.${Date.now()}.${Math.floor(Math.random() * 1e6)}@example.com`;
@@ -84,7 +104,26 @@ async function cleanupAll() {
   // in the record text itself, only in `by`/`email`) — found via this same
   // health-check audit leaving 177 such logs behind after a full clean run.
   await db.collection('activitylogs').deleteMany({
-    $or: [{ record: { $regex: TEST_TAG, $options: 'i' } }, { by: { $regex: TEST_TAG, $options: 'i' } }, { email: { $regex: TEST_TAG, $options: 'i' } }]
+    $or: [
+      { record: { $regex: TEST_TAG, $options: 'i' } }, { by: { $regex: TEST_TAG, $options: 'i' } }, { email: { $regex: TEST_TAG, $options: 'i' } },
+      // Pre-identification IP-scope rows (no account known yet, so none of the fields above ever match) —
+      // see TEST_IPS's own comment above for why this exact-value match is reliable, not a resemblance guess.
+      // Also requires a recognized auth-flow action, so this can never reach into an unrelated collection row
+      // that happens to share one of these IPs for some other reason.
+      { ip: { $in: TEST_IPS }, action: { $in: TEST_AUTH_FLOW_ACTIONS } }
+    ]
+  });
+
+  // loginLockouts has no TEST_TAG-bearing field at all for an IP-scope entry (the key IS the IP), and was
+  // never swept by this helper before (2026-10 Phase 0 baseline audit) — found 47 stray rows surviving a
+  // fully clean, all-passing auth test run. Account-scope entries use uniqueEmail()'s own jesttest-prefixed
+  // key, same as every other TEST_TAG-bearing field elsewhere in this function; IP-scope entries match the
+  // same closed, exhaustively-enumerated TEST_IPS list as the activitylogs clause above.
+  await db.collection('loginLockouts').deleteMany({
+    $or: [
+      { key: { $regex: '^' + TEST_TAG + '\\.', $options: 'i' } },
+      { key: { $in: TEST_IPS } }
+    ]
   });
 
   const testDocs = await db.collection('documents').find({ uploadedByEmail: { $regex: TEST_TAG, $options: 'i' } }).toArray();
@@ -101,4 +140,4 @@ async function cleanupAll() {
   });
 }
 
-module.exports = { TEST_TAG, uniqueEmail, createTestUser, loginAs, cleanupAll, getDb, connectDB };
+module.exports = { TEST_TAG, TEST_LOOPBACK_IPS, TEST_SPOOFED_IPS, TEST_IPS, TEST_AUTH_FLOW_ACTIONS, uniqueEmail, createTestUser, loginAs, cleanupAll, getDb, connectDB };

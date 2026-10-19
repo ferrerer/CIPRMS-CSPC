@@ -105,7 +105,7 @@ describe('Source-level: the progressive lockout is wired onto POST /login AND bo
     expect(callbackBlock.search(/checkSignInLockout\(req, res, 'ip', ip/)).toBeLessThan(callbackBlock.indexOf('passport.authenticate'));
   });
 
-  test('the account scope is the SAME normalized key (trim + lowercase) for both the password form and the Google profile e-mail — one shared budget, not two', () => {
+  test('the account-scope KEY normalization (trim + lowercase) is identical for both the password form and the Google profile e-mail, even though each route now has its own separate scope/budget (2026-10 authentication hardening)', () => {
     expect(src).toContain('loginLockoutService.normalizeAccountKey(username)');
     expect(src).toContain('loginLockoutService.normalizeAccountKey(googleEmail)');
     expect(lockoutSrc).toMatch(/email\.trim\(\)\.toLowerCase\(\)/);
@@ -129,7 +129,10 @@ describe('Source-level: the progressive lockout is wired onto POST /login AND bo
   // legitimate colleague on that same IP happens to sign in — proving control of one account only ever
   // vouches for that account, never for the IP it came from.
   test('a successful sign-in clears the account scope only — never the shared IP scope', () => {
-    expect(loginBlock).toContain("recordSignInSuccess('account', accountKey)");
+    // POST /login uses its OWN account scope (PASSWORD_ACCOUNT_SCOPE, 2026-10 authentication hardening) —
+    // separate from the Google callback's 'account' scope, so a password attempt against an email can never
+    // affect that same email's Google-sign-in lockout. See PASSWORD_ACCOUNT_SCOPE's own comment in cirl.js.
+    expect(loginBlock).toContain("recordSignInSuccess(PASSWORD_ACCOUNT_SCOPE, accountKey)");
     expect(loginBlock).not.toContain("recordSignInSuccess('ip', ip)");
     expect(callbackBlock).toContain("recordSignInSuccess('account', accountKey)");
     expect(callbackBlock).not.toContain("recordSignInSuccess('ip', ip)");
@@ -155,8 +158,13 @@ describe('Source-level: the progressive lockout is wired onto POST /login AND bo
     expect(src).not.toMatch(/MAX_ATTEMPTS\s*=\s*\d/); // cirl.js never redefines its own copy of this number
   });
 
-  test('the escalation schedule matches the brief exactly: 1, 5, 15, 30, 60 minutes, capped — never permanent, never unbounded', () => {
-    expect(lockoutSrc).toContain('const LOCKOUT_DURATIONS_MS = [60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000, 30 * 60 * 1000, 60 * 60 * 1000];');
+  test('the escalation schedule matches the 2026-10 approved policy exactly: 00:45, 01:45, 03:45, 07:45, 15:45, capped — never permanent, never unbounded', () => {
+    expect(lockoutSrc).toContain('const LOCKOUT_DURATIONS_MS = [45 * 1000, 105 * 1000, 225 * 1000, 465 * 1000, 945 * 1000];');
+  });
+
+  test('a lockout only triggers from failures within a rolling 15-minute window, not simply "5 in a row no matter how spread out"', () => {
+    expect(lockoutSrc).toContain('const ROLLING_WINDOW_MS = 15 * 60 * 1000;');
+    expect(lockoutSrc).toMatch(/\$filter:\s*\{[\s\S]*?cond:\s*\{\s*\$gt:\s*\[\s*'\$\$ts',\s*\{\s*\$subtract:\s*\[now,\s*ROLLING_WINDOW_MS\]\s*\}\s*\]\s*\}/);
   });
 
   test('the escalation tier decays after a clearly defined quiet period, so a stale old incident can never compound forever', () => {
