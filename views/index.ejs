@@ -238,6 +238,19 @@
                                 </div>
                                 <% } %>
 
+                                <!-- Live lockout countdown (2026-10): rendered only when the server actually reports an
+                                     active lockout (checkSignInLockout()/GET '/' both pass lockedUntil — an ISO
+                                     timestamp, the one source of truth) — public/js/ciprms-login-lockout.js ticks the
+                                     display down from it and re-confirms with GET /api/login-lockout-status before ever
+                                     re-enabling the button below, so the display is purely cosmetic and never itself what
+                                     decides whether a retry is allowed. -->
+                                <% if (typeof lockedUntil !== 'undefined' && lockedUntil) { %>
+                                <div class="alert alert-warning d-flex align-items-center gap-2 mt-3" role="status" id="ciprms-lockout-countdown" data-locked-until="<%= lockedUntil %>">
+                                    <i class="ri-time-line fs-16"></i>
+                                    <div>Try again in <strong id="ciprms-lockout-countdown-time">--:--</strong></div>
+                                </div>
+                                <% } %>
+
                                 <!-- Google-only sign-in (2026-11): CIPRMS accounts are provisioned by the CIRL
                                      Administrator and matched to a Google account by e-mail (see GET
                                      /auth/google/callback) — there is no self-registration, so a password
@@ -246,10 +259,11 @@
                                      POST /login route itself is unchanged and still rate-limited/lockout-
                                      protected server-side (not UI-reachable, but not removed). -->
                                 <div class="p-2 mt-4">
-                                    <button type="button" class="btn btn-danger w-100 waves-effect waves-light" onclick="window.location.href='/auth/google'">
+                                    <button type="button" id="ciprms-google-signin-btn" class="btn btn-danger w-100 waves-effect waves-light" onclick="window.location.href='/auth/google'" <%= (typeof lockedUntil !== 'undefined' && lockedUntil) ? 'disabled' : '' %>>
                                         <i class="ri-google-fill align-middle fs-16 me-2"></i>Sign in with Google
                                     </button>
                                 </div>
+                                <script src="/js/ciprms-login-lockout.js"></script>
                             </div>
                             <!-- end card body -->
                         </div>

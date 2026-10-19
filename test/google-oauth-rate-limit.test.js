@@ -410,3 +410,50 @@ describe('Progressive escalation is preserved end to end through the real route 
     });
   }, 30000);
 });
+
+// Live lockout countdown (2026-10) — the account-scope half of GET /api/login-lockout-status specifically
+// (the IP-scope half, and the endpoint's own existence, are covered in test/brute-force-protection.test.js
+// via the password route, which needs no passport mock). This file is the right place for the Google-side
+// 'account' scope check since it already mocks passport.
+describe('GET /api/login-lockout-status also reports an active Google account-scope lockout when an email is supplied', () => {
+  test('5 failed Google callback attempts for one e-mail lock that account scope, reported by the status endpoint — and never for an unrelated e-mail', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      const lockedEmail = uniqueEmail('statusacct');
+      const unrelatedEmail = uniqueEmail('statusacct-unrelated');
+      await clearLockouts(['::1', '::ffff:127.0.0.1', '127.0.0.1', lockedEmail, unrelatedEmail]);
+
+      // 4 failures for this one account — under its own 5-attempt threshold, so the shared IP scope (which
+      // would otherwise also be at 4) is cleared again immediately after, to isolate the account-scope signal
+      // this test is actually about from the IP-scope behavior already covered elsewhere.
+      for (let i = 0; i < 4; i++) {
+        await agent.get('/auth/google/callback').set('x-test-google-email', lockedEmail);
+      }
+      await clearLockouts(['::1', '::ffff:127.0.0.1', '127.0.0.1']);
+      // 5th failure for the SAME account — now locks the account scope specifically.
+      await agent.get('/auth/google/callback').set('x-test-google-email', lockedEmail);
+      await clearLockouts(['::1', '::ffff:127.0.0.1', '127.0.0.1']);
+
+      const lockedStatus = await agent.get('/api/login-lockout-status').query({ email: lockedEmail });
+      expect(lockedStatus.body.locked).toBe(true);
+      expect(new Date(lockedStatus.body.lockedUntil).getTime()).toBeGreaterThan(Date.now());
+
+      const unrelatedStatus = await agent.get('/api/login-lockout-status').query({ email: unrelatedEmail });
+      expect(unrelatedStatus.body).toEqual({ locked: false, lockedUntil: null });
+
+      const noEmailStatus = await agent.get('/api/login-lockout-status');
+      expect(noEmailStatus.body).toEqual({ locked: false, lockedUntil: null }); // IP scope alone, cleared above
+    });
+  }, 30000);
+
+  test('checking status with an email never itself counts as a failed attempt against that account', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      const email = uniqueEmail('statusneveracount');
+      await clearLockouts(['::1', '::ffff:127.0.0.1', '127.0.0.1', email]);
+      for (let i = 0; i < 10; i++) await agent.get('/api/login-lockout-status').query({ email }); // far more than MAX_ATTEMPTS
+      const doc = await db.collection('loginLockouts').findOne({ scope: 'account', key: email });
+      expect(doc).toBeNull();
+    });
+  }, 30000);
+});

@@ -187,7 +187,7 @@ async function checkSignInLockout(req, res, scope, key, identifierForAudit, meth
   const attemptedId = safeLoginIdentifier(identifierForAudit);
   await logActivity(getDb(), null, 'LOGIN_BLOCKED', `Sign-in rate-limited${attemptedId ? ' for ' + attemptedId : ''}`,
     { category: 'Authentication', status: 'blocked', targetType: 'login_attempt', targetId: attemptedId, ip: getClientIp(req), userAgent: getClientUserAgent(req), requestId: req.sessionID || null, details: { reason: 'rate_limited', scope, method: method || 'password' } });
-  res.status(429).render('index', { activePage: '', error: loginLockoutService.lockoutMessage(status.retryAfterSeconds) });
+  res.status(429).render('index', { activePage: '', error: loginLockoutService.lockoutMessage(status.retryAfterSeconds), lockedUntil: status.lockedUntil.toISOString() });
   return true;
 }
 async function recordSignInFailure(scope, key) {
@@ -238,6 +238,19 @@ const searchLimiter = process.env.NODE_ENV === 'test'
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many searches. Please wait a moment and try again.' }
+  });
+// Live lockout-countdown polling (2026-10) — read-only, never an attempt, but still a public, unauthenticated
+// endpoint an abusive client could otherwise hammer; per-minute like searchLimiter above, not the 10-per-15-
+// min makeRateLimiter shape, since one real locked-out browser polls this every few seconds while counting
+// down.
+const lockoutStatusLimiter = process.env.NODE_ENV === 'test'
+  ? (req, res, next) => next()
+  : rateLimit({
+    windowMs: 60 * 1000,
+    limit: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests. Please wait a moment and try again.' }
   });
 const adminPasswordLimiter = makeRateLimiter('Too many requests. Please wait 15 minutes and try again.');
 const personnelPasswordLimiter = makeRateLimiter('Too many requests. Please wait 15 minutes and try again.');
@@ -693,13 +706,27 @@ function formatRole(role) {
 }
 
 // ── PUBLIC ROUTES ─────────────────────────────────────────────────────────────
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
   // Already logged in → bounce to appropriate dashboard
   if (req.session && req.session.user) {
     return res.redirect(homeForRole(req.session.user.role));
   }
+  // Passive IP-lockout check (2026-10 live countdown) — a plain page view is never an attempt, so this reads
+  // status only (getLockoutStatus, never checkSignInLockout's audit log / recordFailure side effects). Keeps
+  // the live countdown visible across a refresh or a new tab: without this, only the render that FIRST
+  // tripped the lockout ever carried lockedUntil, and a refreshed bare login page would look fully normal
+  // even while still locked, inviting another attempt that would just 429 again. Bypassed under
+  // NODE_ENV=test for the same reason every other lockout check already is.
+  let lockedUntil;
+  if (process.env.NODE_ENV !== 'test') {
+    const ip = getClientIp(req);
+    const status = await loginLockoutService.getLockoutStatus(getDb(), 'ip', ip);
+    if (status.locked) lockedUntil = status.lockedUntil.toISOString();
+  }
   res.render('index', {
-    activePage: '', error: undefined,
+    activePage: '',
+    error: lockedUntil ? loginLockoutService.lockoutMessage(Math.ceil((new Date(lockedUntil).getTime() - Date.now()) / 1000)) : undefined,
+    lockedUntil,
     // set by the Settings pages after a password change, which ends the session
     notice: req.query.passwordChanged === '1' ? 'Your password was changed. Please log in again with your new password.' : undefined
   });
@@ -1087,6 +1114,35 @@ app.post('/login', async (req, res) => {
     console.error('❌ Login error:', err);
     await audit('failure', 'system_error', null);
     res.status(500).render('index', { activePage: '', error: 'A server error occurred. Please try again.' });
+  }
+});
+
+// Live lockout countdown (2026-10): lets the login page's own JS (public/js/ciprms-login-lockout.js) confirm
+// server-side whether a lockout has genuinely expired, instead of trusting its own 1-second display timer —
+// the display timer is purely cosmetic (seeded from, and only ever a visual tick-down of, the authoritative
+// lockedUntil this endpoint reports), never itself the thing that decides whether a retry is allowed. Never
+// counts as an attempt (read-only getLockoutStatus, no recordFailure); never reveals which scope is active,
+// the attempt threshold, or whether `email` belongs to a real account — returns only {locked, lockedUntil}
+// for whichever of the IP or (if an email was supplied) that Google account's own scope is more restrictive,
+// matching the exact same two checks checkSignInLockout() already performs for a real sign-in attempt.
+app.get('/api/login-lockout-status', lockoutStatusLimiter, async (req, res) => {
+  try {
+    const ip = getClientIp(req);
+    const ipStatus = await loginLockoutService.getLockoutStatus(getDb(), 'ip', ip);
+    let accountStatus = { locked: false };
+    if (typeof req.query.email === 'string' && req.query.email) {
+      const accountKey = loginLockoutService.normalizeAccountKey(req.query.email);
+      if (accountKey) accountStatus = await loginLockoutService.getLockoutStatus(getDb(), 'account', accountKey);
+    }
+    // Whichever expires LATER is the one actually still blocking a retry.
+    const mostRestrictive = [ipStatus, accountStatus]
+      .filter((s) => s.locked)
+      .sort((a, b) => new Date(b.lockedUntil).getTime() - new Date(a.lockedUntil).getTime())[0];
+    if (!mostRestrictive) return res.json({ locked: false, lockedUntil: null });
+    res.json({ locked: true, lockedUntil: mostRestrictive.lockedUntil.toISOString() });
+  } catch (err) {
+    console.error('❌ /api/login-lockout-status error:', err);
+    res.json({ locked: false, lockedUntil: null }); // fails open, same spirit as the lockout service itself
   }
 });
 

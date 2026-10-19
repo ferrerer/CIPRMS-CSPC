@@ -179,3 +179,105 @@ describe('The existing centralized Express error handler is unchanged and still 
     expect(src).toContain("'An unexpected server error occurred.'");
   });
 });
+
+// Live lockout countdown (2026-10) — real HTTP, via POST /login (no passport mock needed here, unlike the
+// Google-flow tests elsewhere in this suite), brute-forcing a real account to a real lockout and inspecting
+// what the server actually sends back: the 429 response, a bare GET / refresh while still locked, and the
+// new read-only status-check endpoint the client-side countdown polls.
+describe('Live countdown: the server\'s lockedUntil is consistent across the 429 response, a page refresh, and the status endpoint', () => {
+  const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+  let db;
+  beforeAll(async () => { db = await connectDB(); });
+  afterAll(async () => { process.env.NODE_ENV = ORIGINAL_NODE_ENV; });
+
+  async function withRealLockout(fn) {
+    process.env.NODE_ENV = 'development';
+    try { await fn(); } finally { process.env.NODE_ENV = ORIGINAL_NODE_ENV; }
+  }
+  async function clearLockouts(keys) {
+    await db.collection('loginLockouts').deleteMany({ key: { $in: keys } });
+  }
+  const LOOPBACK = ['::1', '::ffff:127.0.0.1', '127.0.0.1'];
+
+  test('brute-forcing 5 failed password attempts (each still answering its own natural 401) locks the 6th, whose 429 countdown element carries a real, future lockedUntil matching the displayed MM:SS message', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      await clearLockouts(LOOPBACK);
+      const victim = `${TEST_TAG}.countdown.${Date.now()}@example.com`;
+      // The lockout check runs BEFORE each attempt is processed, so the 5th failure (the one that actually
+      // crosses the threshold) still gets its own natural 401 — only the NEXT request sees the 429.
+      for (let i = 0; i < 5; i++) {
+        const res = await agent.post('/login').type('form').send({ username: victim, password: 'wrong' });
+        expect(res.status).toBe(401);
+      }
+      const last = await agent.post('/login').type('form').send({ username: victim, password: 'wrong' });
+      expect(last.status).toBe(429);
+
+      const elMatch = last.text.match(/id="ciprms-lockout-countdown" data-locked-until="([^"]+)"/);
+      expect(elMatch).toBeTruthy();
+      const lockedUntil = new Date(elMatch[1]);
+      const remainingSeconds = Math.round((lockedUntil.getTime() - Date.now()) / 1000);
+      expect(remainingSeconds).toBeGreaterThan(0);
+      expect(remainingSeconds).toBeLessThanOrEqual(45); // first tier — 00:45, never more
+
+      // The static server-rendered message and the live-countdown element agree on the same MM:SS (both
+      // derived from the SAME getLockoutStatus() call server-side) — allow a 1-second tolerance against this
+      // test's own independently-timed `remainingSeconds` above, rather than a brittle exact match against a
+      // second, separately-timed Date.now() call.
+      const msgMatch = last.text.match(/Please try again in (\d{2}:\d{2})\./);
+      expect(msgMatch).toBeTruthy();
+      const [mm, ss] = msgMatch[1].split(':').map(Number);
+      expect(Math.abs((mm * 60 + ss) - remainingSeconds)).toBeLessThanOrEqual(1);
+
+      // The button itself is rendered disabled — never relying on the JS alone to prevent a premature retry.
+      expect(last.text).toMatch(/id="ciprms-google-signin-btn"[^>]*disabled/);
+    });
+  }, 30000);
+
+  test('refreshing the bare login page (GET /) while the IP is still locked shows the SAME live countdown — survives a refresh or a new tab', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      await clearLockouts(LOOPBACK);
+      const victim = `${TEST_TAG}.countdownrefresh.${Date.now()}@example.com`;
+      for (let i = 0; i < 5; i++) {
+        await agent.post('/login').type('form').send({ username: victim, password: 'wrong' });
+      }
+      const refreshed = await agent.get('/');
+      expect(refreshed.status).toBe(200); // not a redirect — still on the login page
+      expect(refreshed.text).toMatch(/id="ciprms-lockout-countdown" data-locked-until="[^"]+"/);
+      expect(refreshed.text).toMatch(/id="ciprms-google-signin-btn"[^>]*disabled/);
+    });
+  }, 30000);
+
+  test('GET /api/login-lockout-status reports unlocked for a clean IP, and locked with a matching lockedUntil once brute-forced', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      await clearLockouts(LOOPBACK);
+
+      const before = await agent.get('/api/login-lockout-status');
+      expect(before.status).toBe(200);
+      expect(before.body).toEqual({ locked: false, lockedUntil: null });
+
+      const victim = `${TEST_TAG}.countdownstatus.${Date.now()}@example.com`;
+      for (let i = 0; i < 5; i++) {
+        await agent.post('/login').type('form').send({ username: victim, password: 'wrong' });
+      }
+      const after = await agent.get('/api/login-lockout-status');
+      expect(after.status).toBe(200);
+      expect(after.body.locked).toBe(true);
+      expect(new Date(after.body.lockedUntil).getTime()).toBeGreaterThan(Date.now());
+    });
+  }, 30000);
+
+  test('polling the status endpoint repeatedly never itself counts as an attempt or advances the lockout', async () => {
+    await withRealLockout(async () => {
+      const agent = request.agent(app);
+      await clearLockouts(LOOPBACK);
+      for (let i = 0; i < 10; i++) await agent.get('/api/login-lockout-status'); // far more than MAX_ATTEMPTS (5)
+      const status = await agent.get('/api/login-lockout-status');
+      expect(status.body.locked).toBe(false); // still unlocked — none of those reads were ever recorded as failures
+      const doc = await db.collection('loginLockouts').findOne({ scope: 'ip', key: { $in: LOOPBACK } });
+      expect(doc).toBeNull(); // no document was ever created by reading status alone
+    });
+  }, 30000);
+});
