@@ -341,11 +341,11 @@
                          above) rather than guessing. -->
                     <div class="about-team-grid">
                         <% const teamMembers = [
-                            { name: 'Lui Vhinz Dominic P. Briñas', initials: 'LB', photo: '/images/lui.png', role: 'Project Head / Database Designer (PH/DD)' },
-                            { name: 'Begie B. Golpe', initials: 'BG', photo: '/images/beggie.jpg', role: 'Network Designer / UI Designer (ND/UID)' },
-                            { name: 'Zyra Devie D. Malto', initials: 'ZM', photo: '/images/zyra.png', role: 'QA Tester / Documentation Writer (QA/TW)' },
-                            { name: 'Joshua B. Baliber', initials: 'JB', photo: null, role: 'Software Engineer / Programmer (SE/P)' },
-                            { name: 'John Raven M. Ferrer', initials: 'JF', photo: '/images/raven.png', role: 'Software Engineer / Programmer (SE/P)' }
+                            { name: 'Lui Vhinz Dominic P. Briñas', initials: 'LB', photo: '/images/lui.png', role: 'Project Head / Database Designer (PH/DD)', bio: 'Led project coordination and contributed to the design and development of the database structure for CIPRMS.' },
+                            { name: 'Begie B. Golpe', initials: 'BG', photo: '/images/beggie.jpg', role: 'Network Designer / UI Designer (ND/UID)', bio: 'Contributed to the network design and user interface development of CIPRMS to support usability and system accessibility.' },
+                            { name: 'Zyra Devie D. Malto', initials: 'ZM', photo: '/images/zyra.png', role: 'QA Tester / Documentation Writer (QA/TW)', bio: 'Contributed to system testing, quality assurance, and the preparation of project documentation for CIPRMS.' },
+                            { name: 'Joshua B. Baliber', initials: 'JB', photo: null, role: 'Software Engineer / Programmer (SE/P)', bio: 'Contributed to the programming and implementation of CIPRMS features to support its core system functions.' },
+                            { name: 'John Raven M. Ferrer', initials: 'JF', photo: '/images/raven.png', role: 'Software Engineer / Programmer (SE/P)', bio: 'Contributed to the development and implementation of CIPRMS modules, including system functionality and integration.' }
                         ]; %>
                         <% teamMembers.forEach(function (m) { %>
                         <div class="team-card-col">
@@ -358,7 +358,7 @@
                                 <div class="flex-grow-1 min-width-0">
                                     <h6 class="mb-0"><%= m.name %></h6>
                                     <p class="text-primary fs-13 fw-medium mb-1"><%= m.role %></p>
-                                    <p class="text-muted fs-13 mb-0">Contributed to the design and development of CIPRMS as part of this capstone project.</p>
+                                    <p class="text-muted fs-13 mb-0"><%= m.bio %></p>
                                 </div>
                             </div>
                         </div>
