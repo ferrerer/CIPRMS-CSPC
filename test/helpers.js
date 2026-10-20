@@ -23,12 +23,19 @@ const TEST_TAG = 'jesttest';
 //     blocks spoof via X-Forwarded-For — drawn from RFC 5737 TEST-NET-3 (203.0.113.0/24, IPv4) and RFC 3849
 //     (2001:db8::/32, IPv6), both reserved by IANA specifically for documentation/example use and never
 //     routable as a real address anywhere.
+//   - TEST_MULTIHOP_IPS: fixture addresses for test/ip-lockout-cross-account.test.js's CF-Connecting-IP
+//     scenario (2026-10 Cloudflare/Render multi-hop fix) — a RFC 5737 TEST-NET-3 address standing in for the
+//     stable CF-Connecting-IP, plus RFC 1918 private addresses standing in for the unstable Render-internal
+//     X-Forwarded-For hops the fix made irrelevant as a lockout key. Deliberately NOT the real addresses from
+//     the production log capture that motivated the fix — a real client's public IP has no reason to be
+//     committed into git history.
 // Matching on this exact, finite list — combined with restricting to the specific auth-flow action types
 // below — is an exact-value correlation to code that only exists in this test suite, not a resemblance
 // heuristic on `by`/`email`/IP shape.
 const TEST_LOOPBACK_IPS = ['::1', '::ffff:127.0.0.1', '127.0.0.1'];
 const TEST_SPOOFED_IPS = ['203.0.113.10', '203.0.113.11', '203.0.113.12', '203.0.113.21', '203.0.113.22', '2001:db8::4a2b'];
-const TEST_IPS = [...TEST_LOOPBACK_IPS, ...TEST_SPOOFED_IPS];
+const TEST_MULTIHOP_IPS = ['203.0.113.50', '10.255.0.1', '10.255.0.2', '10.255.0.3', '10.255.0.9'];
+const TEST_IPS = [...TEST_LOOPBACK_IPS, ...TEST_SPOOFED_IPS, ...TEST_MULTIHOP_IPS];
 const TEST_AUTH_FLOW_ACTIONS = ['GOOGLE_AUTH_INITIATED', 'GOOGLE_AUTH_CALLBACK', 'LOGIN_FAILED', 'LOGIN_BLOCKED', 'LOGIN_SUCCESS'];
 
 function uniqueEmail(label) {
@@ -141,4 +148,4 @@ async function cleanupAll() {
   });
 }
 
-module.exports = { TEST_TAG, TEST_LOOPBACK_IPS, TEST_SPOOFED_IPS, TEST_IPS, TEST_AUTH_FLOW_ACTIONS, uniqueEmail, createTestUser, loginAs, cleanupAll, getDb, connectDB };
+module.exports = { TEST_TAG, TEST_LOOPBACK_IPS, TEST_SPOOFED_IPS, TEST_MULTIHOP_IPS, TEST_IPS, TEST_AUTH_FLOW_ACTIONS, uniqueEmail, createTestUser, loginAs, cleanupAll, getDb, connectDB };

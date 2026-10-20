@@ -33,7 +33,7 @@ jest.mock('passport', () => ({
 const request = require('supertest');
 const app = require('../cirl');
 const { connectDB, closeDB } = require('../db');
-const { createTestUser, uniqueEmail, cleanupAll } = require('./helpers');
+const { createTestUser, uniqueEmail, cleanupAll, TEST_MULTIHOP_IPS } = require('./helpers');
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 let db;
@@ -157,6 +157,57 @@ describe('An authorized account from the same IP is blocked while that IP lockou
       const errorMsg = res.text.match(/<strong>Error<\/strong>\s*–\s*([^<]*)/)?.[1] || '';
       expect(errorMsg).toMatch(/Too many sign-in attempts/);
       expect(errorMsg).not.toMatch(/\bip\b|\baccount\b|\b5\b|authorized|not found/i);
+    });
+  }, 30000);
+});
+
+describe('Production scenario: Cloudflare + Render multi-hop X-Forwarded-For (2026-10 CF-Connecting-IP fix)', () => {
+  // Reproduces a captured production log's structure (not its literal addresses — see TEST_MULTIHOP_IPS'
+  // own comment in helpers.js for why real ones aren't used here): the SAME real client (CF-Connecting-IP,
+  // set and verified by Cloudflare's own edge, unspoofable past it) made 5 unauthorized attempts and then 1
+  // authorized attempt, but trust proxy:1's resolution of X-Forwarded-For (req.ip) came back as a DIFFERENT
+  // Render-internal private address on nearly every single request — because Render's own internal routing
+  // hop, not just Cloudflare's edge, appends itself to X-Forwarded-For, making req.ip alone useless as a
+  // stable lockout key on this platform. getClientIp() now prefers CF-Connecting-IP over req.ip for exactly
+  // this reason.
+  const [REAL_CLIENT_CF_IP, ...RENDER_INTERNAL_HOPS] = TEST_MULTIHOP_IPS; // ['203.0.113.50', '10.255.0.1', '10.255.0.2', '10.255.0.3', '10.255.0.9']
+
+  test('5 unauthorized attempts + 1 authorized attempt from the same CF-Connecting-IP are all blocked under one shared key, even though req.ip (X-Forwarded-For) differs on almost every request', async () => {
+    await withRealLockout(async () => {
+      const authorized = await createTestUser({ role: 'Staff' });
+      const agent = request.agent(app);
+      await clearLockouts([...TEST_MULTIHOP_IPS, authorized.email]);
+
+      // The middle entry stands in for Cloudflare's own edge node — never read by getClientIp() (it reads
+      // CF-Connecting-IP directly, not this header position) or asserted on below, so an arbitrary
+      // TEST-NET-2 (RFC 5737, 198.51.100.0/24) placeholder is enough; it varies per request only to mirror
+      // the real capture's shape (a different Cloudflare PoP per request is normal, not the bug).
+      for (let i = 0; i < 5; i++) {
+        await agent.get('/auth/google/callback')
+          .set('CF-Connecting-IP', REAL_CLIENT_CF_IP)
+          .set('X-Forwarded-For', `${REAL_CLIENT_CF_IP}, 198.51.100.${i + 1}, ${RENDER_INTERNAL_HOPS[i % RENDER_INTERNAL_HOPS.length]}`)
+          .set('x-test-google-email', uniqueEmail('cfhop' + i));
+      }
+
+      // Authorized attempt arrives via yet another internal hop address — would have missed a req.ip-keyed
+      // lockout entirely, which is exactly the bug this reproduces.
+      const res = await agent.get('/auth/google/callback')
+        .set('CF-Connecting-IP', REAL_CLIENT_CF_IP)
+        .set('X-Forwarded-For', `${REAL_CLIENT_CF_IP}, 198.51.100.6, ${RENDER_INTERNAL_HOPS[RENDER_INTERNAL_HOPS.length - 1]}`)
+        .set('x-test-google-email', authorized.email);
+      expect(res.status).toBe(429);
+
+      const meRes = await agent.get('/api/me');
+      expect(meRes.status).toBe(302);
+
+      // The lockout is keyed on the stable CF-Connecting-IP, not any of the unstable internal addresses.
+      const doc = await db.collection('loginLockouts').findOne({ scope: 'ip', key: REAL_CLIENT_CF_IP });
+      expect(doc).toBeTruthy();
+      expect(new Date(doc.lockedUntil).getTime()).toBeGreaterThan(Date.now());
+      for (const hop of RENDER_INTERNAL_HOPS) {
+        const hopDoc = await db.collection('loginLockouts').findOne({ scope: 'ip', key: hop });
+        expect(hopDoc).toBeNull();
+      }
     });
   }, 30000);
 });

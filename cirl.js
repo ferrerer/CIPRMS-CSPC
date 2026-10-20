@@ -182,23 +182,7 @@ const PASSWORD_ACCOUNT_SCOPE = 'account-password';
 
 async function checkSignInLockout(req, res, scope, key, identifierForAudit, method) {
   if (process.env.NODE_ENV === 'test') return false;
-  // TEMPORARY DIAGNOSTIC (2026-10) — remove once the reported "authorized account still gets in during an
-  // active IP lockout" issue is confirmed fixed in production. Logs only what's needed to see whether
-  // req.ip/X-Forwarded-For are resolving consistently across requests from what should be the same real
-  // client. reqId (req.sessionID — already the established correlation id this file's own logActivity()
-  // calls use elsewhere, e.g. `requestId: req.sessionID || null`) lets two log lines from the SAME request
-  // be matched without needing anything more identifying. Never logs an email, a credential, a cookie value,
-  // or a database connection string. The raw X-Forwarded-For line is included because this investigation's
-  // actual open question is whether Render's real proxy chain has more than the one hop `trust proxy: 1`
-  // assumes — req.ip alone (the already-resolved value) cannot show that, only the full header can; pending
-  // your explicit approval before this is deployed, per your own review request.
-  if (scope === 'ip') {
-    console.log(`[lockout-diag] reqId=${req.sessionID || null} scope=ip key=${key} xff=${JSON.stringify(req.headers['x-forwarded-for'] || null)} reqIp=${req.ip}`);
-  }
   const status = await loginLockoutService.getLockoutStatus(getDb(), scope, key);
-  if (scope === 'ip') {
-    console.log(`[lockout-diag] reqId=${req.sessionID || null} scope=ip key=${key} locked=${status.locked}${status.locked ? ' retryAfterSeconds=' + status.retryAfterSeconds : ''}`);
-  }
   if (!status.locked) return false;
   const attemptedId = safeLoginIdentifier(identifierForAudit);
   await logActivity(getDb(), null, 'LOGIN_BLOCKED', `Sign-in rate-limited${attemptedId ? ' for ' + attemptedId : ''}`,
@@ -6289,27 +6273,52 @@ async function logActivity(db, user, action, record, extra) {
 
 // Client IP for audit records AND for every IP-scope lockout key (services/loginLockoutService.js). `app.set
 // ('trust proxy', 1)` (see near the top of this file) tells Express to trust exactly the one hop in front of
-// it (this app's own reverse proxy / platform load balancer) and parse `X-Forwarded-For` only up to that hop
-// — req.ip then already resolves to the real originating client address rather than a header any client
-// could forge by sending their own X-Forwarded-For directly. Using req.ip here (instead of re-reading the
-// header directly) is exactly what that trust-proxy setting exists for.
+// it and parse `X-Forwarded-For` only up to that hop — req.ip then already resolves to the real originating
+// client address rather than a header any client could forge by sending their own X-Forwarded-For directly.
 //
-// Normalized to plain IPv4 when req.ip is the IPv4-mapped-IPv6 form (2026-10 lockout-bypass fix): Node can
-// represent the SAME real client as either "1.2.3.4" or "::ffff:1.2.3.4" depending on connection-level
-// details outside this app's control — proven directly in this project's own environment (test/helpers.js's
-// TEST_LOOPBACK_IPS lists all 3 forms ['::1', '::ffff:127.0.0.1', '127.0.0.1'] observed for ONE loopback
-// connection). Without normalizing, services/loginLockoutService.js would key the SAME real IP's failures
-// under two different strings, splitting what should be one shared lockout — reproduced directly: 5 failures
-// recorded under "127.0.0.1" left "::ffff:127.0.0.1" reporting not-locked. Only a well-formed IPv4-mapped
-// form is rewritten (net.isIPv4 validates the extracted octets, not just the string shape) — a genuine IPv6
-// address, or req.ip's own null/missing case, passes through completely unchanged. trust proxy itself is
-// untouched; this only canonicalizes the value Express already resolved.
-function getClientIp(req) {
-  const ip = req && req.ip;
-  if (!ip) return null;
+// CF-Connecting-IP preferred over req.ip (2026-10, production lockout-bypass investigation): this app's
+// production traffic passes through Cloudflare in front of Render, and Render's own front door adds a
+// SECOND, internal hop after Cloudflare before reaching this process — so the real chain is
+// "client, cloudflare-edge, render-internal" (3 entries), not the 1 hop trust proxy:1 assumes. req.ip
+// (trust proxy:1's resolution) therefore came back as Render's own internal routing address, which changes
+// between requests — proven directly from production logs: the SAME browser's OAuth-initiate and
+// OAuth-callback requests, seconds apart, resolved to two different private 10.x.x.x addresses, and the
+// real client's public IP (consistent across both) was sitting one hop further left in the raw header both
+// times. That instability is exactly why IP-scope lockout failures were scattering across multiple keys for
+// one real client instead of accumulating against one. Cloudflare's CF-Connecting-IP header is the fix:
+// Cloudflare sets it at its own edge from the real TCP connection and overwrites any client-supplied value,
+// so unlike counting X-Forwarded-For hops (which breaks again if Render's internal hop count ever changes),
+// it is both stable and cannot be spoofed past Cloudflare. net.isIP(...) !== 0 validates it's a real
+// address (not some other string) before trusting it. Falls through to the pre-existing trust-proxy
+// resolution — unchanged below — for any request that doesn't carry it (local dev, tests, direct access).
+//
+// Normalized to plain IPv4 when a resolved address is the IPv4-mapped-IPv6 form (2026-10 lockout-bypass
+// fix): Node/Cloudflare can represent the SAME real client as either "1.2.3.4" or "::ffff:1.2.3.4" depending
+// on connection-level details outside this app's control — proven directly in this project's own environment
+// (test/helpers.js's TEST_LOOPBACK_IPS lists all 3 forms ['::1', '::ffff:127.0.0.1', '127.0.0.1'] observed
+// for ONE loopback connection). Without normalizing, services/loginLockoutService.js would key the SAME real
+// IP's failures under two different strings, splitting what should be one shared lockout — reproduced
+// directly: 5 failures recorded under "127.0.0.1" left "::ffff:127.0.0.1" reporting not-locked. Only a
+// well-formed IPv4-mapped form is rewritten (net.isIPv4 validates the extracted octets, not just the string
+// shape) — a genuine IPv6 address, or a missing value, passes through unchanged. Applied uniformly to BOTH
+// the CF-Connecting-IP and the trust-proxy-resolved branches below (not just the latter) — CF-Connecting-IP
+// is normally a clean dotted-quad or standard IPv6 form, but nothing about the header's contract rules out
+// the same mapped-form variance req.ip already demonstrated, and this is a one-line guard against that exact
+// class of bug recurring in a new place. trust proxy itself is untouched; this only canonicalizes values
+// Express/Cloudflare already resolved.
+function normalizeIpv4MappedIpv6(ip) {
+  if (typeof ip !== 'string' || !ip) return null;
   const match = /^::ffff:(.+)$/i.exec(ip);
-  if (match && net.isIPv4(match[1])) return match[1];
-  return ip;
+  return (match && net.isIPv4(match[1])) ? match[1] : ip;
+}
+
+function getClientIp(req) {
+  const cfConnectingIp = req && req.headers && req.headers['cf-connecting-ip'];
+  if (typeof cfConnectingIp === 'string') {
+    const trimmed = cfConnectingIp.trim();
+    if (net.isIP(trimmed) !== 0) return normalizeIpv4MappedIpv6(trimmed);
+  }
+  return normalizeIpv4MappedIpv6(req && req.ip);
 }
 
 // Capped to a sane length — User-Agent is client-supplied and unbounded; a hostile or malformed client
