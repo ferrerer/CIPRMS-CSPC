@@ -9491,38 +9491,41 @@ app.use((err, req, res, next) => {
 // which just needs the bare `app` to drive with supertest against its own
 // test-managed DB connection.
 if (require.main === module) {
-  app.listen(PORT, async () => {
-    const url = `http://localhost:${PORT}`;
-    console.log(`CIPRMS server running → ${url}`);
+  (async () => {
     try {
+      // Connect BEFORE opening the port — app.listen() starts accepting real HTTP connections the moment
+      // it's called, so if connectDB() instead ran inside its callback (as it used to), a request landing in
+      // that gap (e.g. Render's own health check, or — confirmed live — a Google OAuth callback redirect
+      // arriving right at boot) would hit a route calling getDb() before `db` was ever set, surfacing as
+      // "Error: Database not initialized. Call connectDB first." This ordering makes that race impossible:
+      // no socket is ever open for a request to land on until MongoDB is actually ready.
       await connectDB();
+    } catch (err) {
+      // 2026-09-08 Phase 5 production-readiness fix: exiting (rather than logging and continuing) lets the
+      // host's process supervisor (Render, systemd, Docker, etc.) restart the service and retry the
+      // connection, instead of an outage persisting until someone notices the app is up but non-functional.
+      // Matches the same fail-closed philosophy already applied to a missing MONGO_URI in db.js — a real DB
+      // outage should surface as a restart, not silence.
+      console.error('❌ Failed to connect to MongoDB on startup — exiting so the process can be restarted:', err);
+      process.exit(1);
+    }
+    app.listen(PORT, async () => {
+      const url = `http://localhost:${PORT}`;
+      console.log(`CIPRMS server running → ${url}`);
       console.log(emailService.isConfigured()
         ? '✅ Email notifications configured (MAIL_USER set).'
         : '⚠️  Email notifications NOT configured — set RESEND_API_KEY and MAIL_USER to enable e-mail delivery (see .env.example).');
       await migrateLegacyPartnerAvatars().catch(err => console.error('⚠️  Partner avatar migration skipped:', err.message));
       await runLifecycleCheck(); // catch up immediately on startup, don't wait for the first interval tick
       setInterval(runLifecycleCheck, LIFECYCLE_CHECK_INTERVAL_MS);
-    } catch (err) {
-      // 2026-09-08 Phase 5 production-readiness fix: this used to only log
-      // and keep running — the HTTP server was already bound (app.listen's
-      // callback runs before this try/catch), so a failed DB connection left
-      // a "zombie" process silently accepting requests that would all fail
-      // once they touched getDb(). Exiting lets the host's process
-      // supervisor (Render, systemd, Docker, etc.) restart the service and
-      // retry the connection, instead of an outage persisting until someone
-      // notices the app is up but non-functional. Matches the same
-      // fail-closed philosophy already applied to a missing MONGO_URI in
-      // db.js — a real DB outage should surface as a restart, not silence.
-      console.error('❌ Failed to connect to MongoDB on startup — exiting so the process can be restarted:', err);
-      process.exit(1);
-    }
-    try {
-      const { default: open } = await import('open');
-      open(url);
-    } catch (err) {
-      console.log('Could not auto-open browser, but server is running');
-    }
-  });
+      try {
+        const { default: open } = await import('open');
+        open(url);
+      } catch (err) {
+        console.log('Could not auto-open browser, but server is running');
+      }
+    });
+  })();
 }
 
 module.exports = app;
