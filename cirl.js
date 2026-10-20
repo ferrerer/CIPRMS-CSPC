@@ -16,7 +16,8 @@ const ExcelJS = require('exceljs');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { connectDB, getDb, insertWithNextId, insertManyWithNextId } = require('./db');
 const ocrRoutes = require('./routes/ocrRoutes');
-const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary } = require('./services/documentLibraryService');
+const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary, EXT_MIME_TYPES } = require('./services/documentLibraryService');
+const documentStorageService = require('./services/documentStorageService');
 const googleCalendarService = require('./services/googleCalendarService');
 const googleDocsService = require('./services/googleDocsService');
 const emailService = require('./services/emailService');
@@ -2851,7 +2852,9 @@ app.delete('/api/documents/:id', requireUploader, announce('document'), async (r
     if (doc.uploadedByEmail !== req.session.user.email && req.session.user.role !== 'Administrator') {
       return res.status(403).json({ error: 'You can only delete your own documents.' });
     }
-    if (doc.fileLink && doc.fileLink.startsWith('/uploads/documents/')) {
+    if (doc.driveFileId) {
+      await documentStorageService.deleteDocument(db, doc.driveFileId); // best-effort, never throws (see its own comment)
+    } else if (doc.fileLink && doc.fileLink.startsWith('/uploads/documents/')) {
       const filename = path.basename(doc.fileLink);
       const filePath = path.join(__dirname, 'uploads', 'documents', filename);
       fs.unlink(filePath, () => {});
@@ -8641,6 +8644,23 @@ app.get('/uploads/documents/:filename', requireUploader, async (req, res) => {
       if (!isUploader && !ownsLinkedRequest) {
         return res.status(403).send('Forbidden');
       }
+    }
+    // Google Drive storage (2026-11, see services/documentStorageService.js): a document archived after that
+    // change has driveFileId set and no reliable local copy (Render's free plan wipes local disk on every
+    // redeploy) — stream it from Drive instead. A document archived before this change, or one that fell back
+    // to local disk because Drive wasn't connected at upload time, has no driveFileId and is served exactly as
+    // before. The RBAC check above already ran either way — this only changes WHERE the bytes come from.
+    if (doc && doc.driveFileId) {
+      try {
+        const stream = await documentStorageService.downloadDocument(db, doc.driveFileId);
+        res.set('Content-Type', EXT_MIME_TYPES[path.extname(filename).toLowerCase()] || 'application/octet-stream');
+        stream.on('error', (err) => { if (!res.headersSent) res.status(404).send('Not found'); });
+        stream.pipe(res);
+      } catch (err) {
+        console.error('❌ Document Library: Drive download failed:', documentStorageService.describeGoogleError(err));
+        res.status(404).send('Not found');
+      }
+      return;
     }
     res.sendFile(path.join(__dirname, 'uploads', 'documents', filename), (err) => {
       if (err && !res.headersSent) res.status(404).send('Not found');

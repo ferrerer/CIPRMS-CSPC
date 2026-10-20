@@ -318,5 +318,10 @@ module.exports = {
   reshareDoc,
   buildAgreementHtml,
   docsCollection,
+  // Exported for services/documentStorageService.js (Document Library file storage, 2026-11) — reuses this
+  // same connected account/token-refresh/collection-safety machinery for a second, separate Drive folder
+  // ("CIPRMS Document Library") rather than duplicating the OAuth plumbing a second time.
+  getAuthorizedDrive,
+  integrationCollection,
   GOOGLE_API_TIMEOUT_MS // exported for unit testing the configured bound in isolation
 };

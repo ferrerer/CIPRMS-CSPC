@@ -3,9 +3,12 @@ const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { getDb, insertWithNextId } = require('../db');
+const documentStorageService = require('./documentStorageService');
 
 const DOCUMENTS_DIR = path.join(__dirname, '..', 'uploads', 'documents');
 if (!fs.existsSync(DOCUMENTS_DIR)) fs.mkdirSync(DOCUMENTS_DIR, { recursive: true });
+
+const EXT_MIME_TYPES = { '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png' };
 
 // Maps the free-form OCR document-type guess down to the short codes the
 // Document Library UI filters by (All / MOA / MOU / Other). Accreditation records keep their
@@ -158,17 +161,36 @@ async function findPossibleDuplicates(db, extraction, meta = {}) {
 async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, meta = {}) {
   const ext = path.extname(originalName || tempFilePath) || '.bin';
   const permanentName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-  const permanentPath = path.join(DOCUMENTS_DIR, permanentName);
-
-  try {
-    await fsp.rename(tempFilePath, permanentPath);
-  } catch {
-    // Cross-device fallback (rename can fail across filesystems/mounts)
-    await fsp.copyFile(tempFilePath, permanentPath);
-    await fsp.unlink(tempFilePath).catch(() => {});
-  }
 
   const db = getDb();
+
+  // Google Drive storage, tried first whenever Google Docs is connected (see services/documentStorageService.js
+  // for why — Render's free plan wipes local disk on every redeploy). Local disk is always the fallback: when
+  // Drive isn't connected, when the upload fails, and ALWAYS under Jest (JEST_WORKER_ID) — the existing test
+  // suite's local-disk assertions (e.g. test/partnership-document-persistence.test.js) are unaffected.
+  let driveFileId = null;
+  if (!process.env.JEST_WORKER_ID) {
+    try {
+      const buffer = await fsp.readFile(tempFilePath);
+      driveFileId = await documentStorageService.uploadDocument(db, buffer, permanentName, EXT_MIME_TYPES[ext.toLowerCase()]);
+    } catch (err) {
+      console.error('⚠️  Document Library: Google Drive upload failed, falling back to local disk:', documentStorageService.describeGoogleError(err));
+    }
+  }
+
+  const permanentPath = path.join(DOCUMENTS_DIR, permanentName);
+  if (driveFileId) {
+    // Drive already has the bytes — no point also keeping a local copy Render will wipe on the next deploy anyway.
+    await fsp.unlink(tempFilePath).catch(() => {});
+  } else {
+    try {
+      await fsp.rename(tempFilePath, permanentPath);
+    } catch {
+      // Cross-device fallback (rename can fail across filesystems/mounts)
+      await fsp.copyFile(tempFilePath, permanentPath);
+      await fsp.unlink(tempFilePath).catch(() => {});
+    }
+  }
   const type = shortDocType(extraction && extraction.documentType);
   const institution = (extraction && extraction.institution) || null;
   const partner = (extraction && (extraction.partner || extraction.institution)) || null;
@@ -206,6 +228,7 @@ async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, 
     date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     status: extraction ? 'Active' : 'Needs Review',
     fileLink: `/uploads/documents/${permanentName}`,
+    driveFileId: driveFileId || null,
     tags: [type, extraction ? 'OCR Extracted' : 'OCR Failed'].concat(issuingBody ? [issuingBody] : []),
     uploadedBy: meta.uploadedBy || 'Unknown',
     uploadedByEmail: meta.uploadedByEmail || null,
@@ -306,4 +329,4 @@ async function archiveRequestRecordToLibrary(db, meta) {
   }));
 }
 
-module.exports = { archiveToDocumentLibrary, updateDocument, archiveRequestRecordToLibrary, findPossibleDuplicates, DOCUMENTS_DIR };
+module.exports = { archiveToDocumentLibrary, updateDocument, archiveRequestRecordToLibrary, findPossibleDuplicates, DOCUMENTS_DIR, EXT_MIME_TYPES };
