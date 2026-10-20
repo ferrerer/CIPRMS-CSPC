@@ -92,12 +92,20 @@ describe('GET / — centered branding composition and About Us', () => {
     expect(modalBlock).toContain('btn-close');
   });
 
-  test('all five real, verified team members are listed with a consistent structure (name, role, contribution)', () => {
-    const names = ['Joshua B. Baliber', 'Lui Vhinz Dominic P. Briñas', 'John Raven M. Ferrer', 'Begie B. Golpe', 'Zyra Devie D. Malto'];
-    names.forEach((name) => expect(html).toContain(name));
-    // Same role label and same number of "Project Proponent" occurrences as names — no entry singled out
-    // with different structure/formatting.
-    expect(html.match(/Project Proponent, Team Dunbar/g)).toHaveLength(names.length);
+  test('all five real, verified team members are listed with their own individual role (name, role, contribution)', () => {
+    // 2026-11: each member's own role/abbreviation (previously a single uniform "Project Proponent, Team
+    // Dunbar" label for every card) — see views/index.ejs's teamMembers array, the one source of truth.
+    const rolesByName = {
+      'Lui Vhinz Dominic P. Briñas': 'Project Head / Database Designer (PH/DD)',
+      'Begie B. Golpe': 'Network Designer / UI Designer (ND/UID)',
+      'Zyra Devie D. Malto': 'QA Tester / Documentation Writer (QA/TW)',
+      'Joshua B. Baliber': 'Software Engineer / Programmer (SE/P)',
+      'John Raven M. Ferrer': 'Software Engineer / Programmer (SE/P)'
+    };
+    Object.entries(rolesByName).forEach(([name, role]) => {
+      expect(html).toContain(name);
+      expect(html).toContain(role);
+    });
     expect(html).toContain('Team Dunbar');
   });
 

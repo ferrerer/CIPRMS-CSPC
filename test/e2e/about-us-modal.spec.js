@@ -58,11 +58,18 @@ test.describe('About Us modal — desktop: enlarged dialog and exact 3-top / 2-c
     expect(initials).toEqual(['LB', 'BG', 'ZM', 'JB', 'JF']);
   });
 
-  test('every card shows the same role label and no card is clipped or overlapping another', async ({ page }) => {
+  test('every card shows its own individual role label and no card is clipped or overlapping another', async ({ page }) => {
     await openAboutModal(page);
     const cols = page.locator('#about-modal .team-card-col');
     const roles = await cols.locator('p.text-primary').allTextContents();
-    roles.forEach((r) => expect(r.trim()).toBe('Project Proponent, Team Dunbar'));
+    // 2026-11: one role per member, same order as the names check above — not a uniform label any more.
+    expect(roles.map((r) => r.trim())).toEqual([
+      'Project Head / Database Designer (PH/DD)',
+      'Network Designer / UI Designer (ND/UID)',
+      'QA Tester / Documentation Writer (QA/TW)',
+      'Software Engineer / Programmer (SE/P)',
+      'Software Engineer / Programmer (SE/P)'
+    ]);
 
     // No horizontal scrollbar on the modal body — everything fits within the enlarged width.
     const overflow = await page.locator('#about-modal .modal-body').evaluate((el) => el.scrollWidth > el.clientWidth + 1);

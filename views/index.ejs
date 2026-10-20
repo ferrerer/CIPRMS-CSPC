@@ -341,11 +341,11 @@
                          above) rather than guessing. -->
                     <div class="about-team-grid">
                         <% const teamMembers = [
-                            { name: 'Lui Vhinz Dominic P. Briñas', initials: 'LB', photo: null },
-                            { name: 'Begie B. Golpe', initials: 'BG', photo: '/images/beggie.jpg' },
-                            { name: 'Zyra Devie D. Malto', initials: 'ZM', photo: null },
-                            { name: 'Joshua B. Baliber', initials: 'JB', photo: null },
-                            { name: 'John Raven M. Ferrer', initials: 'JF', photo: '/images/raven.png' }
+                            { name: 'Lui Vhinz Dominic P. Briñas', initials: 'LB', photo: '/images/lui.png', role: 'Project Head / Database Designer (PH/DD)' },
+                            { name: 'Begie B. Golpe', initials: 'BG', photo: '/images/beggie.jpg', role: 'Network Designer / UI Designer (ND/UID)' },
+                            { name: 'Zyra Devie D. Malto', initials: 'ZM', photo: '/images/zyra.png', role: 'QA Tester / Documentation Writer (QA/TW)' },
+                            { name: 'Joshua B. Baliber', initials: 'JB', photo: null, role: 'Software Engineer / Programmer (SE/P)' },
+                            { name: 'John Raven M. Ferrer', initials: 'JF', photo: '/images/raven.png', role: 'Software Engineer / Programmer (SE/P)' }
                         ]; %>
                         <% teamMembers.forEach(function (m) { %>
                         <div class="team-card-col">
@@ -357,8 +357,8 @@
                                 <% } %>
                                 <div class="flex-grow-1 min-width-0">
                                     <h6 class="mb-0"><%= m.name %></h6>
-                                    <p class="text-primary fs-13 fw-medium mb-1">Project Proponent, Team Dunbar</p>
-                                    <p class="text-muted fs-13 mb-0">Contributed to the design and development of CIPRMS as part of this capstone project. Individual role/contribution details to be supplied by the team.</p>
+                                    <p class="text-primary fs-13 fw-medium mb-1"><%= m.role %></p>
+                                    <p class="text-muted fs-13 mb-0">Contributed to the design and development of CIPRMS as part of this capstone project.</p>
                                 </div>
                             </div>
                         </div>
