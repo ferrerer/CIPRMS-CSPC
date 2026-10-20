@@ -164,32 +164,20 @@ async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, 
 
   const db = getDb();
 
-  // Google Drive storage, tried first whenever Google Docs is connected (see services/documentStorageService.js
-  // for why — Render's free plan wipes local disk on every redeploy). Local disk is always the fallback: when
-  // Drive isn't connected, when the upload fails, and ALWAYS under Jest (JEST_WORKER_ID) — the existing test
-  // suite's local-disk assertions (e.g. test/partnership-document-persistence.test.js) are unaffected.
-  let driveFileId = null;
-  if (!process.env.JEST_WORKER_ID) {
-    try {
-      const buffer = await fsp.readFile(tempFilePath);
-      driveFileId = await documentStorageService.uploadDocument(db, buffer, permanentName, EXT_MIME_TYPES[ext.toLowerCase()]);
-    } catch (err) {
-      console.error('⚠️  Document Library: Google Drive upload failed, falling back to local disk:', documentStorageService.describeGoogleError(err));
-    }
-  }
-
+  // Local disk first, always — fast and synchronous, exactly as this function behaved before Google Drive
+  // storage existed. The caller (POST /api/ocr/confirm, etc.) is a live HTTP request a real person is
+  // waiting on; it must never be held open by a slow network call. Google Drive upload used to be awaited
+  // right here, and on Render's network a slow Drive API response could keep this request open long enough
+  // to trip the browser's/Render's own connection timeout — surfacing to the user as "failed to upload /
+  // lost connection" even though the document had actually saved successfully. See uploadToDriveInBackground()
+  // below for where Drive upload actually happens now: after this function has already returned.
   const permanentPath = path.join(DOCUMENTS_DIR, permanentName);
-  if (driveFileId) {
-    // Drive already has the bytes — no point also keeping a local copy Render will wipe on the next deploy anyway.
+  try {
+    await fsp.rename(tempFilePath, permanentPath);
+  } catch {
+    // Cross-device fallback (rename can fail across filesystems/mounts)
+    await fsp.copyFile(tempFilePath, permanentPath);
     await fsp.unlink(tempFilePath).catch(() => {});
-  } else {
-    try {
-      await fsp.rename(tempFilePath, permanentPath);
-    } catch {
-      // Cross-device fallback (rename can fail across filesystems/mounts)
-      await fsp.copyFile(tempFilePath, permanentPath);
-      await fsp.unlink(tempFilePath).catch(() => {});
-    }
   }
   const type = shortDocType(extraction && extraction.documentType);
   const institution = (extraction && extraction.institution) || null;
@@ -228,7 +216,7 @@ async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, 
     date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     status: extraction ? 'Active' : 'Needs Review',
     fileLink: `/uploads/documents/${permanentName}`,
-    driveFileId: driveFileId || null,
+    driveFileId: null, // set asynchronously by uploadToDriveInBackground() below, after this document already exists
     tags: [type, extraction ? 'OCR Extracted' : 'OCR Failed'].concat(issuingBody ? [issuingBody] : []),
     uploadedBy: meta.uploadedBy || 'Unknown',
     uploadedByEmail: meta.uploadedByEmail || null,
@@ -286,7 +274,35 @@ async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, 
   // landing on the same id). insertWithNextId() (db.js) retries on an id collision the same way every
   // other collection's insert does now.
   const doc = await insertWithNextId(db.collection('documents'), buildDoc);
+
+  // Google Drive upload happens here, AFTER the document is already saved and this function is about to
+  // return — never awaited, so it cannot delay the caller's response (see the comment above). Skipped
+  // entirely under Jest: the existing test suite's local-disk assertions (e.g.
+  // test/partnership-document-persistence.test.js) expect the file to stay on disk, unaffected by this.
+  if (!process.env.JEST_WORKER_ID) {
+    uploadToDriveInBackground(db, doc.id, permanentPath, permanentName, EXT_MIME_TYPES[ext.toLowerCase()]);
+  }
+
   return { documentId: doc.id, fileLink: doc.fileLink };
+}
+
+// Fire-and-forget: reads the just-saved local file, uploads it to the connected Google Drive account, and
+// on success records driveFileId + deletes the local copy (Render will wipe it on the next redeploy anyway,
+// so there's no reason to keep both). On any failure — Drive not connected, a network error, an expired
+// token — the document simply stays on local disk exactly as it always did before Drive storage existed;
+// logged for visibility, never thrown, never surfaced to whichever request triggered the original upload
+// (which has already finished and responded by the time this runs).
+function uploadToDriveInBackground(db, documentId, localPath, filename, mimeType) {
+  fsp.readFile(localPath)
+    .then((buffer) => documentStorageService.uploadDocument(db, buffer, filename, mimeType))
+    .then((driveFileId) => {
+      if (!driveFileId) return; // Drive isn't connected — stays on local disk, nothing more to do
+      return db.collection('documents').updateOne({ id: documentId }, { $set: { driveFileId } })
+        .then(() => fsp.unlink(localPath).catch(() => {}));
+    })
+    .catch((err) => {
+      console.error(`⚠️  Document Library: background Google Drive upload failed for document ${documentId}, staying on local disk:`, documentStorageService.describeGoogleError(err));
+    });
 }
 
 async function updateDocument(id, updates) {
