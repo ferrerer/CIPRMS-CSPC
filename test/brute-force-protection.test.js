@@ -280,4 +280,111 @@ describe('Live countdown: the server\'s lockedUntil is consistent across the 429
       expect(doc).toBeNull(); // no document was ever created by reading status alone
     });
   }, 30000);
+
+  // 2026-11 production report: "the countdown disappears out of nowhere, before its own time is up, and
+  // then I can log in." Root cause, confirmed by reading the code rather than guessing: POST /login (and
+  // the Google routes) can block on EITHER the shared 'ip' scope OR a per-account scope ('account-password'
+  // here; 'account' for Google) — whichever is more restrictive escalates independently per
+  // services/loginLockoutService.js's own tier state, so a heavily-retried e-mail's account-scope lock can
+  // easily outlive a freshly-keyed IP's. The ORIGINAL status endpoint/client only ever checked 'ip' — so
+  // once the IP side cleared, the next 5-second poll reported "unlocked" and the client removed the
+  // countdown and re-enabled the button, even while the real (account-scoped) lock the 429 was actually
+  // keyed on was still active for 50+ more seconds. This models that exact asymmetry directly (an account
+  // lock with no matching IP lock) rather than trying to recreate days of real escalation history.
+  describe('Account-scoped lockout (no matching IP lockout) — the countdown must not disappear while it is still active', () => {
+    test('the 429 countdown is seeded from the account-scope lockedUntil and carries the attempted identifier; the status endpoint, given that identifier, correctly reports still-locked; without it (the old client behavior), it still safely under-reports unlocked rather than crashing; and a real retry against the same account is still blocked regardless', async () => {
+      await withRealLockout(async () => {
+        const agent = request.agent(app);
+        const victim = `${TEST_TAG}.accountscopegap.${Date.now()}@example.com`;
+        await clearLockouts(LOOPBACK);
+        await db.collection('loginLockouts').deleteMany({ scope: 'account-password', key: victim });
+
+        // Seed a long-lived account-scope lock directly — no IP-scope document at all — modeling a
+        // heavily-escalated account tier next to a freshly-keyed IP that has never been locked before.
+        const accountLockedUntil = new Date(Date.now() + 60000);
+        await db.collection('loginLockouts').insertOne({ scope: 'account-password', key: victim, lockedUntil: accountLockedUntil, tier: 4, recentFailures: [] });
+
+        // The IP itself passes (never failed anything); execution falls through to the account-scope check,
+        // which blocks and renders ITS OWN lockedUntil plus the attempted identifier.
+        const blocked = await agent.post('/login').type('form').send({ username: victim, password: 'wrong' });
+        expect(blocked.status).toBe(429);
+        const elMatch = blocked.text.match(/id="ciprms-lockout-countdown" data-locked-until="([^"]+)"(?: data-attempted-identifier="([^"]+)")?/);
+        expect(elMatch).toBeTruthy();
+        expect(new Date(elMatch[1]).getTime()).toBe(accountLockedUntil.getTime());
+        expect(elMatch[2]).toBe(victim); // the fix: the identifier this block was for is now in the page
+
+        // The fix: given that identifier, the status endpoint now correctly reports the account lock.
+        const statusWithEmail = await agent.get('/api/login-lockout-status').query({ email: victim });
+        expect(statusWithEmail.body.locked).toBe(true);
+        expect(new Date(statusWithEmail.body.lockedUntil).getTime()).toBe(accountLockedUntil.getTime());
+
+        // Without an identifier at all (e.g. a stale cached client, or GET '/' 's own passive IP-only check),
+        // the endpoint still safely reports unlocked rather than erroring — a known, accepted limitation for
+        // callers that never had an identifier to send, not a new failure mode this fix introduces.
+        const statusNoEmail = await agent.get('/api/login-lockout-status');
+        expect(statusNoEmail.body).toEqual({ locked: false, lockedUntil: null });
+
+        // Enforcement itself was never bypassed by the display bug: a real subsequent attempt against the
+        // SAME locked account is still blocked by checkSignInLockout()'s own direct check.
+        const stillBlocked = await agent.post('/login').type('form').send({ username: victim, password: 'wrong' });
+        expect(stillBlocked.status).toBe(429);
+      });
+    }, 30000);
+
+    test('an identifier containing HTML/script-breaking characters is rendered safely escaped, never as raw markup', async () => {
+      await withRealLockout(async () => {
+        const agent = request.agent(app);
+        // A real sign-in attempt can only ever submit this as a USERNAME (login is by e-mail), but
+        // safeLoginIdentifier() only trims/length-caps — it does not strip HTML — so this is the exact
+        // hostile shape that would reach the EJS render if a username field ever carried one.
+        const hostile = `${TEST_TAG}.xss.${Date.now()}"><script>alert(1)</script>@example.com`;
+        await clearLockouts(LOOPBACK);
+        await db.collection('loginLockouts').deleteMany({ scope: 'account-password', key: hostile.trim().toLowerCase() });
+        await db.collection('loginLockouts').insertOne({ scope: 'account-password', key: hostile.trim().toLowerCase(), lockedUntil: new Date(Date.now() + 60000), tier: 0, recentFailures: [] });
+
+        const blocked = await agent.post('/login').type('form').send({ username: hostile, password: 'wrong' });
+        expect(blocked.status).toBe(429);
+        expect(blocked.text).not.toContain('<script>alert(1)</script>'); // never unescaped into the page
+        expect(blocked.text).toMatch(/data-attempted-identifier="[^"]*&lt;script&gt;/); // present, HTML-entity-escaped
+      });
+    }, 30000);
+
+    test('a malformed email query (array/object-shaped, from a crafted ?email[$ne]=1 or repeated ?email=&email= style query) is safely ignored, not passed to the lockout service', async () => {
+      await withRealLockout(async () => {
+        const agent = request.agent(app);
+        await clearLockouts(LOOPBACK);
+        const arrayShaped = await agent.get('/api/login-lockout-status').query('email[$ne]=1');
+        expect(arrayShaped.status).toBe(200);
+        expect(arrayShaped.body).toEqual({ locked: false, lockedUntil: null });
+
+        const repeated = await agent.get('/api/login-lockout-status').query('email=a@example.com&email=b@example.com');
+        expect(repeated.status).toBe(200);
+        expect(repeated.body).toEqual({ locked: false, lockedUntil: null }); // array, not string — skipped, same as absent
+      });
+    }, 30000);
+
+    test('when BOTH the IP and the account scope are locked, the status endpoint reports whichever expires LATER, not just whichever was checked first', async () => {
+      await withRealLockout(async () => {
+        const agent = request.agent(app);
+        const victim = `${TEST_TAG}.bothscopes.${Date.now()}@example.com`;
+        await clearLockouts(LOOPBACK);
+        await db.collection('loginLockouts').deleteMany({ scope: 'account-password', key: victim });
+
+        // IP locked for a SHORT remaining time; account locked for a LONGER remaining time. Seeded under
+        // every possible loopback representation (not just one) since which exact string this supertest
+        // connection resolves to as req.ip is itself an implementation detail — same reasoning as this
+        // file's own clearLockouts(LOOPBACK) treating all 3 as interchangeable candidates.
+        const ipLockedUntil = new Date(Date.now() + 5000);
+        const accountLockedUntil = new Date(Date.now() + 60000);
+        await db.collection('loginLockouts').insertMany(
+          LOOPBACK.map((key) => ({ scope: 'ip', key, lockedUntil: ipLockedUntil, tier: 0, recentFailures: [] }))
+        );
+        await db.collection('loginLockouts').insertOne({ scope: 'account-password', key: victim, lockedUntil: accountLockedUntil, tier: 4, recentFailures: [] });
+
+        const status = await agent.get('/api/login-lockout-status').query({ email: victim });
+        expect(status.body.locked).toBe(true);
+        expect(new Date(status.body.lockedUntil).getTime()).toBe(accountLockedUntil.getTime()); // the later one, not the IP's shorter one
+      });
+    }, 30000);
+  });
 });

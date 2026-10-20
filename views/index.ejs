@@ -243,9 +243,13 @@
                                      timestamp, the one source of truth) — public/js/ciprms-login-lockout.js ticks the
                                      display down from it and re-confirms with GET /api/login-lockout-status before ever
                                      re-enabling the button below, so the display is purely cosmetic and never itself what
-                                     decides whether a retry is allowed. -->
+                                     decides whether a retry is allowed. data-attempted-identifier (2026-11): the e-mail
+                                     this specific block's own lockout check was for, when known — never another user's
+                                     data, only an echo of what the person looking at this page just typed/selected
+                                     themselves — lets the script also ask about the matching account scope, not just IP;
+                                     GET '/' never sets this (a bare page load has no attempt to echo). -->
                                 <% if (typeof lockedUntil !== 'undefined' && lockedUntil) { %>
-                                <div class="alert alert-warning d-flex align-items-center gap-2 mt-3" role="status" id="ciprms-lockout-countdown" data-locked-until="<%= lockedUntil %>">
+                                <div class="alert alert-warning d-flex align-items-center gap-2 mt-3" role="status" id="ciprms-lockout-countdown" data-locked-until="<%= lockedUntil %>"<% if (typeof attemptedIdentifier !== 'undefined' && attemptedIdentifier) { %> data-attempted-identifier="<%= attemptedIdentifier %>"<% } %>>
                                     <i class="ri-time-line fs-16"></i>
                                     <div>Try again in <strong id="ciprms-lockout-countdown-time">--:--</strong></div>
                                 </div>

@@ -14,6 +14,11 @@
   var timeEl = document.getElementById('ciprms-lockout-countdown-time');
   var btn = document.getElementById('ciprms-google-signin-btn');
   var lockedUntil = new Date(el.getAttribute('data-locked-until')).getTime();
+  // 2026-11: the identifier (if any) this lockout's own check was for — see index.ejs's own comment on
+  // data-attempted-identifier. Included in the status poll below so the server can also check the matching
+  // account/account-password scope, not just 'ip' — otherwise an account-scoped lock whose escalation tier
+  // outlives the IP's own would get reported as unlocked from the IP check alone, well before it really is.
+  var attemptedIdentifier = el.getAttribute('data-attempted-identifier') || '';
 
   var RECHECK_EVERY_MS = 5000; // a safety net against client/server clock drift, not the primary mechanism
   var tickTimer = null;
@@ -59,7 +64,8 @@
 
   function confirmWithServer() {
     awaitingConfirm = true;
-    fetch('/api/login-lockout-status', { headers: { 'X-Requested-With': 'ciprms', Accept: 'application/json' }, credentials: 'same-origin' })
+    var url = '/api/login-lockout-status' + (attemptedIdentifier ? '?email=' + encodeURIComponent(attemptedIdentifier) : '');
+    fetch(url, { headers: { 'X-Requested-With': 'ciprms', Accept: 'application/json' }, credentials: 'same-origin' })
       .then(function (res) {
         var ct = res.headers.get('content-type') || '';
         if (!res.ok || !/json/i.test(ct)) return null; // an inconclusive check is never itself proof of expiry

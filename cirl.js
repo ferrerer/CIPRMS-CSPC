@@ -187,7 +187,19 @@ async function checkSignInLockout(req, res, scope, key, identifierForAudit, meth
   const attemptedId = safeLoginIdentifier(identifierForAudit);
   await logActivity(getDb(), null, 'LOGIN_BLOCKED', `Sign-in rate-limited${attemptedId ? ' for ' + attemptedId : ''}`,
     { category: 'Authentication', status: 'blocked', targetType: 'login_attempt', targetId: attemptedId, ip: getClientIp(req), userAgent: getClientUserAgent(req), requestId: req.sessionID || null, details: { reason: 'rate_limited', scope, method: method || 'password' } });
-  res.status(429).render('index', { activePage: '', error: loginLockoutService.lockoutMessage(status.retryAfterSeconds), lockedUntil: status.lockedUntil.toISOString() });
+  // attemptedIdentifier (2026-11, account-scope countdown fix): GET /api/login-lockout-status only ever
+  // checked the 'ip' scope, because the live-countdown script that polls it never had any identifier to
+  // also check an 'account'/'account-password' scope against — a gap that mattered because THIS block may
+  // itself have come from the account scope rather than 'ip' (e.g. a heavily-retried e-mail whose own
+  // escalation tier has climbed past the IP's). The result: a poll mid-countdown would report "unlocked"
+  // from 'ip' alone and the client would remove the countdown and re-enable the button while the real
+  // (account-scoped) lock was still active — reported directly in production. Embedding the identifier that
+  // WAS just checked (whichever scope this call is for) lets the client ask the status endpoint the right
+  // question going forward. Safe to always include, not just for account-scope blocks: the identifier is
+  // either null (no identity known yet, e.g. the Google-flow's pre-OAuth 'ip' check) or something the person
+  // looking at THIS page just typed/selected themselves — never another user's data, and the status endpoint
+  // below still only ever answers with {locked, lockedUntil}, never whether the account itself exists.
+  res.status(429).render('index', { activePage: '', error: loginLockoutService.lockoutMessage(status.retryAfterSeconds), lockedUntil: status.lockedUntil.toISOString(), attemptedIdentifier: attemptedId });
   return true;
 }
 async function recordSignInFailure(scope, key) {
@@ -1123,19 +1135,37 @@ app.post('/login', async (req, res) => {
 // lockedUntil this endpoint reports), never itself the thing that decides whether a retry is allowed. Never
 // counts as an attempt (read-only getLockoutStatus, no recordFailure); never reveals which scope is active,
 // the attempt threshold, or whether `email` belongs to a real account — returns only {locked, lockedUntil}
-// for whichever of the IP or (if an email was supplied) that Google account's own scope is more restrictive,
-// matching the exact same two checks checkSignInLockout() already performs for a real sign-in attempt.
+// for whichever of IP, the Google account scope, or the password account scope (when an email was supplied)
+// is more restrictive.
+//
+// Checks BOTH account scopes, not just Google's (2026-11 fix): this endpoint used to check only 'account'
+// (Google), while checkSignInLockout() itself can also block on 'account-password' (POST /login's own
+// per-email scope — PASSWORD_ACCOUNT_SCOPE). A block render now embeds whichever identifier it just checked
+// as data-attempted-identifier (see views/index.ejs), and the client includes it here as `email` — but
+// since that identifier doesn't say which flow produced it, checking both account scopes (rather than
+// guessing) is what actually matches checkSignInLockout()'s own two checks for a real sign-in attempt.
+// Before this, a request with no `email` at all (the client's prior behavior) meant an account-scoped lock
+// whose own escalation tier outlived the IP's could be reported here as unlocked while still genuinely
+// active server-side — reported directly in production. Does not affect enforcement itself: a real sign-in
+// attempt against a still-locked account is blocked by checkSignInLockout()'s own direct check regardless
+// of what this read-only status endpoint ever reports.
 app.get('/api/login-lockout-status', lockoutStatusLimiter, async (req, res) => {
   try {
     const ip = getClientIp(req);
     const ipStatus = await loginLockoutService.getLockoutStatus(getDb(), 'ip', ip);
-    let accountStatus = { locked: false };
+    let googleAccountStatus = { locked: false };
+    let passwordAccountStatus = { locked: false };
     if (typeof req.query.email === 'string' && req.query.email) {
       const accountKey = loginLockoutService.normalizeAccountKey(req.query.email);
-      if (accountKey) accountStatus = await loginLockoutService.getLockoutStatus(getDb(), 'account', accountKey);
+      if (accountKey) {
+        [googleAccountStatus, passwordAccountStatus] = await Promise.all([
+          loginLockoutService.getLockoutStatus(getDb(), 'account', accountKey),
+          loginLockoutService.getLockoutStatus(getDb(), PASSWORD_ACCOUNT_SCOPE, accountKey)
+        ]);
+      }
     }
     // Whichever expires LATER is the one actually still blocking a retry.
-    const mostRestrictive = [ipStatus, accountStatus]
+    const mostRestrictive = [ipStatus, googleAccountStatus, passwordAccountStatus]
       .filter((s) => s.locked)
       .sort((a, b) => new Date(b.lockedUntil).getTime() - new Date(a.lockedUntil).getTime())[0];
     if (!mostRestrictive) return res.json({ locked: false, lockedUntil: null });
