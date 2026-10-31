@@ -69,6 +69,7 @@
                                             <option value="Auth. Personnel">College Dean</option>
                                             <option value="potential_partner">Partner</option>
                                             <option value="Staff">CIRL Staff</option>
+                                            <option value="LAU">LAU</option>
                                         </select>
                                     </div>
                                 </div>
@@ -115,14 +116,26 @@
                                                 <th class="text-center"><i class="ri-user-star-line me-1"></i>College Dean</th>
                                                 <th class="text-center"><i class="ri-handshake-line me-1"></i>Partner</th>
                                                 <th class="text-center"><i class="ri-briefcase-line me-1"></i>CIRL Staff</th>
+                                                <th class="text-center"><i class="ri-eye-line me-1"></i>LAU</th>
                                                 <th style="min-width:280px;">Notes</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <% /* Re-audited 2026-09-20 against the gating middleware on every page route
+                                            <% /* Re-audited 2026-10 against the gating middleware on every page route
                                                    (requireAdmin / requirePersonnel / requirePartner / requireStaffAccess /
-                                                   requireUploader / requireRequester / requireAuth, denyDepartmentPage) and the
-                                                   API route each page calls. Changes since the 2026-08-27 audit that this reflects:
+                                                   requireUploader / requireRequester / requireAuth / requireLau /
+                                                   requireFileAccess, denyDepartmentPage) and the API route each page calls.
+                                                   2026-10 addition: LAU, a new read-only Partnership Request monitoring
+                                                   role (requireLau). It reuses the exact Administrator/Staff monitoring
+                                                   page (administrator/partnership_requests.ejs) fully read-only (that
+                                                   template's IS_ADMIN flag is false for it), sees every submitter's
+                                                   requests (REQUEST_VIEW_ALL_ROLES, not REQUEST_REVIEWER_ROLES — it has no
+                                                   review/approve/reject authority), can open any Partnership Request's
+                                                   supporting documents (requireFileAccess, a dedicated gate — NOT added to
+                                                   requireUploader, which also guards real write routes), and has no access
+                                                   to Document Requests, the Partnerships registry, Document Library,
+                                                   Calendar, Notifications, Reports, User Management, or Settings.
+                                                   Changes since the 2026-08-27 audit that this reflects:
                                                    - Calendar: create/edit/delete is requireStaffAccess (Administrator AND CIRL Staff,
                                                      since 2026-09-14). College Dean/Partner view it and JOIN meetings they are invited
                                                      to (POST /api/calendarevents/:id/join, checked server-side); Administrator/CIRL
@@ -149,31 +162,31 @@
                                                    S = function (t) { return { t: t, l: 'scoped' }; },
                                                    N = function (t) { return { t: t || 'No', l: 'none' }; }; %>
                                             <% var perms = [
-                                                { feature: 'Dashboard', admin: F('Full'), college: N(), partner: N(), staff: F('Full'),
-                                                  note: 'College Dean and Partner have no Dashboard; they land on Monitoring.' },
-                                                { feature: 'Calendar', admin: F('Full (create / edit / delete)'), college: S('View Only'), partner: S('View Only'), staff: F('Full (create / edit / delete)'),
-                                                  note: 'Only Administrator and CIRL Staff manage events. Everyone sees just the events that are public or name them; Administrator sees all.' },
-                                                { feature: 'Meetings (invitations &amp; attendance)', admin: F('Full (invite, see who joined)'), college: S('Join When Invited'), partner: S('Join When Invited'), staff: F('Full (invite, see who joined)'),
-                                                  note: 'Invitations are e-mailed by Google Calendar once it is connected. Join opens at the meeting start and is checked on the server, which records the join time.' },
-                                                { feature: 'Monitoring', admin: F('Full'), college: S('Own Only'), partner: S('Own Only'), staff: F('Full'),
-                                                  note: 'Administrator and CIRL Staff: partnership overview and registry. College Dean and Partner: only their own submitted requests.' },
-                                                { feature: 'Registry (inside Monitoring)', admin: F('Full (CRUD)'), college: N(), partner: N(), staff: F('Full (CRUD)'),
-                                                  note: 'Add, edit, renew and delete partnerships.' },
-                                                { feature: 'Document Library', admin: S('Own + Review Attachments'), college: N(), partner: N(), staff: S('Own + Review Attachments'),
-                                                  note: 'The library lists a user\'s own uploads; reviewers can also open any request attachment. College Dean and Partner have no library page, but files they submit are still archived for review.' },
-                                                { feature: 'User Management', admin: F('Full'), college: N(), partner: N(), staff: S('Full (except Administrator accounts)'),
+                                                { feature: 'Dashboard', admin: F('Full'), college: N(), partner: N(), staff: F('Full'), lau: N(),
+                                                  note: 'College Dean, Partner, and LAU have no Dashboard; they land on Monitoring.' },
+                                                { feature: 'Calendar', admin: F('Full (create / edit / delete)'), college: S('View Only'), partner: S('View Only'), staff: F('Full (create / edit / delete)'), lau: N(),
+                                                  note: 'Only Administrator and CIRL Staff manage events. College Dean/Partner see just the events that are public or name them; Administrator sees all. LAU has no Calendar access.' },
+                                                { feature: 'Meetings (invitations &amp; attendance)', admin: F('Full (invite, see who joined)'), college: S('Join When Invited'), partner: S('Join When Invited'), staff: F('Full (invite, see who joined)'), lau: N(),
+                                                  note: 'Invitations are e-mailed by Google Calendar once it is connected. Join opens at the meeting start and is checked on the server, which records the join time. LAU has no Calendar access.' },
+                                                { feature: 'Monitoring', admin: F('Full'), college: S('Own Only'), partner: S('Own Only'), staff: F('Full'), lau: S('View Only — All Requests'),
+                                                  note: 'Administrator and CIRL Staff: partnership overview and registry. College Dean and Partner: only their own submitted requests. LAU: every submitter\'s requests, read-only.' },
+                                                { feature: 'Registry (inside Monitoring)', admin: F('Full (CRUD)'), college: N(), partner: N(), staff: F('Full (CRUD)'), lau: N(),
+                                                  note: 'Add, edit, renew and delete partnerships. LAU\'s monitoring is Partnership Requests only, not the Partnerships registry.' },
+                                                { feature: 'Document Library', admin: S('Own + Review Attachments'), college: N(), partner: N(), staff: S('Own + Review Attachments'), lau: S('Request Attachments Only'),
+                                                  note: 'The library lists a user\'s own uploads; reviewers can also open any request attachment. College Dean and Partner have no library page, but files they submit are still archived for review. LAU has no library page either, but can open any Partnership Request\'s own supporting documents from its detail view.' },
+                                                { feature: 'User Management', admin: F('Full'), college: N(), partner: N(), staff: S('Full (except Administrator accounts)'), lau: N(),
                                                   note: 'CIRL Staff cannot create, edit or delete an Administrator account, or grant the Administrator role.' },
-                                                { feature: 'Partnership Requests', admin: F('Full (Review / Approve / Reject)'), college: N(), partner: S('Submit Only'), staff: F('Full (Review / Approve / Reject)'),
-                                                  note: 'Partners submit and track their own. College Dean has no Partnership Request page (the submit API itself is still open to the role).' },
-                                                { feature: 'Document Requests', admin: F('Full (Review / Fulfill / Reject)'), college: S('Submit Only'), partner: S('Submit MOA/MOU Only'), staff: F('Full (Review / Fulfill / Reject)'),
-                                                  note: 'Partners use the &ldquo;Submission Of MOA/MOU&rdquo; form. Reviewers get the printable form and PDF.' },
-                                                { feature: 'Notifications', admin: S('Own Only'), college: S('Own Only'), partner: S('Bell Only (own)'), staff: S('Own Only'),
-                                                  note: 'Always the user\'s own notifications. Partner has the header bell but no Notifications page.' },
-                                                { feature: 'Reports &amp; Analytics', admin: F('Full'), college: N(), partner: N(), staff: S('Full, Own Audit Trail Only'),
+                                                { feature: 'Partnership Requests', admin: F('Full (Review / Approve / Reject)'), college: N(), partner: S('Submit Only'), staff: F('Full (Review / Approve / Reject)'), lau: S('View Only — All Requests'),
+                                                  note: 'Partners submit and track their own. College Dean has no Partnership Request page (the submit API itself is still open to the role). LAU reuses the exact same Admin/Staff page, fully read-only — no submit, edit, approve, reject, or delete.' },
+                                                { feature: 'Document Requests', admin: F('Full (Review / Fulfill / Reject)'), college: S('Submit Only'), partner: S('Submit MOA/MOU Only'), staff: F('Full (Review / Fulfill / Reject)'), lau: N(),
+                                                  note: 'Partners use the &ldquo;Submission Of MOA/MOU&rdquo; form. Reviewers get the printable form and PDF. LAU\'s monitoring scope is Partnership Requests only — the Document Requests tab on that shared page is hidden for this role.' },
+                                                { feature: 'Notifications', admin: S('Own Only'), college: S('Own Only'), partner: S('Bell Only (own)'), staff: S('Own Only'), lau: N(),
+                                                  note: 'Always the user\'s own notifications. Partner has the header bell but no Notifications page. LAU has neither in this release.' },
+                                                { feature: 'Reports &amp; Analytics', admin: F('Full'), college: N(), partner: N(), staff: S('Full, Own Audit Trail Only'), lau: N(),
                                                   note: 'Audit Trail: Administrator sees every record; CIRL Staff sees only their own actions.' },
-                                                { feature: 'Settings (own account)', admin: F('Full'), college: F('Full'), partner: F('Full'), staff: F('Full'),
-                                                  note: 'Personal details (Partner: organization profile) and password.' },
-                                                { feature: 'Google Calendar connection (Admin Settings)', admin: F('Full'), college: N(), partner: N(), staff: N(),
+                                                { feature: 'Settings (own account)', admin: F('Full'), college: F('Full'), partner: F('Full'), staff: F('Full'), lau: N('No'),
+                                                  note: 'Personal details (Partner: organization profile) and password. LAU has no Settings page in this release — out of scope for the initial read-only monitoring role.' },
+                                                { feature: 'Google Calendar connection (Admin Settings)', admin: F('Full'), college: N(), partner: N(), staff: N(), lau: N(),
                                                   note: 'Only Administrator connects, checks or disconnects the organization\'s Google account.' }
                                             ]; %>
                                             <% function permBadge(c){
@@ -188,6 +201,7 @@
                                                 <td class="text-center"><%- permBadge(p.college) %></td>
                                                 <td class="text-center"><%- permBadge(p.partner) %></td>
                                                 <td class="text-center"><%- permBadge(p.staff) %></td>
+                                                <td class="text-center"><%- permBadge(p.lau) %></td>
                                                 <td class="text-muted fs-12"><%- p.note %></td>
                                             </tr>
                                             <% }); %>
@@ -245,6 +259,7 @@
                             <option value="Auth. Personnel" selected>College Dean</option>
                             <option value="Staff">CIRL Staff</option>
                             <option value="potential_partner">Partner</option>
+                            <option value="LAU">LAU</option>
                         </select>
                     </div>
                     <!-- Edit User only: on Add User these are left to the account owner's first-sign-in activation form. -->

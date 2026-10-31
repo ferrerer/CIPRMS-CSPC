@@ -24,6 +24,11 @@
          fields below, so there is one Responsible Unit list and one creation path in the app, never a
          separate unit-management system (2026-11 Dynamic College/Unit Dropdowns). -->
     <script src="/velzon/assets/js/shared/responsible-units.js"></script>
+    <!-- Canonical partnership-status → color mapping (2026-10 status-color standardization) — the SAME file
+         cirl.js require()'s server-side for PDF generation, loaded here as a plain global (CIPRMS_STATUS_COLORS)
+         so the Custom Report Builder preview's badges/swatches and the exported PDF can never disagree on
+         what color a given status is. -->
+    <script src="/velzon/assets/js/shared/status-colors.js"></script>
     <!-- Custom Report Builder — searchable Country filter (2026-09-23). Same visual language (rounded corners,
          shadow, bounded/scrollable results, hover highlight, dark-mode variant) as the Registry page's Country
          combobox, defined independently here since this is a separate template with its own CSS. -->
@@ -1363,7 +1368,10 @@
                 recHtml = '<tr><td colspan="10" class="text-center text-muted py-3">No partnerships found matching the selected filters.</td></tr>';
             } else {
                 records.forEach(function(p, i) {
-                    var stBadge = p.status === 'Active' ? 'bg-success-subtle text-success' : p.status === 'Expiring Soon' ? 'bg-warning-subtle text-warning' : 'bg-danger-subtle text-danger';
+                    // Was its own inline ternary that defaulted anything not Active/Expiring Soon — including
+                    // "Inactive" and any unexpected value — to the danger/red color. Now the one shared mapping
+                    // every other status color in this page (and the exported PDF) also reads from.
+                    var stBadge = CIPRMS_STATUS_COLORS.badgeClass(p.status);
                     recHtml += '<tr>'
                         + '<td>' + (i + 1) + '</td>'
                         + '<td class="fw-semibold">' + escapeHtml(p.inst) + '</td>'
@@ -1390,7 +1398,15 @@
             var theadRow = document.getElementById('prev-grouped-thead-row');
             var tbody = document.getElementById('prev-grouped-tbody');
             var metrics = data.metrics || [];
-            theadRow.innerHTML = metrics.map(function (m) { return '<th>' + escapeHtml(m) + '</th>'; }).join('');
+            // Mirrors drawGroupedHeader()'s swatch in the exported PDF (cirl.js, renderPartnershipReportPdf's
+            // grouped path) — a metric column whose label IS a status name (e.g. "Active", "Expired") gets the
+            // same color swatch here in the preview, so the two never show a status colored differently.
+            theadRow.innerHTML = metrics.map(function (m) {
+                var swatch = CIPRMS_STATUS_COLORS.isKnownStatus(m)
+                    ? '<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + CIPRMS_STATUS_COLORS.hex(m) + ';margin-right:5px;"></span>'
+                    : '';
+                return '<th>' + swatch + escapeHtml(m) + '</th>';
+            }).join('');
 
             var rows = data.comparisonData || [];
             if (!rows.length) {
@@ -1507,12 +1523,12 @@
         var MAX_CMP_CONFIGS = 5;
         var MIN_CMP_CONFIGS = 1;
 
+        // Delegates to the one shared mapping (assets/js/shared/status-colors.js) — this function's own body
+        // used to duplicate the same four if-checks the flat-records-table badge above also had its own
+        // (slightly different, less complete) copy of; kept as a thin wrapper, not removed outright, so its
+        // one call site below doesn't need to change.
         function statusBadgeClass(status) {
-            if (status === 'Active') return 'bg-success-subtle text-success';
-            if (status === 'Expired') return 'bg-danger-subtle text-danger';
-            if (status === 'Expiring Soon') return 'bg-warning-subtle text-warning';
-            if (status === 'Inactive') return 'bg-secondary-subtle text-secondary';
-            return 'bg-light text-dark';
+            return CIPRMS_STATUS_COLORS.badgeClass(status);
         }
 
         // Builds one configuration card's HTML. Mirrors exactly the 8 fields the

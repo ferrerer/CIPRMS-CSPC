@@ -548,6 +548,7 @@
                     </div>
                   </div>
                 </div>
+                <% if (typeof user === 'undefined' || !user || user.role !== 'LAU') { %>
                 <div class="col-xl col-md-4 col-6">
                   <div class="card stat-card border-0 shadow-sm">
                     <div class="card-body">
@@ -563,6 +564,7 @@
                     </div>
                   </div>
                 </div>
+                <% } %>
                 <div class="col-xl col-md-4 col-6">
                   <div class="card stat-card border-0 shadow-sm">
                     <div class="card-body">
@@ -624,6 +626,7 @@
                           </div>
                           <span class="tab-count" id="tab-cnt-pr">0</span>
                         </a>
+                        <% if (typeof user === 'undefined' || !user || user.role !== 'LAU') { %>
                         <a class="section-tab" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
                           <div class="section-tab-icon"><i class="ri-file-shield-2-line"></i></div>
                           <div class="section-tab-body">
@@ -632,6 +635,7 @@
                           </div>
                           <span class="tab-count" id="tab-cnt-dr">0</span>
                         </a>
+                        <% } %>
                       </div>
                     </div>
 
@@ -999,6 +1003,14 @@
     // both roles; every other role gets the read-only "View" mode.
     var IS_ADMIN = <%- JSON.stringify(typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) %>;
 
+    // LAU (2026-10, read-only partnership-request monitoring role) is deliberately scoped to Partnership
+    // Requests only, not Document Requests — a separate collection/workflow bundled into this same page.
+    // The Document Requests tab/stat card is hidden server-side below (never rendered, not just
+    // CSS-hidden), and loadDR()/refreshLive()/the live-event subscription all skip fetching
+    // /api/document-requests for this role — that route stays requireStaffAccess-gated server-side
+    // regardless of this flag; this is what keeps the client from ever calling it and hitting a 403.
+    var IS_LAU = <%- JSON.stringify(typeof user !== 'undefined' && user && user.role === 'LAU') %>;
+
     // Document Request workflow (2026-09-04) — mirrors the server-side
     // DR_WORKFLOW_STATUSES/DR_TERMINAL_STATUSES/drNextStatus in cirl.js so the
     // dropdown/UI never disagrees with what the PATCH endpoint will actually
@@ -1102,12 +1114,16 @@
     }
 
     /* ─── SECTION SWITCHER ─── */
+    // Null-guarded on the DR elements (2026-10) — panel-dr/tab-dr are not rendered at all for LAU (see
+    // IS_LAU above), and this function runs on every section switch for every role off the same code
+    // path, including the plain switchSection('pr') calls on page load.
     function switchSection(sec) {
+      if (IS_LAU) sec = 'pr';
       activeSection = sec;
       document.getElementById('panel-pr').style.display = sec === 'pr' ? '' : 'none';
-      document.getElementById('panel-dr').style.display = sec === 'dr' ? '' : 'none';
+      if (document.getElementById('panel-dr')) document.getElementById('panel-dr').style.display = sec === 'dr' ? '' : 'none';
       document.getElementById('tab-pr').classList.toggle('active', sec === 'pr');
-      document.getElementById('tab-dr').classList.toggle('active', sec === 'dr');
+      if (document.getElementById('tab-dr')) document.getElementById('tab-dr').classList.toggle('active', sec === 'dr');
     }
 
     
@@ -1156,9 +1172,11 @@
 
     function updateStats() {
       document.getElementById('cnt-pr-total').textContent = prData.length;
-      document.getElementById('cnt-dr-total').textContent = drData.length;
       document.getElementById('tab-cnt-pr').textContent = prData.length;
-      document.getElementById('tab-cnt-dr').textContent = drData.length;
+      // Document Requests stat/tab elements are not rendered at all for LAU (see IS_LAU above) — guarded
+      // rather than assumed present, since this function runs for every role off the same shared code path.
+      if (document.getElementById('cnt-dr-total')) document.getElementById('cnt-dr-total').textContent = drData.length;
+      if (document.getElementById('tab-cnt-dr')) document.getElementById('tab-cnt-dr').textContent = drData.length;
 
       let pending = 0, approved = 0, rejected = 0;
       prData.forEach(r => {
@@ -1831,8 +1849,12 @@
         `<i class="ri-file-list-3-line me-2 text-primary"></i>#REQ-${String(r.id).padStart(3, '0')}`;
       renderDraftTimeline(r);
       const closed = ['Approved', 'Rejected', 'Withdrawn'].includes(r.status);
-      document.getElementById('pr-draft-upload-wrap').style.display = closed ? 'none' : '';
-      document.getElementById('pr-draft-closed-note').style.display = closed ? '' : 'none';
+      // LAU is read-only monitoring — never gets the upload widget regardless of status (it can still view
+      // every existing draft/version via renderDraftTimeline above). Server-side, POST
+      // /api/requests/:id/documents already rejects LAU independently (not a reviewer, not the owner) —
+      // this just keeps the UI from offering an action that would 403.
+      document.getElementById('pr-draft-upload-wrap').style.display = (closed || IS_LAU) ? 'none' : '';
+      document.getElementById('pr-draft-closed-note').style.display = (closed && !IS_LAU) ? '' : 'none';
       document.getElementById('pr-draft-file').value = '';
       if (window.prDraftDropzone) window.prDraftDropzone.removeFile();
       document.getElementById('pr-draft-note').value = '';
@@ -1945,6 +1967,9 @@
        DOCUMENT REQUESTS
     ═══════════════════════════════════════════════════════ */
     async function loadDR() {
+      // /api/document-requests is requireStaffAccess-gated server-side — LAU would get a 403. Skip the
+      // call entirely rather than let it fail; LAU never sees the Document Requests tab anyway (IS_LAU).
+      if (IS_LAU) { drData = []; renderDR(); return; }
       const res = await CIPRMS.api('/api/document-requests', { quiet: true });
       drData = res.ok && Array.isArray(res.data) ? res.data : [];
       renderDR();
@@ -2235,7 +2260,10 @@
       if (refreshing) { refreshQueued = true; return true; }
       refreshing = true;
       try {
-        const [p, d] = await Promise.all([CIPRMS.api('/api/requests', { quiet: true }), CIPRMS.api('/api/document-requests', { quiet: true })]);
+        const [p, d] = await Promise.all([
+          CIPRMS.api('/api/requests', { quiet: true }),
+          IS_LAU ? Promise.resolve({ ok: true, data: [] }) : CIPRMS.api('/api/document-requests', { quiet: true })
+        ]);
         if (p.ok && Array.isArray(p.data)) {
           const next = p.data.filter(notDraft);
           flashPR = changedIds(prData, next, r => String(r.id));
@@ -2277,7 +2305,10 @@
         });
       }
       if (window.CIPRMS && CIPRMS.live) {
-        CIPRMS.live(['request.updated', 'request.statusChanged', 'documentRequest.updated', 'documentRequest.statusChanged'], refreshLive, { debounce: 250 });
+        const events = IS_LAU
+          ? ['request.updated', 'request.statusChanged']
+          : ['request.updated', 'request.statusChanged', 'documentRequest.updated', 'documentRequest.statusChanged'];
+        CIPRMS.live(events, refreshLive, { debounce: 250 });
       }
     }
 

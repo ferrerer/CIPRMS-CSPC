@@ -14,10 +14,13 @@ const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const ExcelJS = require('exceljs');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const { connectDB, getDb, insertWithNextId, insertManyWithNextId } = require('./db');
+const { connectDB, getDb, insertWithNextId, insertManyWithNextId, isConnected: isDbConnected } = require('./db');
 const ocrRoutes = require('./routes/ocrRoutes');
 const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary, EXT_MIME_TYPES } = require('./services/documentLibraryService');
 const documentStorageService = require('./services/documentStorageService');
+const pdfTableHelper = require('./services/pdfTableHelper');
+const excelFormatHelper = require('./services/excelFormatHelper');
+const statusColors = require('./assets/js/shared/status-colors.js');
 const googleCalendarService = require('./services/googleCalendarService');
 const googleDocsService = require('./services/googleDocsService');
 const emailService = require('./services/emailService');
@@ -34,6 +37,24 @@ const helmet = require('helmet');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ── DB READINESS GATE ────────────────────────────────────────────────────────
+// Two constraints that pull in opposite directions: (1) the port must open immediately on process start —
+// Render (and similar platforms) scan for an open port within a short window after boot and CANCEL THE
+// DEPLOY if none is found ("Port scan timeout reached, no open ports detected"), even though the app would
+// have become healthy moments later — confirmed live: app.listen() briefly ran only after `await
+// connectDB()`, and that alone was enough to miss Render's scan window on a normal deploy. (2) a real
+// request must never reach a route before MongoDB is ready — also confirmed live, as "Error: Database not
+// initialized. Call connectDB first." This gate satisfies both: it is the very first middleware in the
+// entire stack (before helmet, sessions, everything), and app.listen() below is no longer delayed by
+// connectDB() at all — only REQUESTS are held off, never the port itself. Reads db.js's own isConnected()
+// rather than a separately-tracked flag, so this is automatically satisfied under Jest too (supertest drives
+// `app` directly, never through the require.main===module startup block below — a flag only that block set
+// would stay false for every single test) the moment any test file's own connectDB() call resolves.
+app.use((req, res, next) => {
+  if (isDbConnected()) return next();
+  res.set('Retry-After', '2').status(503).send('CIPRMS is starting up. Please retry in a few seconds.');
+});
 
 // ── SECURITY HEADERS (F-01, F-02) ────────────────────────────────────────────
 // helmet sets CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
@@ -631,11 +652,30 @@ function requireStaffAccess(req, res, next) {
   return denyAccess(req, res, 403, homeForRole(user.role));
 }
 
+/**
+ * Requires Administrator OR LAU role (2026-10) — LAU is a read-only Partnership Request monitoring role.
+ * Mirrors requirePersonnel/requireStaffAccess's dual-role convention: Administrator can always reach a
+ * role-specific page too. LAU has no write authority anywhere in the app — it is deliberately never added
+ * to REQUEST_REVIEWER_ROLES, requireStaffAccess, requireRequester, or requireUploader (which also gate
+ * Document Request review, draft/request creation, and document-library/OCR writes respectively). The two
+ * narrow, read-only exceptions that admit it are REQUEST_VIEW_ALL_ROLES (full Partnership Request
+ * visibility, see GET /api/requests below) and requireFileAccess (its own supporting-document attachments,
+ * see GET /uploads/documents/:filename below) — both additive and read-only, not broadening either shared
+ * gate itself.
+ */
+function requireLau(req, res, next) {
+  const user = req.session && req.session.user;
+  if (!user) return denyAccess(req, res, 401, '/');
+  if (user.role === 'Administrator' || user.role === 'LAU') return next();
+  return denyAccess(req, res, 403, homeForRole(user.role));
+}
+
 // ── HELPER: role → home URL ───────────────────────────────────────────────────
 function homeForRole(role) {
   if (role === 'Administrator') return '/dashboard';
   if (role === 'Auth. Personnel') return '/personnel/monitoring';
   if (role === 'potential_partner') return '/partner/monitoring'; // Partner has no Dashboard — Monitoring is its home
+  if (role === 'LAU') return '/lau/monitoring'; // LAU (2026-10, read-only monitoring role) has no Dashboard either — same pattern as Partner above. Without this explicit branch LAU would silently fall into the `/staff/dashboard` default below, which it has no permission to reach.
   return '/staff/dashboard';
 }
 
@@ -1380,11 +1420,17 @@ app.get('/api/partnerships/mine', requireAuth, async (req, res) => {
 // they themselves submitted (same `submittedByEmail` filter as
 // GET /api/requests/mine below).
 const REQUEST_REVIEWER_ROLES = ['Administrator', 'Staff'];
+// LAU (2026-10) gets the same org-wide, every-submitter visibility as Administrator/Staff on THIS read-only
+// list — but is deliberately kept out of REQUEST_REVIEWER_ROLES itself, since that constant also gates real
+// write/decision authority elsewhere (approve/reject, supporting-document upload, notification targeting —
+// see its own declaration-site comment above and every other usage of REQUEST_REVIEWER_ROLES in this file).
+// Adding LAU to REQUEST_REVIEWER_ROLES directly would have silently granted it all of that too.
+const REQUEST_VIEW_ALL_ROLES = [...REQUEST_REVIEWER_ROLES, 'LAU'];
 app.get('/api/requests', requireAuth, async (req, res) => {
   try {
     const db = getDb();
     const email = req.session.user ? req.session.user.email : '';
-    const filter = req.session.user && REQUEST_REVIEWER_ROLES.includes(req.session.user.role) ? {} : { submittedByEmail: email };
+    const filter = req.session.user && REQUEST_VIEW_ALL_ROLES.includes(req.session.user.role) ? {} : { submittedByEmail: email };
     // Newest submission first by default. `id` (auto-incrementing, assigned
     // once at insert in POST /api/requests, never touched by either PATCH
     // route) is the authoritative submission-order field here — there is no
@@ -3442,7 +3488,11 @@ function filterByStartDateInRange(docs, from, to) {
  * Streams a simple paginated table as a landscape PDF — shared by every
  * PDF export route so pagination/header drawing isn't duplicated per report.
  */
-function renderTablePdf(res, { title, filename, subtitle, columns, rows }) {
+// `summaryLine` is optional and additive — existing callers that don't pass it get the exact same output as
+// before. Deliberately a single pre-built STRING, not a data object this function would have to interpret:
+// renderTablePdf() is shared/generic by design (title/columns/rows only), so computing what a summary means
+// stays the caller's own business logic, not something duplicated or guessed at in here.
+function renderTablePdf(res, { title, filename, subtitle, columns, rows, summaryLine }) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
 
@@ -3510,45 +3560,48 @@ function renderTablePdf(res, { title, filename, subtitle, columns, rows }) {
   doc.moveDown(0.3);
   doc.fontSize(9).font('Helvetica').fillColor('#666')
     .text(subtitle, { align: 'center' });
-  doc.moveDown(0.8);
+  if (summaryLine) {
+    doc.moveDown(0.3);
+    doc.fontSize(8.5).font('Helvetica-Bold').fillColor('#444').text(summaryLine, { align: 'center' });
+  }
+  // Fixed gap before the table's own column-header bar (drawHeader(), below) — same subtitle/header-overlap
+  // fix as renderPartnershipReportPdf's drawLetterhead(); see pdfTableHelper.sectionGap's comment.
+  pdfTableHelper.sectionGap(doc);
   doc.fillColor('#000');
 
   const startX = doc.page.margins.left;
-  let y = doc.y;
+  const pageTop = doc.page.margins.top;
+  const pageBottom = doc.page.height - doc.page.margins.bottom;
 
   function drawHeader() {
     let x = startX;
     doc.font('Helvetica-Bold').fontSize(9);
     columns.forEach(col => {
-      doc.text(col.label, x, y, { width: col.width, lineBreak: false, ellipsis: true });
+      doc.text(col.label, x, doc.y, { width: col.width, lineBreak: false, ellipsis: true });
       x += col.width;
     });
-    y += 16;
-    doc.moveTo(startX, y - 4).lineTo(x, y - 4).strokeColor('#cccccc').stroke();
+    doc.y += 16;
+    doc.moveTo(startX, doc.y - 4).lineTo(x, doc.y - 4).strokeColor('#cccccc').stroke();
+    doc.font('Helvetica').fontSize(8.5);
   }
-
-  drawHeader();
-  doc.font('Helvetica').fontSize(8.5);
 
   if (!rows.length) {
-    doc.text('No records match this report.', startX, y + 4);
-  }
-
-  rows.forEach(row => {
-    if (y > doc.page.height - doc.page.margins.bottom - 20) {
-      doc.addPage();
-      y = doc.page.margins.top;
-      drawHeader();
-      doc.font('Helvetica').fontSize(8.5);
-    }
-    let x = startX;
-    columns.forEach(col => {
-      const val = String(row[col.key] == null || row[col.key] === '' ? '—' : row[col.key]);
-      doc.text(val, x, y, { width: col.width - 5, lineBreak: false, ellipsis: true });
-      x += col.width;
+    drawHeader();
+    doc.text('No records match this report.', startX, doc.y + 4);
+  } else {
+    drawHeader();
+    // Column widths here are already generous (this report's caller always sizes them for its own data), so
+    // -5 padding matches the original code's own small visual gutter between columns.
+    pdfTableHelper.drawTable(doc, {
+      columns: columns.map(c => ({ width: c.width - 5 })),
+      rows,
+      cellValues: (row) => columns.map(col => row[col.key]),
+      left: startX,
+      pageTop,
+      pageBottom,
+      drawHeader
     });
-    y += 16;
-  });
+  }
 
   doc.end();
 }
@@ -3789,6 +3842,22 @@ function groupPartnershipDocs(docs) {
  * the true page count is known), and a Prepared/Reviewed/Approved By
  * signature block after the last row.
  */
+// Shared by renderPartnershipReportPdf and renderMultiComparisonReportPdf — both consume the exact same
+// `filters` shape computeCustomReportData() already returns (reportType/category/dateFrom/dateTo/unit/
+// agreementType/country/status/compareBy/groupBy), so this builds the one line of PDF filter context both
+// need from a single implementation rather than two near-duplicates.
+function buildPartnershipFilterSummary(filters) {
+  if (!filters) return null;
+  const parts = [];
+  if (filters.category && filters.category !== 'All') parts.push(`Category: ${filters.category}`);
+  if (filters.unit && filters.unit !== 'All') parts.push(`Unit: ${filters.unit}`);
+  if (filters.agreementType && filters.agreementType !== 'All') parts.push(`Agreement Type: ${filters.agreementType}`);
+  if (filters.country && filters.country !== 'All') parts.push(`Country: ${filters.country}`);
+  if (filters.status && filters.status !== 'All') parts.push(`Status: ${filters.status}`);
+  if (filters.groupBy && filters.groupBy !== 'None') parts.push(`Grouped by: ${filters.groupBy}`);
+  return parts.length ? `Filters: ${parts.join('  ·  ')}` : 'Filters: None — all records';
+}
+
 function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy, customReportData }) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${safeFilename(title)}.pdf"`);
@@ -3851,8 +3920,20 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     doc.font('Helvetica').fontSize(9).fillColor('#444')
       .text(periodLabel, left, doc.y, { width: contentWidth, align: 'center' })
       .text(`Generated ${generatedStr} by ${generatedBy}`, left, doc.y, { width: contentWidth, align: 'center' });
+    // Makes explicit whether this is every record or a filtered subset — dateFrom/dateTo are deliberately
+    // excluded here (already shown above via periodLabel; repeating them would just be noise), and only
+    // filters actually narrowing the result (not left at their "All"/"None" default) are listed, so an
+    // unfiltered report shows a clean "All records" line instead of a wall of "All, All, All...".
+    const filterLine = buildPartnershipFilterSummary(customReportData && customReportData.filters);
+    if (filterLine) {
+      doc.font('Helvetica-Oblique').fontSize(8).fillColor('#666')
+        .text(filterLine, left, doc.y, { width: contentWidth, align: 'center' });
+    }
     doc.fillColor('#000');
-    doc.moveDown(0.8);
+    // Fixed gap before the table's column-header bar is drawn right after this function returns — see
+    // pdfTableHelper.sectionGap's own comment for why this replaced `doc.moveDown(0.8)` (the reported
+    // subtitle/table-header overlap).
+    pdfTableHelper.sectionGap(doc);
   }
 
   const colStartX = left + PARTNERSHIP_REPORT_NO_COL_WIDTH;
@@ -3868,6 +3949,9 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     });
     doc.fillColor('#000');
     doc.y = y + 18;
+    doc.font('Helvetica').fontSize(8); // reset from the header's own Helvetica-Bold — this now also fires on
+    // every page-break redraw (drawTable calls this same function), not just the first call, so a row's
+    // measured height must never be taken with the header's bold/larger font still active.
   }
 
   function drawGroupHeader(label, count) {
@@ -3905,10 +3989,26 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
       doc.rect(left, y, contentWidth, 18).fillAndStroke('#0a58ca', '#0a58ca');
       doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#fff');
       metrics.forEach((label, i) => {
-        doc.text(label, left + i * colWidth + 4, y + 5, { width: colWidth - 8, lineBreak: false });
+        const colX = left + i * colWidth + 4;
+        // A small color swatch — not the column header's own text/background color — for any metric column
+        // that is one of the four real statuses (Active/Expiring Soon/Expired/Inactive): the header bar's
+        // existing blue background stays as-is (unchanged branding, and keeps the white label text readable),
+        // the swatch is a quick visual key matching the same shared status-color mapping the on-screen
+        // preview and the Multi-Configuration Comparison PDF's Status column both use. Non-status columns
+        // (Total, %, or the compared dimension's own name e.g. a country) get no swatch — this is deliberately
+        // NOT applied to "unrelated metrics merely because the report is a comparison".
+        let textX = colX;
+        if (statusColors.isKnownStatus(label)) {
+          doc.rect(colX, y + 6, 6, 6).fill(statusColors.hex(label));
+          doc.fillColor('#fff');
+          textX = colX + 10;
+        }
+        doc.text(label, textX, y + 5, { width: colWidth - (textX - colX) - 4, lineBreak: false });
       });
       doc.fillColor('#000');
       doc.y = y + 18;
+      doc.font('Helvetica').fontSize(8.5); // same font-reset reasoning as drawColumnHeader above — this also
+      // now fires on every page-break redraw, not just the first call.
     }
 
     function ensureGroupedSpace(neededHeight) {
@@ -3928,25 +4028,36 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
       doc.fillColor('#000');
       doc.y += 16;
     } else {
-      rows.forEach((row, idx) => {
-        ensureGroupedSpace(16);
-        const y = doc.y;
-        if (idx % 2 === 1) doc.rect(left, y, contentWidth, 16).fillAndStroke('#f5f7fa', '#f5f7fa');
-        doc.strokeColor('#e3e6eb').rect(left, y, contentWidth, 16).stroke();
-        metrics.forEach((label, i) => {
-          // `group` (the dimension value, e.g. a country name) can be an
-          // array for College/Unit's multi-unit case — join for display.
-          const raw = Array.isArray(row[label]) ? row[label].join(', ') : row[label];
-          const val = String(raw == null || raw === '' ? '—' : raw);
-          doc.fillColor('#000').text(val, left + i * colWidth + 4, y + 4, { width: colWidth - 8, lineBreak: false, ellipsis: true });
-        });
-        doc.strokeColor('#000');
-        doc.y = y + 16;
+      pdfTableHelper.drawTable(doc, {
+        columns: metrics.map(() => ({ width: colWidth })),
+        rows,
+        // `group` (the dimension value, e.g. a country name) can be an array for College/Unit's multi-unit
+        // case — join for display, same as the original inline logic this replaces.
+        cellValues: (row) => metrics.map((label) => (Array.isArray(row[label]) ? row[label].join(', ') : row[label])),
+        left,
+        pageTop: doc.page.margins.top,
+        pageBottom: doc.page.height - doc.page.margins.bottom,
+        drawHeader: drawGroupedHeader,
+        rowStyle: (d, idx, x, y, w, h) => {
+          if (idx % 2 === 1) d.rect(x, y, w, h).fillAndStroke('#f5f7fa', '#f5f7fa');
+          d.strokeColor('#e3e6eb').rect(x, y, w, h).stroke();
+          d.strokeColor('#000').fillColor('#000');
+        }
       });
     }
-    doc.moveDown(0.8);
-    doc.font('Helvetica').fontSize(8.5).fillColor('#444')
-      .text(`Total Partnerships in Report: ${customReportData.totalRecords}`, left, doc.y, { width: contentWidth, align: 'center' });
+    // Fixed gap before the summary line — same font-independent fix as the letterhead/table-header gap above.
+    pdfTableHelper.sectionGap(doc);
+    // Same summary object the flat path (and the Excel export) already use — this used to show only the
+    // raw total, with no status breakdown, even though computeCustomReportData already computes one.
+    if (customReportData.summary) {
+      const s = customReportData.summary;
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#444')
+        .text(`Total: ${s.totalCount}   ·   Active: ${s.activeCount}   ·   Expiring Soon: ${s.expiringSoonCount}   ·   Expired: ${s.expiredCount}   ·   Inactive: ${s.inactiveCount}`,
+          left, doc.y, { width: contentWidth, align: 'center' });
+    } else {
+      doc.font('Helvetica').fontSize(8.5).fillColor('#444')
+        .text(`Total Partnerships in Report: ${customReportData.totalRecords}`, left, doc.y, { width: contentWidth, align: 'center' });
+    }
     doc.fillColor('#000');
 
     ensureGroupedSpace(90);
@@ -3985,6 +4096,7 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
   drawColumnHeader();
 
   doc.font('Helvetica').fontSize(8);
+  const flatColumns = [{ width: PARTNERSHIP_REPORT_NO_COL_WIDTH }, ...PARTNERSHIP_REPORT_COLUMNS.map(c => ({ width: c.width }))];
   let rowIndex = 0;
   groups.forEach(group => {
     if (group.label) {
@@ -3999,24 +4111,45 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
       doc.y += 16;
       return;
     }
-    group.docs.forEach(p => {
-      ensureSpace(16);
-      const y = doc.y;
-      if (rowIndex % 2 === 1) doc.rect(left, y, contentWidth, 16).fillAndStroke('#f5f7fa', '#f5f7fa');
-      doc.strokeColor('#e3e6eb');
-      doc.rect(left, y, contentWidth, 16).stroke();
-      doc.fillColor('#000').text(String(rowIndex + 1), left + 4, y + 4, { width: PARTNERSHIP_REPORT_NO_COL_WIDTH - 8, lineBreak: false });
-      let x = colStartX;
-      PARTNERSHIP_REPORT_COLUMNS.forEach(col => {
-        const val = String(p[col.key] == null || p[col.key] === '' ? '—' : p[col.key]);
-        doc.fillColor('#000').text(val, x + 4, y + 4, { width: col.width - 8, lineBreak: false, ellipsis: true });
-        x += col.width;
-      });
-      doc.strokeColor('#000');
-      doc.y = y + 16;
-      rowIndex++;
+    // Row numbering and zebra-striping continue across group boundaries (never reset to 1/even at the start
+    // of a new category) — groupStartIndex is captured once per group so both stay correct without the
+    // timing hazard of incrementing a shared counter from inside a callback the helper also calls per-row.
+    const groupStartIndex = rowIndex;
+    pdfTableHelper.drawTable(doc, {
+      columns: flatColumns,
+      rows: group.docs,
+      cellValues: (p, localIdx) => [
+        String(groupStartIndex + localIdx + 1),
+        ...PARTNERSHIP_REPORT_COLUMNS.map((col) => p[col.key])
+      ],
+      left,
+      pageTop: doc.page.margins.top,
+      pageBottom: doc.page.height - doc.page.margins.bottom,
+      drawHeader: drawColumnHeader,
+      rowStyle: (d, localIdx, x, y, w, h) => {
+        const globalIdx = groupStartIndex + localIdx;
+        if (globalIdx % 2 === 1) d.rect(x, y, w, h).fillAndStroke('#f5f7fa', '#f5f7fa');
+        d.strokeColor('#e3e6eb').rect(x, y, w, h).stroke();
+        d.strokeColor('#000').fillColor('#000');
+      }
     });
+    rowIndex += group.docs.length;
   });
+
+  // ── Summary — reuses computeCustomReportData's own summary object (the SAME counts Preview and the
+  // Excel export already show; never a second, PDF-only calculation) so the three export formats can never
+  // disagree with each other. Addresses "the flat (non-grouped) report currently shows no status breakdown
+  // at all" — the grouped path already had a (now also expanded, see below) total line; this format had none.
+  if (customReportData && customReportData.summary) {
+    ensureSpace(20);
+    // Fixed gap before the summary line — same font-independent fix as the letterhead/table-header gap above.
+    pdfTableHelper.sectionGap(doc, 10);
+    const s = customReportData.summary;
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#444')
+      .text(`Total: ${s.totalCount}   ·   Active: ${s.activeCount}   ·   Expiring Soon: ${s.expiringSoonCount}   ·   Expired: ${s.expiredCount}   ·   Inactive: ${s.inactiveCount}`,
+        left, doc.y, { width: contentWidth, align: 'center' });
+    doc.fillColor('#000');
+  }
 
   // ── Signature block — matches the reference document's two-column
   // "Prepared by / Noted by" footer. Prepared by is dynamically the
@@ -4640,6 +4773,17 @@ function buildPartnershipExcel({ title, docs, periodLabel, generatedBy, customRe
       col.width = Math.min(Math.max(max + 2, INSTITUTIONAL_LIST_EXCEL_COLUMNS[i].width), 45);
     });
   }
+
+  // Long-text wrapping for whichever columns can realistically hold a long value in this export: the flat
+  // list's Institution/Country, or the grouped table's first (dimension) column — e.g. an institution name
+  // when grouped by Institution. sheet1.views (freeze panes) a few lines below already existed before this
+  // change for this specific export; applyLongTextWrap() also adds the auto-filter, which did not.
+  excelFormatHelper.applyLongTextWrap(sheet1, {
+    wrapColumnKeys: isGrouped ? ['m0'] : ['inst', 'country'],
+    firstDataRow: headerRowNumber + 1,
+    lastDataRow: sheet1.rowCount,
+    headerRowNumber
+  });
 
   sheet1.addRow([]);
   const sigRow = sheet1.addRow([]);
@@ -5567,7 +5711,9 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
     .text(periodLabel || 'Report Period: All Records', left, doc.y, { width: contentWidth, align: 'center' })
     .text(`Generated ${now} by ${generatedBy}`, left, doc.y, { width: contentWidth, align: 'center' });
   doc.fillColor('#000');
-  doc.moveDown(0.8);
+  // Fixed gap before the Comparison-summary table's own header bar — same subtitle/header-overlap fix as
+  // renderPartnershipReportPdf's drawLetterhead(); see pdfTableHelper.sectionGap's comment.
+  pdfTableHelper.sectionGap(doc);
 
   // ── Summary table: Comparison | Partnerships | Percentage — one row per
   // configuration, iterated dynamically (no fixed "Group A/Group B" columns).
@@ -5595,7 +5741,8 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
     doc.strokeColor('#000');
     doc.y = rowY + 18;
   });
-  doc.moveDown(0.8);
+  // Fixed gap before the first per-configuration record table's own colored header bar — same fix as above.
+  pdfTableHelper.sectionGap(doc);
 
   // ── Per-comparison record tables — one section per configuration.
   const COL_DEFS = [
@@ -5610,13 +5757,23 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
 
   results.forEach((r, idx) => {
     const color = MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
-    if (doc.y + 60 > doc.page.height - doc.page.margins.bottom) { doc.addPage(); doc.y = doc.page.margins.top; }
+    if (doc.y + 75 > doc.page.height - doc.page.margins.bottom) { doc.addPage(); doc.y = doc.page.margins.top; }
     const shY = doc.y;
     doc.rect(left, shY, contentWidth, 18).fillAndStroke(color, color);
     doc.font('Helvetica-Bold').fontSize(9).fillColor('#fff')
       .text(`${r.label} (${r.records.length} record${r.records.length !== 1 ? 's' : ''})`, left + 6, shY + 5, { width: contentWidth - 12 });
     doc.fillColor('#000');
     doc.y = shY + 18;
+
+    // Per-configuration filter context — each configuration can have entirely different filters, so this is
+    // what actually explains, e.g., why a configuration shows 0 records (a filter that matched nothing) —
+    // shown even in that empty case, before the "no records" message, not just for non-empty configurations.
+    const configFilterLine = buildPartnershipFilterSummary(r.filters);
+    if (configFilterLine) {
+      doc.font('Helvetica-Oblique').fontSize(7.5).fillColor('#666').text(configFilterLine, left + 2, doc.y + 2, { width: contentWidth - 4 });
+      doc.fillColor('#000');
+      doc.y += 12;
+    }
 
     if (!r.records.length) {
       const emY = doc.y;
@@ -5628,38 +5785,38 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
       return;
     }
 
-    const chY = doc.y;
-    doc.rect(left, chY, contentWidth, 16).fillAndStroke('#1a56c4', '#1a56c4');
-    doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#fff');
-    let cx = left;
-    COL_DEFS.forEach(col => { doc.text(col.label, cx + 3, chY + 4, { width: col.width - 6, lineBreak: false }); cx += col.width; });
-    doc.fillColor('#000');
-    doc.y = chY + 16;
+    function drawCompColumnHeader() {
+      const chY = doc.y;
+      doc.rect(left, chY, contentWidth, 16).fillAndStroke('#1a56c4', '#1a56c4');
+      doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#fff');
+      let cx = left;
+      COL_DEFS.forEach(col => { doc.text(col.label, cx + 3, chY + 4, { width: col.width - 6, lineBreak: false }); cx += col.width; });
+      doc.fillColor('#000');
+      doc.y = chY + 16;
+    }
 
-    r.records.forEach((p, ridx) => {
-      if (doc.y + 16 > doc.page.height - doc.page.margins.bottom) {
-        doc.addPage();
-        doc.y = doc.page.margins.top;
-        const chY2 = doc.y;
-        doc.rect(left, chY2, contentWidth, 16).fillAndStroke('#1a56c4', '#1a56c4');
-        doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#fff');
-        let cx2 = left;
-        COL_DEFS.forEach(col => { doc.text(col.label, cx2 + 3, chY2 + 4, { width: col.width - 6, lineBreak: false }); cx2 += col.width; });
-        doc.fillColor('#000');
-        doc.y = chY2 + 16;
-      }
-      const rowY = doc.y;
-      const fill = ridx % 2 === 0 ? '#FFFFFF' : '#F5F7FA';
-      doc.rect(left, rowY, contentWidth, 16).fill(fill).stroke('#ddd');
-      doc.font('Helvetica').fontSize(7.5).fillColor('#222');
-      let rx = left;
-      COL_DEFS.forEach(col => {
-        const raw = Array.isArray(p[col.key]) ? p[col.key].join(', ') : p[col.key];
-        doc.text(String(raw == null || raw === '' ? '—' : raw), rx + 3, rowY + 4, { width: col.width - 6, lineBreak: false, ellipsis: true });
-        rx += col.width;
-      });
-      doc.strokeColor('#000');
-      doc.y = rowY + 16;
+    drawCompColumnHeader();
+    doc.font('Helvetica').fontSize(7.5); // header left the font as Helvetica-Bold — must reset before rows are measured/drawn
+    const statusColIdx = COL_DEFS.findIndex((c) => c.key === 'status');
+    pdfTableHelper.drawTable(doc, {
+      columns: COL_DEFS.map(c => ({ width: c.width - 6 })),
+      rows: r.records,
+      cellValues: (p) => COL_DEFS.map((col) => (Array.isArray(p[col.key]) ? p[col.key].join(', ') : p[col.key])),
+      left,
+      pageTop: doc.page.margins.top,
+      pageBottom: doc.page.height - doc.page.margins.bottom,
+      drawHeader: drawCompColumnHeader,
+      rowStyle: (d, ridx, x, y, w, h) => {
+        const fill = ridx % 2 === 0 ? '#FFFFFF' : '#F5F7FA';
+        d.rect(x, y, w, h).fill(fill).stroke('#ddd');
+        d.strokeColor('#000').fillColor('#222');
+      },
+      // Colors the actual record's own Status value (Active/Expiring Soon/Expired/Inactive) — by the real
+      // status name via the shared mapping, never by this row's position/index — so a given status always
+      // prints in the same color here as it does in the on-screen preview's badges, regardless of which row
+      // it happens to land on or how the underlying records were sorted/returned.
+      cellColor: (colIdx, cellText) => (colIdx === statusColIdx ? statusColors.hex(cellText) : null),
+      baseColor: '#222'
     });
     doc.moveDown(0.6);
   });
@@ -5753,6 +5910,17 @@ function buildMultiComparisonExcel({ title, results, periodLabel, generatedBy })
         cell.alignment = { vertical: 'middle' };
       });
     });
+
+    // Institution and Remarks are the two columns realistically long enough to need wrapping here; freeze
+    // panes + auto-filter were previously entirely absent from this export.
+    if (r.records.length) {
+      excelFormatHelper.applyLongTextWrap(sheet, {
+        wrapColumnKeys: ['inst', 'remarks'],
+        firstDataRow: hRow.number + 1,
+        lastDataRow: sheet.rowCount,
+        headerRowNumber: hRow.number
+      });
+    }
   });
 
   return workbook;
@@ -5821,9 +5989,22 @@ app.get('/api/reports/activitylog/pdf', requireStaffAccess, async (req, res) => 
     const logs = await db.collection('activitylogs').find(activityLogFilterFor(req.session.user)).sort({ id: -1 }).toArray();
     const now = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const isOwnTrailOnly = req.session.user && req.session.user.role === 'Staff';
+    // Breakdown by `action` (ADD/UPDATE/DELETE/VIEW/LOGIN_SUCCESS/...) — chosen over `category`/`status`
+    // because every log entry has an action, while category/status are only populated on newer (mostly
+    // auth-related) entries; a summary built from those would misleadingly undercount older entries rather
+    // than reflect the real total. Computed from the exact same `logs` array the detailed table below
+    // renders — never a second query — so the summary and the full list can never disagree. Additive only:
+    // the complete entry-by-entry list still follows immediately after, unchanged.
+    const actionCounts = {};
+    logs.forEach((l) => { const a = l.action || 'Other'; actionCounts[a] = (actionCounts[a] || 0) + 1; });
+    const summaryLine = `Total: ${logs.length}   ·   ` + Object.entries(actionCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([action, count]) => `${action}: ${count}`)
+      .join('   ·   ');
     renderTablePdf(res, {
       title: isOwnTrailOnly ? 'My Activity Trail' : 'Activity / Audit Trail', filename: 'Activity_Audit_Log',
       subtitle: `Generated ${now} · ${logs.length} entries`,
+      summaryLine: logs.length ? summaryLine : null,
       columns: [
         { key: 'action', label: 'Action', width: 50 },
         { key: 'category', label: 'Category', width: 70 },
@@ -5910,6 +6091,17 @@ app.get('/api/reports/activitylog/excel', requireStaffAccess, async (req, res) =
       });
     });
 
+    // "Record / Details" (width 48) is the one column realistically long enough to need wrapping; freeze
+    // panes + auto-filter were previously entirely absent from this export.
+    if (logs.length) {
+      excelFormatHelper.applyLongTextWrap(sheet, {
+        wrapColumnKeys: ['record'],
+        firstDataRow: auditHeaderRow.number + 1,
+        lastDataRow: sheet.rowCount,
+        headerRowNumber: auditHeaderRow.number
+      });
+    }
+
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', 'attachment; filename="Activity_Audit_Log.xlsx"');
     await workbook.xlsx.write(res);
@@ -5954,7 +6146,7 @@ app.get('/api/users', requireStaffAccess, async (req, res) => {
   }
 });
 
-const VALID_USER_ROLES = ['Administrator', 'Auth. Personnel', 'Staff', 'potential_partner'];
+const VALID_USER_ROLES = ['Administrator', 'Auth. Personnel', 'Staff', 'potential_partner', 'LAU'];
 const VALID_USER_STATUSES = ['Active', 'Inactive'];
 
 // User Management — Administrator and Staff share full CRUD (2026-08-27
@@ -8602,8 +8794,9 @@ app.get('/staff/search', requireStaffAccess, (req, res) => {
 // Every file OCR'd is archived here automatically — auth-gated since these
 // are institutional partnership documents, not public assets.
 // Ownership-checked file serving (not a blanket express.static): same
-// OWN_SCOPE_ROLES boundary as GET /api/documents above, EXCEPT Administrator
-// and Staff, who are deliberately exempted here — that own-scoping exists
+// OWN_SCOPE_ROLES boundary as GET /api/documents above, EXCEPT Administrator,
+// Staff, and LAU (2026-10, read-only monitoring — see requireFileAccess
+// below), who are deliberately exempted here — that own-scoping exists
 // for the *Document Library browsing* experience (each role's own "My
 // Documents"), but both reviewer roles (REQUEST_REVIEWER_ROLES, full parity
 // as of 2026-08-27) also need to open/download every supporting document
@@ -8611,7 +8804,9 @@ app.get('/staff/search', requireStaffAccess, (req, res) => {
 // who uploaded it. Including a reviewer role in the ownership check here
 // made every such file return 403 whenever the requester wasn't the
 // reviewer themselves — i.e. always, since requesters are Auth.
-// Personnel/potential_partner, never Administrator/Staff.
+// Personnel/potential_partner, never Administrator/Staff. LAU has no review
+// authority at all, but does need this same full read access to every
+// Partnership Request's own attachments, same as a reviewer would.
 const SELF_UPLOAD_ONLY_ROLES = ['Auth. Personnel', 'potential_partner'];
 // 2026-09-14: a reviewer's own POST /api/requests|document-requests/:id/documents
 // upload is now correctly attributed to the reviewer (uploadedByEmail =
@@ -8633,7 +8828,19 @@ async function isOwnerOfLinkedRequest(db, doc, email) {
   const target = await db.collection('requests').findOne({ id: doc.requestId });
   return !!(target && target.submittedByEmail === email);
 }
-app.get('/uploads/documents/:filename', requireUploader, async (req, res) => {
+// LAU (2026-10) needs this one read-only route — opening a Partnership Request's own supporting-document
+// attachments, same as Administrator/Staff's unrestricted access just below (it is not in
+// SELF_UPLOAD_ONLY_ROLES, so it is never subject to the ownership check either). Deliberately a SEPARATE
+// gate from requireUploader rather than adding 'LAU' to that function: requireUploader also gates real
+// write routes (document-folder create/patch, document delete, OCR — see its own usages above), and adding
+// LAU there would have silently granted all of that too.
+function requireFileAccess(req, res, next) {
+  const user = req.session && req.session.user;
+  if (!user) return denyAccess(req, res, 401, '/');
+  if (['Administrator', 'Auth. Personnel', 'potential_partner', 'Staff', 'LAU'].includes(user.role)) return next();
+  return denyAccess(req, res, 403, homeForRole(user.role));
+}
+app.get('/uploads/documents/:filename', requireFileAccess, async (req, res) => {
   const filename = path.basename(req.params.filename);
   try {
     const db = getDb();
@@ -9185,6 +9392,22 @@ app.get('/staff/requests', requireStaffAccess, (req, res) => {
   });
 });
 
+// LAU (2026-10) — read-only Partnership Request monitoring. Reuses the exact same template Administrator/
+// Staff use (administrator/partnership_requests) rather than a duplicate page, matching the pattern already
+// established for Staff above. The template's own IS_ADMIN flag (false for LAU) already makes every
+// write-capable element — Approve/Reject, the Google Docs draft-management box, the editable status badge
+// — read-only with no further change; IS_LAU (see that template) additionally keeps this role to the
+// Partnership Requests tab only, since Document Requests is a separate, out-of-scope workflow bundled into
+// the same page. This is also LAU's home/landing page (homeForRole above) — like potential_partner, LAU has
+// no separate Dashboard.
+app.get('/lau/monitoring', requireLau, (req, res) => {
+  res.render('administrator/partnership_requests', {
+    activePage: 'access-requests',
+    sidebarPartial: 'sidebar_lau',
+    user: req.session.user
+  });
+});
+
 // Registry — 2026-09-05: consolidated into Monitoring, same as the
 // Administrator /registry route above. Compatibility redirect only.
 app.get('/staff/registry', requireStaffAccess, (req, res) => {
@@ -9491,40 +9714,42 @@ app.use((err, req, res, next) => {
 // which just needs the bare `app` to drive with supertest against its own
 // test-managed DB connection.
 if (require.main === module) {
+  // The port opens immediately — required for Render's (and similar platforms') liveness/port-scan check,
+  // which cancels the deploy outright if no port is open within its own short window after boot. See the
+  // DB READINESS GATE comment near the top of this file for the other half of this: real requests are held
+  // off by that middleware, independently of when this socket itself opens.
+  const url = `http://localhost:${PORT}`;
+  app.listen(PORT, () => {
+    console.log(`CIPRMS server running → ${url}`);
+  });
+
   (async () => {
     try {
-      // Connect BEFORE opening the port — app.listen() starts accepting real HTTP connections the moment
-      // it's called, so if connectDB() instead ran inside its callback (as it used to), a request landing in
-      // that gap (e.g. Render's own health check, or — confirmed live — a Google OAuth callback redirect
-      // arriving right at boot) would hit a route calling getDb() before `db` was ever set, surfacing as
-      // "Error: Database not initialized. Call connectDB first." This ordering makes that race impossible:
-      // no socket is ever open for a request to land on until MongoDB is actually ready.
       await connectDB();
     } catch (err) {
       // 2026-09-08 Phase 5 production-readiness fix: exiting (rather than logging and continuing) lets the
       // host's process supervisor (Render, systemd, Docker, etc.) restart the service and retry the
       // connection, instead of an outage persisting until someone notices the app is up but non-functional.
       // Matches the same fail-closed philosophy already applied to a missing MONGO_URI in db.js — a real DB
-      // outage should surface as a restart, not silence.
+      // outage should surface as a restart, not silence. The port is already open at this point (by design,
+      // above) — process.exit(1) still correctly takes it back down rather than leaving a zombie listener.
       console.error('❌ Failed to connect to MongoDB on startup — exiting so the process can be restarted:', err);
       process.exit(1);
     }
-    app.listen(PORT, async () => {
-      const url = `http://localhost:${PORT}`;
-      console.log(`CIPRMS server running → ${url}`);
-      console.log(emailService.isConfigured()
-        ? '✅ Email notifications configured (MAIL_USER set).'
-        : '⚠️  Email notifications NOT configured — set RESEND_API_KEY and MAIL_USER to enable e-mail delivery (see .env.example).');
-      await migrateLegacyPartnerAvatars().catch(err => console.error('⚠️  Partner avatar migration skipped:', err.message));
-      await runLifecycleCheck(); // catch up immediately on startup, don't wait for the first interval tick
-      setInterval(runLifecycleCheck, LIFECYCLE_CHECK_INTERVAL_MS);
-      try {
-        const { default: open } = await import('open');
-        open(url);
-      } catch (err) {
-        console.log('Could not auto-open browser, but server is running');
-      }
-    });
+    // The DB READINESS GATE above now lets real requests through from this point on (it reads db.js's own
+    // isConnected(), which connectDB() just satisfied) — nothing further to do to "turn it on".
+    console.log(emailService.isConfigured()
+      ? '✅ Email notifications configured (MAIL_USER set).'
+      : '⚠️  Email notifications NOT configured — set RESEND_API_KEY and MAIL_USER to enable e-mail delivery (see .env.example).');
+    await migrateLegacyPartnerAvatars().catch(err => console.error('⚠️  Partner avatar migration skipped:', err.message));
+    await runLifecycleCheck(); // catch up immediately on startup, don't wait for the first interval tick
+    setInterval(runLifecycleCheck, LIFECYCLE_CHECK_INTERVAL_MS);
+    try {
+      const { default: open } = await import('open');
+      open(url);
+    } catch (err) {
+      console.log('Could not auto-open browser, but server is running');
+    }
   })();
 }
 

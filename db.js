@@ -235,6 +235,15 @@ function getDb() {
   return db;
 }
 
+// Exported for cirl.js's DB-readiness request gate (see its own comment on why: the port must open
+// immediately for Render's liveness scan, but a request must never reach a route before `db` is actually
+// set). Reflects the SAME module-level `db` getDb() itself checks — not a separately-tracked flag — so it
+// is automatically also true under Jest the moment any test file's own connectDB() call resolves, with
+// nothing extra for a test file to set.
+function isConnected() {
+  return !!db;
+}
+
 async function closeDB() {
   if (client) {
     await client.close();
@@ -320,4 +329,4 @@ async function insertManyWithNextId(collection, count, buildDoc, { maxAttempts =
   throw new Error(`Could not allocate ids for a batch insert into ${collection.collectionName} after ${maxAttempts} attempts — it may be under unusually heavy concurrent writes.`);
 }
 
-module.exports = { connectDB, getDb, closeDB, insertWithNextId, insertManyWithNextId, findDuplicateIds };
+module.exports = { connectDB, getDb, closeDB, insertWithNextId, insertManyWithNextId, findDuplicateIds, isConnected };
