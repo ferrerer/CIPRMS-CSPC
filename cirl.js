@@ -7,6 +7,11 @@ const fs = require('fs');
 const crypto = require('crypto');
 const net = require('net');
 const session = require('express-session');
+// connect-mongo@6 is ESM-authored; its CJS build puts the store class on `.default`
+// (require() alone returns the whole module namespace, not the class) — confirmed via a
+// standalone compatibility smoke test against this project's actual mongodb/express-session
+// versions before this was wired in here.
+const MongoStore = require('connect-mongo').default;
 const passport = require('passport');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
@@ -14,7 +19,7 @@ const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const ExcelJS = require('exceljs');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
-const { connectDB, getDb, insertWithNextId, insertManyWithNextId, isConnected: isDbConnected } = require('./db');
+const { connectDB, getDb, insertWithNextId, insertManyWithNextId, isConnected: isDbConnected, getClientPromise } = require('./db');
 const ocrRoutes = require('./routes/ocrRoutes');
 const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary, EXT_MIME_TYPES } = require('./services/documentLibraryService');
 const documentStorageService = require('./services/documentStorageService');
@@ -233,19 +238,11 @@ async function recordSignInSuccess(scope, key) {
   await loginLockoutService.recordSuccess(getDb(), scope, key);
 }
 
-// Closes S11 (Roadmap v2 Phase G2, docs/SYSTEM_AUDIT_2026-07-16.md) — /signup,
-// the three password-change routes, and the public /api/institutions proxy
-// previously had no rate limiting at all. /signup renders the 'signup' page
-// template on every other validation error, so its 429 handler matches that
-// (not loginLimiter's 'index' render, which is the wrong template here).
-const signupLimiter = makeRateLimiter(
-  'Too many signup attempts. Please wait 15 minutes and try again.',
-  (req, res) => res.status(429).render('signup', {
-    activePage: '', user: null,
-    formData: { name: req.body.username || '', email: req.body.email || '' },
-    error: 'Too many signup attempts. Please wait 15 minutes and try again.'
-  })
-);
+// Closes S11 (Roadmap v2 Phase G2, docs/SYSTEM_AUDIT_2026-07-16.md) — the three
+// password-change routes and the public /api/institutions proxy previously had
+// no rate limiting at all. (A signupLimiter used to be declared here too; it
+// was removed along with the entire public signup flow — see cirl.js's git
+// history for that route if it's ever needed again.)
 const institutionsLimiter = makeRateLimiter('Too many requests. Please wait 15 minutes and try again.');
 // Map-location preview (Add/Edit Partnership form). Its own instance, and a
 // per-minute window rather than makeRateLimiter's 10-per-15-minutes: one
@@ -325,7 +322,13 @@ app.use('/velzon/assets', express.static(path.join(__dirname, 'assets'), { maxAg
 if (!process.env.SESSION_SECRET) {
   console.warn('⚠️  SESSION_SECRET is not set in .env — using an insecure generated fallback for this run only.');
 }
-const sessionStore = new session.MemoryStore();
+const sessionStore = process.env.NODE_ENV === 'test'
+  ? new session.MemoryStore()
+  : MongoStore.create({
+      clientPromise: getClientPromise(),
+      collectionName: 'sessions',
+      autoRemove: 'native'
+    });
 app.use(session({
   store: sessionStore,
   secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
@@ -785,10 +788,6 @@ app.get('/', async (req, res) => {
   });
 });
 
-app.get('/signup', (req, res) => {
-  res.render('signup', { activePage: '', user: null, formData: { name: '', email: '' } });
-});
-
 // ── GOOGLE AUTH ROUTES ────────────────────────────────────────────────────────
 
 // Builds this route's own public callback URL. 2026-10 authentication hardening: previously derived entirely
@@ -1217,21 +1216,15 @@ app.get('/api/login-lockout-status', lockoutStatusLimiter, async (req, res) => {
   }
 });
 
-// Public self-registration is disabled (2026-09-05 strict allowlist policy):
-// authenticating as *someone* (even with a real email/password of their own
-// choosing) must never be enough to grant a CIPRMS account or session. The
-// only path to an authorized account is an Administrator/Staff explicitly
-// creating one via User Management → Add User (POST /api/users). This route
-// is kept (rather than removed) only so the existing /signup URL still
-// resolves to a clear, non-crashing rejection instead of a 404.
-app.post('/signup', signupLimiter, async (req, res) => {
-  const { username: name, email } = req.body;
-  const formData = { name: name || '', email: email || '' };
-  return res.render('signup', {
-    activePage: '', user: null, formData,
-    error: 'Self-registration is disabled. Please contact the CIRL Administrator to request an account.'
-  });
-});
+// Public self-registration is removed entirely (2026-10): authenticating as
+// *someone* (even with a real email/password of their own choosing) must
+// never be enough to grant a CIPRMS account or session. The only path to an
+// authorized account is an Administrator/Staff explicitly creating one via
+// User Management → Add User (POST /api/users). GET/POST /signup, the
+// signup.ejs view, and signupLimiter were previously kept as a disabled stub
+// so the URL resolved to a clear rejection instead of a 404; that stub is now
+// removed too — the route simply 404s via Express's own fallthrough, which is
+// an equally clear "nothing here" response and one less page to maintain.
 
 // ── LOGOUT —————————————————————————————————————————————————
 // POST-only (2026-09-06 security hardening, Finding #7): a GET route that
@@ -6162,7 +6155,7 @@ app.post('/api/users', requireStaffAccess, async (req, res) => {
       return res.status(400).json({ error: 'Name is required.' });
     }
 
-    // Normalize the same way /signup and Google login do — otherwise an email typed
+    // Normalize the same way Google login does — otherwise an email typed
     // with different casing here silently can never match at login time.
     const email = (req.body.email || '').trim().toLowerCase();
     if (!email) {
@@ -6283,7 +6276,7 @@ app.patch('/api/users/:id', requireStaffAccess, async (req, res) => {
       return res.status(400).json({ error: 'Invalid status.' });
     }
 
-    // Normalize the same way /signup and Google login do — otherwise an email typed
+    // Normalize the same way Google login does — otherwise an email typed
     // with different casing here silently can never match at login time.
     if (updateData.email !== undefined) {
       const email = (updateData.email || '').trim().toLowerCase();

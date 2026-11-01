@@ -31,6 +31,19 @@ if (NODE_ENV === 'test' || process.env.JEST_WORKER_ID) {
 let client;
 let db;
 
+// 2026-10 session-persistence fix: connect-mongo's `clientPromise` option (cirl.js) needs a
+// Promise<MongoClient> it can await lazily, the first time a request actually touches the
+// session store — by then connectDB() has always already run (cirl.js awaits it before
+// app.listen()). Creating this promise here, unresolved, costs nothing and connects nothing:
+// requiring this module never calls connectDB() or touches the network. It resolves exactly
+// once, inside connectDB() itself below, with the SAME client that function already creates —
+// never a second MongoClient.
+let resolveClientPromise;
+const clientPromise = new Promise(resolve => { resolveClientPromise = resolve; });
+function getClientPromise() {
+  return clientPromise;
+}
+
 // Returns up to 20 { _id: <duplicated id value>, count } entries for a collection's `id` field — used to
 // decide, before ever attempting a unique index on it, whether that collection can actually take one.
 // MongoDB refuses to build a unique index over existing violations, so this is the check-first half of the
@@ -50,6 +63,7 @@ async function connectDB() {
     client = new MongoClient(uri);
     await client.connect();
     db = client.db();
+    resolveClientPromise(client);
     console.log('✓ Connected to MongoDB successfully');
     // 2026-09-06 security hardening (Finding #4): every write path already
     // normalizes email to trim+lowercase before storing (login, signup,
@@ -329,4 +343,4 @@ async function insertManyWithNextId(collection, count, buildDoc, { maxAttempts =
   throw new Error(`Could not allocate ids for a batch insert into ${collection.collectionName} after ${maxAttempts} attempts — it may be under unusually heavy concurrent writes.`);
 }
 
-module.exports = { connectDB, getDb, closeDB, insertWithNextId, insertManyWithNextId, findDuplicateIds, isConnected };
+module.exports = { connectDB, getDb, closeDB, insertWithNextId, insertManyWithNextId, findDuplicateIds, isConnected, getClientPromise };

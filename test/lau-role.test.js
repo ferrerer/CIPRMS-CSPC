@@ -301,38 +301,52 @@ describe('9. Unauthorized users cannot access LAU-only routes', () => {
 });
 
 describe('New LAU accounts can be created by Administrator/Staff and can then log in normally', () => {
+  // Both tests below create a REAL account through the live POST /api/users route (not the test-only
+  // createTestUser() helper), so cleanupAll()'s sweep never catches them — it only matches the
+  // createdAt: TEST_TAG marker createTestUser() sets, and this route always sets a real date string
+  // instead (that's what a real Admin/Staff action does in production). Each test therefore deletes its
+  // own exact, uniquely-generated email itself, in a finally block so it runs even if an assertion above
+  // it throws — never a broad/pattern-based query that could reach any other user.
   test('Administrator can create a user with role LAU; that account logs in correctly (to /activate first, same as any admin-created account of any role — then to /lau/monitoring once activated)', async () => {
     const { agent: adminAgent } = await agentFor('Administrator');
     const email = uniqueEmail('newlau');
-    const createRes = await adminAgent.post('/api/users').set('X-Requested-With', 'ciprms')
-      .send({ name: `${TEST_TAG} New LAU`, email, role: 'LAU', password: 'TestPass123' });
-    expect(createRes.status).toBe(200);
-    expect(createRes.body.success).toBe(true);
-    expect(createRes.body.user.role).toBe('LAU');
+    try {
+      const createRes = await adminAgent.post('/api/users').set('X-Requested-With', 'ciprms')
+        .send({ name: `${TEST_TAG} New LAU`, email, role: 'LAU', password: 'TestPass123' });
+      expect(createRes.status).toBe(200);
+      expect(createRes.body.success).toBe(true);
+      expect(createRes.body.user.role).toBe('LAU');
 
-    // Every admin-created account starts activated:false regardless of role (POST /api/users always sets
-    // it) — this redirect-to-/activate-first behavior is pre-existing and role-agnostic, not special-cased
-    // for LAU. The role->home mapping itself (isActivated() true -> homeForRole()) is already proven
-    // directly against a pre-activated fixture in "LAU can log in and reach the Partnership Monitoring
-    // dashboard" above.
-    const newAgent = request.agent(app);
-    const loginRes = await newAgent.post('/login').type('form').send({ username: email, password: 'TestPass123' });
-    expect(loginRes.status).toBe(302);
-    expect(loginRes.headers.location).toBe('/activate');
+      // Every admin-created account starts activated:false regardless of role (POST /api/users always sets
+      // it) — this redirect-to-/activate-first behavior is pre-existing and role-agnostic, not special-cased
+      // for LAU. The role->home mapping itself (isActivated() true -> homeForRole()) is already proven
+      // directly against a pre-activated fixture in "LAU can log in and reach the Partnership Monitoring
+      // dashboard" above.
+      const newAgent = request.agent(app);
+      const loginRes = await newAgent.post('/login').type('form').send({ username: email, password: 'TestPass123' });
+      expect(loginRes.status).toBe(302);
+      expect(loginRes.headers.location).toBe('/activate');
 
-    // Activate directly in the DB (bypassing the /activate form, which collects unrelated profile fields
-    // not relevant to this RBAC test) and confirm the SAME session now reaches /lau/monitoring.
-    await db.collection('users').updateOne({ email }, { $set: { activated: true } });
-    expect((await newAgent.get('/lau/monitoring')).status).toBe(200);
+      // Activate directly in the DB (bypassing the /activate form, which collects unrelated profile fields
+      // not relevant to this RBAC test) and confirm the SAME session now reaches /lau/monitoring.
+      await db.collection('users').updateOne({ email }, { $set: { activated: true } });
+      expect((await newAgent.get('/lau/monitoring')).status).toBe(200);
+    } finally {
+      await db.collection('users').deleteOne({ email });
+    }
   });
 
   test('Staff can also create an LAU account (LAU is not an Administrator-only grant, same as every other non-Administrator role)', async () => {
     const { agent: staffAgent } = await agentFor('Staff');
     const email = uniqueEmail('stafflau');
-    const res = await staffAgent.post('/api/users').set('X-Requested-With', 'ciprms')
-      .send({ name: `${TEST_TAG} Staff-Created LAU`, email, role: 'LAU', password: 'TestPass123' });
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.user.role).toBe('LAU');
+    try {
+      const res = await staffAgent.post('/api/users').set('X-Requested-With', 'ciprms')
+        .send({ name: `${TEST_TAG} Staff-Created LAU`, email, role: 'LAU', password: 'TestPass123' });
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.user.role).toBe('LAU');
+    } finally {
+      await db.collection('users').deleteOne({ email });
+    }
   });
 });

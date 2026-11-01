@@ -264,16 +264,15 @@ describe('Google sign-in — profile photo', () => {
   });
 });
 
-describe('Public self-registration (/signup) is disabled', () => {
-  test('POST /signup never creates an account or session, regardless of input', async () => {
+describe('Public self-registration (/signup) is removed', () => {
+  test('POST /signup never creates an account or session, regardless of input — the route is gone, not just disabled', async () => {
     const email = uniqueEmail('shouldnotexist');
     const agent = request.agent(app);
 
     const res = await agent.post('/signup').type('form').send({
       username: 'Should Not Exist', email, password: 'StrongPass1', confirmPassword: 'StrongPass1'
     });
-    expect(res.status).toBe(200); // re-renders /signup with the disabled notice, never a redirect
-    expect(res.text).toMatch(/self-registration is disabled/i);
+    expect(res.status).toBe(404); // no route at all, not a re-render of a disabled-notice page
 
     const created = await db.collection('users').findOne({ email });
     expect(created).toBeNull();
@@ -282,8 +281,8 @@ describe('Public self-registration (/signup) is disabled', () => {
     expect(meRes.status).toBe(302); // requireAuth redirect — confirms no session was created
   });
 
-  test('GET /signup still renders without crashing (route kept, not 404, but leads nowhere)', async () => {
+  test('GET /signup 404s — the public signup page no longer exists', async () => {
     const res = await request(app).get('/signup');
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
   });
 });

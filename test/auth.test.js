@@ -10,18 +10,19 @@ beforeAll(async () => { await connectDB(); });
 afterAll(async () => { await cleanupAll(); await closeDB(); });
 
 // Public self-registration was disabled 2026-09-05 as part of the strict
-// allowlist policy — see test/oauth-allowlist.test.js for the full
-// "no auto-provisioning, ever" coverage (Google OAuth + /signup together).
-// This describe block only re-confirms /signup's disabled state doesn't
-// vary with input (weak vs. strong password both lead nowhere).
-describe('Signup (disabled)', () => {
-  test('a weak password still cannot create an account (self-registration is disabled outright)', async () => {
+// allowlist policy, then the entire /signup flow (both routes, the view, and
+// its disabled-stub rendering) was removed outright 2026-10 — see
+// test/oauth-allowlist.test.js for the full "no auto-provisioning, ever"
+// coverage (Google OAuth + /signup together). This describe block only
+// re-confirms /signup's removal doesn't vary with input (weak vs. strong
+// password both 404 — there is no longer a route to reach at all).
+describe('Signup (removed)', () => {
+  test('a weak password still cannot create an account — there is no route to submit it to', async () => {
     const email = uniqueEmail('weak');
     const res = await request(app).post('/signup').type('form').send({
       username: 'Weak Pw', email, password: 'weakpass', confirmPassword: 'weakpass'
     });
-    expect(res.status).toBe(200);
-    expect(res.text).toMatch(/self-registration is disabled/i);
+    expect(res.status).toBe(404);
 
     const db = await connectDB();
     expect(await db.collection('users').findOne({ email })).toBeNull();
@@ -33,8 +34,7 @@ describe('Signup (disabled)', () => {
     const res = await agent.post('/signup').type('form').send({
       username: 'Strong Pw', email, password: 'StrongPass1', confirmPassword: 'StrongPass1'
     });
-    expect(res.status).toBe(200);
-    expect(res.text).toMatch(/self-registration is disabled/i);
+    expect(res.status).toBe(404);
 
     const db = await connectDB();
     expect(await db.collection('users').findOne({ email })).toBeNull();
