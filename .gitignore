@@ -51,3 +51,8 @@ uploads/documents/*
 # Profile picture uploads (runtime user data, not source)
 uploads/avatars/*
 !uploads/avatars/.gitkeep
+
+# Achievement certificate/image uploads (runtime user data, not source — see services/documentStorageService.js;
+# uploaded to Google Drive in the background, local disk is only a transient fallback)
+uploads/achievements/*
+!uploads/achievements/.gitkeep

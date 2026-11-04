@@ -9491,6 +9491,267 @@ async function computeDashboardStats(db) {
   return { dashActive, dashExpiring, dashExpired, dashTotal, activePartnerships, insightRenewal, insightExpansion, insightOptimization };
 }
 
+// ── ACHIEVEMENTS (2026-11) — institutional achievements (QS Rankings, TÜV Certifications, PQA,
+// Accreditation, Rankings, Awards/Recognitions) managed from the Administrator/Staff Dashboard. A
+// deliberately separate collection/domain from `documents` (the OCR'd partnership-document library) —
+// an achievement certificate isn't a partnership document, and mixing it into that collection would
+// surface it in the unrelated Document Library UI's own MOA/MOU/Accreditation filters. Reuses the exact
+// same storage architecture as the Document Library (services/documentStorageService.js: local disk
+// first, then a fire-and-forget background upload to the connected Google Drive account, since Render's
+// free plan wipes local disk on every redeploy) at its own lower-level, generic primitives — not
+// documentLibraryService's archiveToDocumentLibrary(), which is specific to the OCR pipeline/duplicate
+// detection and always writes to `documents`.
+const ACHIEVEMENTS_DIR = path.join(__dirname, 'uploads', 'achievements');
+if (!fs.existsSync(ACHIEVEMENTS_DIR)) fs.mkdirSync(ACHIEVEMENTS_DIR, { recursive: true });
+const ACHIEVEMENT_CATEGORIES = ['QS Ranking', 'TUV Certification', 'PQA', 'Accreditation', 'Ranking', 'Award', 'Other'];
+
+// Shared by POST/PATCH: moves the just-uploaded temp file to its permanent local path (same rename-with-
+// cross-device-fallback pattern as documentLibraryService.archiveToDocumentLibrary()), then kicks off the
+// background Drive upload. Returns the fields to merge into the achievement record; resolves even if the
+// Drive upload itself later fails (it always falls back to the local copy, same precedent as Document
+// Library). `file` is multer's req.file; `db`/`achievementId` let the background upload record driveFileId
+// once it completes, same as uploadToDriveInBackground() does for Document Library.
+async function saveAchievementFile(db, achievementId, file) {
+  const ext = path.extname(file.originalname || file.path) || '.bin';
+  const permanentName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+  const permanentPath = path.join(ACHIEVEMENTS_DIR, permanentName);
+  try {
+    await fs.promises.rename(file.path, permanentPath);
+  } catch {
+    await fs.promises.copyFile(file.path, permanentPath);
+    await fs.promises.unlink(file.path).catch(() => {});
+  }
+  const fileType = EXT_MIME_TYPES[ext.toLowerCase()] || file.mimetype || 'application/octet-stream';
+  if (!process.env.JEST_WORKER_ID) {
+    fs.promises.readFile(permanentPath)
+      .then((buffer) => documentStorageService.uploadDocument(db, buffer, permanentName, fileType))
+      .then((driveFileId) => {
+        if (!driveFileId) return; // Drive isn't connected — stays on local disk, same as Document Library
+        return db.collection('achievements').updateOne({ id: achievementId }, { $set: { driveFileId } })
+          .then(() => fs.promises.unlink(permanentPath).catch(() => {}));
+      })
+      .catch((err) => {
+        console.error(`⚠️  Achievements: background Google Drive upload failed for achievement ${achievementId}, staying on local disk:`, documentStorageService.describeGoogleError(err));
+      });
+  }
+  return {
+    fileLink: `/uploads/achievements/${permanentName}`,
+    originalFilename: file.originalname || null,
+    fileType,
+    driveFileId: null // set asynchronously above, exactly like Document Library's own driveFileId field
+  };
+}
+
+// Best-effort delete of an achievement's stored file — mirrors DELETE /api/documents/:id's own cleanup.
+async function deleteAchievementFile(db, achievement) {
+  if (!achievement) return;
+  if (achievement.driveFileId) {
+    await documentStorageService.deleteDocument(db, achievement.driveFileId);
+  } else if (achievement.fileLink && achievement.fileLink.startsWith('/uploads/achievements/')) {
+    const filename = path.basename(achievement.fileLink);
+    fs.unlink(path.join(ACHIEVEMENTS_DIR, filename), () => {});
+  }
+}
+
+app.get('/api/achievements', requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    const achievements = await db.collection('achievements').find({}).sort({ dateAchieved: -1, createdAt: -1 }).toArray();
+    res.json(achievements);
+  } catch (err) {
+    console.error('❌ Achievements list error:', err);
+    res.status(500).json({ error: 'Unable to load achievements right now. Please try again.' });
+  }
+});
+
+app.post('/api/achievements', requireStaffAccess, (req, res) => {
+  uploadDoc.single('file')(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 10MB.' : err.message;
+      return res.status(400).json({ error: message });
+    }
+    if (err) {
+      if (!err.clientSafe) console.error('❌ Achievement create upload error:', err);
+      return res.status(400).json({ error: err.clientSafe ? err.message : 'Upload failed. Please try again.' });
+    }
+    const title = (req.body.title || '').trim();
+    const category = (req.body.category || '').trim();
+    const description = (req.body.description || '').trim().slice(0, 4000);
+    const organization = (req.body.organization || '').trim().slice(0, 300);
+    const dateAchieved = (req.body.dateAchieved || '').trim();
+    if (!title) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'An achievement title is required.' });
+    }
+    if (!ACHIEVEMENT_CATEGORIES.includes(category)) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: `Category must be one of: ${ACHIEVEMENT_CATEGORIES.join(', ')}.` });
+    }
+    if (req.file && !verifyMagicBytes(req.file)) {
+      return res.status(400).json({ error: 'Unsupported file type. Only PDF, JPG, JPEG, and PNG are accepted.' });
+    }
+    try {
+      const db = getDb();
+      const fileFields = { fileLink: null, originalFilename: null, fileType: null, driveFileId: null };
+      const entry = await insertWithNextId(db.collection('achievements'), (id) => ({
+        id,
+        title: title.slice(0, 300),
+        category,
+        description,
+        organization,
+        dateAchieved,
+        ...fileFields,
+        createdBy: req.session.user.name,
+        createdByEmail: req.session.user.email,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: null,
+        updatedByEmail: null
+      }));
+      if (req.file) {
+        const saved = await saveAchievementFile(db, entry.id, req.file);
+        await db.collection('achievements').updateOne({ id: entry.id }, { $set: saved });
+        Object.assign(entry, saved);
+      }
+      await logActivity(db, req.session.user, 'ADD', `Achievement added: ${entry.title}`);
+      res.json({ success: true, achievement: entry });
+    } catch (err) {
+      console.error('❌ Achievement create error:', err);
+      if (req.file) fs.unlink(req.file.path, () => {});
+      res.status(500).json({ error: 'Unable to save the achievement right now. Please try again.' });
+    }
+  });
+});
+
+app.patch('/api/achievements/:id', requireStaffAccess, (req, res) => {
+  uploadDoc.single('file')(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 10MB.' : err.message;
+      return res.status(400).json({ error: message });
+    }
+    if (err) {
+      if (!err.clientSafe) console.error('❌ Achievement edit upload error:', err);
+      return res.status(400).json({ error: err.clientSafe ? err.message : 'Upload failed. Please try again.' });
+    }
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Invalid achievement id.' });
+    }
+    const title = (req.body.title || '').trim();
+    const category = (req.body.category || '').trim();
+    if (!title) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'An achievement title is required.' });
+    }
+    if (!ACHIEVEMENT_CATEGORIES.includes(category)) {
+      if (req.file) fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: `Category must be one of: ${ACHIEVEMENT_CATEGORIES.join(', ')}.` });
+    }
+    if (req.file && !verifyMagicBytes(req.file)) {
+      return res.status(400).json({ error: 'Unsupported file type. Only PDF, JPG, JPEG, and PNG are accepted.' });
+    }
+    // Set only once saveAchievementFile() has actually succeeded in this request (file-replace branch
+    // below) — lets the catch block clean up the new file if something AFTER that point still fails,
+    // without ever touching it on a save failure itself (where it's never set at all).
+    let newFileLocalPath = null;
+    try {
+      const db = getDb();
+      const existing = await db.collection('achievements').findOne({ id });
+      if (!existing) {
+        if (req.file) fs.unlink(req.file.path, () => {});
+        return res.status(404).json({ error: 'Achievement not found.' });
+      }
+      const patch = {
+        title: title.slice(0, 300),
+        category,
+        description: (req.body.description || '').trim().slice(0, 4000),
+        organization: (req.body.organization || '').trim().slice(0, 300),
+        dateAchieved: (req.body.dateAchieved || '').trim(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: req.session.user.name,
+        updatedByEmail: req.session.user.email
+      };
+      if (req.file) {
+        // Save the NEW file first. If this throws (disk full, permissions, ACHIEVEMENTS_DIR unwritable),
+        // we fall straight to the catch below without ever touching the old file or the DB — the existing
+        // achievement keeps its current file/reference exactly as it was. Only once the new file is
+        // confirmed saved do we remove the old one, so a replace can never end up deleting the old file
+        // without the new one actually taking its place.
+        const saved = await saveAchievementFile(db, id, req.file);
+        Object.assign(patch, saved);
+        newFileLocalPath = saved.fileLink ? path.join(ACHIEVEMENTS_DIR, path.basename(saved.fileLink)) : null;
+        await deleteAchievementFile(db, existing); // now safe — the new file already exists on disk
+      } else if (req.body.removeFile === '1' || req.body.removeFile === 'true') {
+        await deleteAchievementFile(db, existing);
+        Object.assign(patch, { fileLink: null, originalFilename: null, fileType: null, driveFileId: null });
+      }
+      await db.collection('achievements').updateOne({ id }, { $set: patch });
+      const updated = await db.collection('achievements').findOne({ id });
+      await logActivity(db, req.session.user, 'EDIT', `Achievement updated: ${updated.title}`);
+      res.json({ success: true, achievement: updated });
+    } catch (err) {
+      console.error('❌ Achievement edit error:', err);
+      if (req.file) fs.unlink(req.file.path, () => {}); // stale multer temp path once saveAchievementFile has
+                                                          // already moved it — a harmless no-op in that case
+      if (newFileLocalPath) {
+        // The new file was already saved locally (and may already be mid-upload to Drive in the
+        // background — that part is intentionally left alone, see the comment on saveAchievementFile())
+        // but something AFTER that point (deleting the old file, or this request's own database update)
+        // failed, so the database was never told about it. Clean up the orphaned local copy rather than
+        // leaving it on disk forever; the old file/record this request started with are untouched.
+        fs.unlink(newFileLocalPath, () => {});
+      }
+      res.status(500).json({ error: 'Unable to save the achievement right now. Please try again.' });
+    }
+  });
+});
+
+app.delete('/api/achievements/:id', requireStaffAccess, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid achievement id.' });
+  try {
+    const db = getDb();
+    const existing = await db.collection('achievements').findOne({ id });
+    if (!existing) return res.status(404).json({ error: 'Achievement not found.' });
+    await deleteAchievementFile(db, existing);
+    await db.collection('achievements').deleteOne({ id });
+    await logActivity(db, req.session.user, 'DELETE', `Achievement deleted: ${existing.title}`);
+    res.json({ success: true, message: 'Achievement deleted successfully.' });
+  } catch (err) {
+    console.error('❌ Achievement delete error:', err);
+    res.status(500).json({ error: 'Unable to delete the achievement right now. Please try again.' });
+  }
+});
+
+// Mirrors GET /uploads/documents/:filename's Drive-first/local-fallback pattern, scoped to the
+// achievements collection and a simple role gate (no per-record ownership — achievements are an
+// institution-wide record Administrator/Staff manage together, not a personal upload).
+app.get('/uploads/achievements/:filename', requireStaffAccess, async (req, res) => {
+  const filename = path.basename(req.params.filename);
+  try {
+    const db = getDb();
+    const achievement = await db.collection('achievements').findOne({ fileLink: '/uploads/achievements/' + filename });
+    if (achievement && achievement.driveFileId) {
+      try {
+        const stream = await documentStorageService.downloadDocument(db, achievement.driveFileId);
+        res.set('Content-Type', achievement.fileType || EXT_MIME_TYPES[path.extname(filename).toLowerCase()] || 'application/octet-stream');
+        stream.on('error', () => { if (!res.headersSent) res.status(404).send('Not found'); });
+        stream.pipe(res);
+      } catch (err) {
+        console.error('❌ Achievements: Drive download failed:', documentStorageService.describeGoogleError(err));
+        res.status(404).send('Not found');
+      }
+      return;
+    }
+    res.sendFile(path.join(ACHIEVEMENTS_DIR, filename), (err) => {
+      if (err && !res.headersSent) res.status(404).send('Not found');
+    });
+  } catch (err) {
+    res.status(500).send('Server error');
+  }
+});
+
 app.get('/dashboard', requireAdmin, async (req, res) => {
   try {
     const db = getDb();

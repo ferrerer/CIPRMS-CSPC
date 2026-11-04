@@ -119,7 +119,7 @@ async function connectDB() {
     // indexes that only speed up the existing sort, so a failure to create
     // one just leaves that collection's writes at their current speed — it
     // never changes the nextId logic itself.
-    for (const coll of ['partnerships', 'users', 'requests', 'documentrequests', 'documentfolders', 'activitylogs', 'notifications', 'calendarevents', 'targets', 'documents']) {
+    for (const coll of ['partnerships', 'users', 'requests', 'documentrequests', 'documentfolders', 'activitylogs', 'notifications', 'calendarevents', 'targets', 'documents', 'achievements']) {
       try {
         await db.collection(coll).createIndex({ id: -1 });
       } catch (indexErr) {
@@ -140,7 +140,7 @@ async function connectDB() {
     // expected to pass this check cleanly now. `documents` (2026-11 Phase 3) was the one sequential-id
     // collection this list originally missed; confirmed zero existing duplicates before adding it here. A
     // collection skipped here is not retry-protected until its duplicates are resolved and the app restarts.)
-    for (const coll of ['partnerships', 'requests', 'documentrequests', 'documentfolders', 'responsibleunits', 'users', 'activitylogs', 'notifications', 'googleDocs', 'targets', 'documents']) {
+    for (const coll of ['partnerships', 'requests', 'documentrequests', 'documentfolders', 'responsibleunits', 'users', 'activitylogs', 'notifications', 'googleDocs', 'targets', 'documents', 'achievements']) {
       try {
         const dupes = await findDuplicateIds(db, coll);
         if (dupes.length) {

@@ -53,6 +53,33 @@
             animation: mapHighlightPulse 1.8s infinite ease-in-out;
             transform-origin: center;
         }
+
+        /* ── Achievements modal (2026-11) ── */
+        .ach-filter-tabs { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+        .ach-filter-tab {
+            padding: .4rem 1rem; border-radius: 20px; font-size: .8rem; font-weight: 600;
+            cursor: pointer; border: 2px solid transparent; transition: all .18s;
+            display: flex; align-items: center; gap: .35rem; background: #f3f4fa; color: #495057;
+        }
+        .ach-filter-tab:hover { background: #e8eaf6; color: #405189; }
+        .ach-filter-tab.active { background: #405189; color: #fff; border-color: #405189; }
+        .ach-card {
+            border: 1px solid var(--vz-border-color, #e9ebec); border-radius: 10px; height: 100%;
+            display: flex; flex-direction: column; transition: box-shadow .15s ease-in-out;
+        }
+        .ach-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+        .ach-card-body { padding: 1rem; flex: 1; display: flex; flex-direction: column; }
+        .ach-card-title { font-weight: 700; font-size: .95rem; margin-bottom: .25rem; }
+        .ach-card-meta { font-size: .76rem; color: #878a99; margin-bottom: .5rem; }
+        .ach-card-desc {
+            font-size: .82rem; color: #495057; margin-bottom: .75rem; flex: 1;
+            display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+        }
+        .ach-card-actions { display: flex; gap: .4rem; margin-top: auto; }
+        [data-bs-theme="dark"] .ach-card { border-color: rgba(255,255,255,.1); }
+        [data-bs-theme="dark"] .ach-card-desc { color: #ced4da; }
+        [data-bs-theme="dark"] .ach-filter-tab { background: #262d3d; color: #ced4da; }
+        [data-bs-theme="dark"] .ach-filter-tab:hover { background: #2f3749; color: #7094f5; }
     </style>
 </head>
 
@@ -74,7 +101,10 @@
                                     <div
                                         class="page-title-box d-sm-flex align-items-center justify-content-between bg-galaxy-transparent">
                                         <h4 class="mb-sm-0">Dashboard</h4>
-                                        <div class="page-title-right">
+                                        <div class="page-title-right d-flex align-items-center gap-2">
+                                            <button type="button" class="btn btn-soft-warning btn-sm material-shadow-none" data-bs-toggle="modal" data-bs-target="#achievements-modal">
+                                                <i class="ri-trophy-line align-middle me-1"></i>Achievements
+                                            </button>
                                             <ol class="breadcrumb m-0">
                                                 <li class="breadcrumb-item"><a href="<%= typeof homeHref !== 'undefined' ? homeHref : '/dashboard' %>">CIPRMS</a></li>
                                                 <li class="breadcrumb-item active">Dashboard</li>
@@ -496,6 +526,114 @@
                 </div><!-- end main content -->
 
     </div><!-- END layout-wrapper -->
+
+    <!-- ═══════ ACHIEVEMENTS: LIST / MANAGE MODAL (2026-11) ═══════ -->
+    <div class="modal fade" id="achievements-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header bg-light p-3">
+                    <h5 class="modal-title"><i class="ri-trophy-line me-2 text-warning"></i>Institutional Achievements</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+                        <div class="ach-filter-tabs mb-0" id="ach-filter-tabs">
+                            <span class="ach-filter-tab active" data-category="all" onclick="achFilterBy('all', this)"><i class="ri-list-check-2"></i> All</span>
+                            <span class="ach-filter-tab" data-category="QS Ranking" onclick="achFilterBy('QS Ranking', this)">QS Ranking</span>
+                            <span class="ach-filter-tab" data-category="TUV Certification" onclick="achFilterBy('TUV Certification', this)">TÜV Certification</span>
+                            <span class="ach-filter-tab" data-category="PQA" onclick="achFilterBy('PQA', this)">PQA</span>
+                            <span class="ach-filter-tab" data-category="Accreditation" onclick="achFilterBy('Accreditation', this)">Accreditation</span>
+                            <span class="ach-filter-tab" data-category="Ranking" onclick="achFilterBy('Ranking', this)">Ranking</span>
+                            <span class="ach-filter-tab" data-category="Award" onclick="achFilterBy('Award', this)">Award</span>
+                            <span class="ach-filter-tab" data-category="Other" onclick="achFilterBy('Other', this)">Other</span>
+                        </div>
+                        <button type="button" class="btn btn-primary btn-sm" onclick="achOpenForm()">
+                            <i class="ri-add-line me-1"></i>Add Achievement
+                        </button>
+                    </div>
+                    <div id="ach-list" class="row g-3">
+                        <div class="col-12 text-center text-muted py-4">Loading&hellip;</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════ ACHIEVEMENTS: ADD / EDIT FORM MODAL ═══════ -->
+    <div class="modal fade" id="achievement-form-modal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-light p-3">
+                    <h5 class="modal-title" id="ach-form-title"><i class="ri-award-line me-2 text-primary"></i>Add Achievement</h5>
+                    <button type="button" class="btn-close" aria-label="Close" onclick="achCloseForm()"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="form-label" for="ach-f-title">Title <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="ach-f-title" maxlength="300">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="ach-f-category">Category <span class="text-danger">*</span></label>
+                            <select class="form-select" id="ach-f-category">
+                                <option value="">Select…</option>
+                                <option>QS Ranking</option>
+                                <option>TUV Certification</option>
+                                <option>PQA</option>
+                                <option>Accreditation</option>
+                                <option>Ranking</option>
+                                <option>Award</option>
+                                <option>Other</option>
+                            </select>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label" for="ach-f-org">Awarding / Certifying Organization</label>
+                            <input type="text" class="form-control" id="ach-f-org" maxlength="300">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="ach-f-date">Date Achieved</label>
+                            <input type="date" class="form-control" id="ach-f-date">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="ach-f-desc">Description</label>
+                            <textarea class="form-control" id="ach-f-desc" rows="3" maxlength="4000"></textarea>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="ach-f-file">Supporting Image / Certificate / Document</label>
+                            <input type="file" class="form-control" id="ach-f-file" accept=".pdf,.jpg,.jpeg,.png">
+                            <div class="form-text">PDF, JPG or PNG — max 10MB.</div>
+                            <div id="ach-f-current-file" class="mt-2" style="display:none;"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" onclick="achCloseForm()">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="ach-f-save-btn" onclick="achSave()">
+                        <i class="ri-save-line me-1"></i>Save Achievement
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════ ACHIEVEMENTS: DELETE CONFIRMATION ═══════ -->
+    <div class="modal fade" id="achievement-delete-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-body text-center p-4">
+                    <i class="ri-delete-bin-line display-5 text-danger"></i>
+                    <h4 class="mt-3">Delete this achievement?</h4>
+                    <p class="text-muted mb-0">This will permanently remove <strong id="ach-del-title"></strong> and its attached file, if any. This cannot be undone.</p>
+                </div>
+                <div class="modal-footer justify-content-center">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="ach-del-confirm-btn" onclick="achConfirmDelete()">
+                        <i class="ri-delete-bin-line me-1"></i>Yes, Delete It
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- JAVASCRIPT -->
     <script src="/velzon/assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
@@ -1170,6 +1308,230 @@
             CIPRMS.live(['partnership.updated', 'partnership.statusChanged'], function () { return loadDashboardData(true); }, { debounce: 250 });
         }
 
+        /* ═══════════════════════════════════════════════════════════════
+           ACHIEVEMENTS (2026-11) — reuses the page's own esc() for HTML
+           escaping and the globally-loaded CIPRMS.api()/CIPRMS.toast()
+           (public/js/ciprms-rt.js, loaded by every authenticated page via
+           header.ejs) for all network calls and feedback — no duplicate
+           helpers declared here.
+           ═══════════════════════════════════════════════════════════════ */
+        var ACH_ALL = [];
+        var ACH_ACTIVE_FILTER = 'all';
+        var ACH_EDIT_ID = null;      // non-null while the form modal is editing an existing achievement
+        var ACH_DELETE_ID = null;    // pending id for the delete-confirmation modal
+        var ACH_REMOVE_FILE = false; // set when the user clicks "Remove file" while editing
+        var achievementsModalEl = document.getElementById('achievements-modal');
+        var achievementFormModalEl = document.getElementById('achievement-form-modal');
+        var achievementDeleteModalEl = document.getElementById('achievement-delete-modal');
+
+        var ACH_CATEGORY_BADGE = {
+            'QS Ranking': 'bg-primary-subtle text-primary',
+            'TUV Certification': 'bg-info-subtle text-info',
+            'PQA': 'bg-success-subtle text-success',
+            'Accreditation': 'bg-warning-subtle text-warning',
+            'Ranking': 'bg-primary-subtle text-primary',
+            'Award': 'bg-danger-subtle text-danger',
+            'Other': 'bg-secondary-subtle text-secondary'
+        };
+        function achCategoryBadge(cat) {
+            return '<span class="badge ' + (ACH_CATEGORY_BADGE[cat] || 'bg-secondary-subtle text-secondary') + '">' + esc(cat || 'Other') + '</span>';
+        }
+        function achFmtDate(iso) {
+            if (!iso) return '';
+            var d = new Date(iso);
+            return isNaN(d) ? esc(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+        function achFileIcon(fileType) {
+            if (fileType === 'application/pdf') return 'ri-file-pdf-2-line';
+            if (fileType === 'image/jpeg' || fileType === 'image/png') return 'ri-image-2-line';
+            return 'ri-file-line';
+        }
+
+        function achRenderList() {
+            var el = document.getElementById('ach-list');
+            var rows = ACH_ACTIVE_FILTER === 'all' ? ACH_ALL : ACH_ALL.filter(function (a) { return a.category === ACH_ACTIVE_FILTER; });
+            if (!rows.length) {
+                el.innerHTML = '<div class="col-12 text-center text-muted py-5">' +
+                    '<i class="ri-trophy-line display-5 d-block mb-2"></i>' +
+                    (ACH_ALL.length ? 'No achievements in this category yet.' : 'No achievements recorded yet. Click "Add Achievement" to get started.') +
+                    '</div>';
+                return;
+            }
+            el.innerHTML = rows.map(function (a) {
+                var fileHtml = a.fileLink
+                    ? '<a class="btn btn-sm btn-soft-secondary" href="' + a.fileLink + '" target="_blank" rel="noopener"><i class="' + achFileIcon(a.fileType) + ' me-1"></i>View File</a>'
+                    : '';
+                return '<div class="col-md-6 col-lg-4">' +
+                    '<div class="ach-card">' +
+                        '<div class="ach-card-body">' +
+                            '<div class="mb-2">' + achCategoryBadge(a.category) + '</div>' +
+                            '<div class="ach-card-title">' + esc(a.title) + '</div>' +
+                            '<div class="ach-card-meta">' +
+                                (a.organization ? esc(a.organization) : '<span class="text-muted">No organization specified</span>') +
+                                (a.dateAchieved ? ' &middot; ' + achFmtDate(a.dateAchieved) : '') +
+                            '</div>' +
+                            '<div class="ach-card-desc">' + (a.description ? esc(a.description) : '<span class="text-muted">No description provided.</span>') + '</div>' +
+                            '<div class="ach-card-actions">' +
+                                fileHtml +
+                                '<button type="button" class="btn btn-sm btn-soft-primary" onclick="achOpenForm(' + a.id + ')"><i class="ri-edit-line me-1"></i>Edit</button>' +
+                                '<button type="button" class="btn btn-sm btn-soft-danger ms-auto" onclick="achOpenDelete(' + a.id + ')"><i class="ri-delete-bin-line"></i></button>' +
+                            '</div>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
+        }
+
+        function achFilterBy(cat, el) {
+            ACH_ACTIVE_FILTER = cat;
+            document.querySelectorAll('.ach-filter-tab').forEach(function (t) { t.classList.remove('active'); });
+            if (el) el.classList.add('active');
+            achRenderList();
+        }
+
+        function achLoadList() {
+            return CIPRMS.api('/api/achievements', { quiet: true }).then(function (res) {
+                if (!res.ok) {
+                    document.getElementById('ach-list').innerHTML = '<div class="col-12 text-center text-danger py-4">Unable to load achievements.</div>';
+                    return false;
+                }
+                ACH_ALL = Array.isArray(res.data) ? res.data : [];
+                achRenderList();
+                return true;
+            });
+        }
+
+        function achResetForm() {
+            ACH_EDIT_ID = null;
+            ACH_REMOVE_FILE = false;
+            document.getElementById('ach-f-title').value = '';
+            document.getElementById('ach-f-category').value = '';
+            document.getElementById('ach-f-org').value = '';
+            document.getElementById('ach-f-date').value = '';
+            document.getElementById('ach-f-desc').value = '';
+            document.getElementById('ach-f-file').value = '';
+            document.getElementById('ach-f-current-file').style.display = 'none';
+            document.getElementById('ach-f-current-file').innerHTML = '';
+            document.querySelectorAll('#achievement-form-modal .is-invalid').forEach(function (e) { e.classList.remove('is-invalid'); });
+        }
+
+        // id omitted -> Add mode; id given -> Edit mode, prefilled from the already-loaded list (no extra request).
+        function achOpenForm(id) {
+            achResetForm();
+            var modalTitle = document.getElementById('ach-form-title');
+            if (id) {
+                var a = ACH_ALL.find(function (x) { return x.id === id; });
+                if (!a) return;
+                ACH_EDIT_ID = id;
+                modalTitle.innerHTML = '<i class="ri-edit-line me-2 text-primary"></i>Edit Achievement';
+                document.getElementById('ach-f-title').value = a.title || '';
+                document.getElementById('ach-f-category').value = a.category || '';
+                document.getElementById('ach-f-org').value = a.organization || '';
+                document.getElementById('ach-f-date').value = a.dateAchieved || '';
+                document.getElementById('ach-f-desc').value = a.description || '';
+                if (a.fileLink) {
+                    var cur = document.getElementById('ach-f-current-file');
+                    cur.style.display = '';
+                    cur.innerHTML = '<div class="d-flex align-items-center justify-content-between border rounded p-2">' +
+                        '<span><i class="' + achFileIcon(a.fileType) + ' me-1"></i>' + esc(a.originalFilename || 'Current file') + '</span>' +
+                        '<button type="button" class="btn btn-sm btn-soft-danger" onclick="achMarkRemoveFile()"><i class="ri-close-line me-1"></i>Remove</button>' +
+                        '</div>';
+                }
+            } else {
+                modalTitle.innerHTML = '<i class="ri-award-line me-2 text-primary"></i>Add Achievement';
+            }
+            // Bootstrap modals stacking reliably means showing one at a time: hide the list modal first (it
+            // re-shows, refreshed, once the form closes — see achCloseForm()/achSave()), same pattern already
+            // used for the College Requests create/detail modals on the Requests pages.
+            var listInstance = bootstrap.Modal.getInstance(achievementsModalEl);
+            if (listInstance) listInstance.hide();
+            bootstrap.Modal.getOrCreateInstance(achievementFormModalEl).show();
+        }
+
+        function achMarkRemoveFile() {
+            ACH_REMOVE_FILE = true;
+            var cur = document.getElementById('ach-f-current-file');
+            cur.innerHTML = '<div class="text-muted fs-13"><i class="ri-information-line me-1"></i>The current file will be removed when you save.</div>';
+        }
+
+        function achCloseForm() {
+            bootstrap.Modal.getOrCreateInstance(achievementFormModalEl).hide();
+            bootstrap.Modal.getOrCreateInstance(achievementsModalEl).show();
+        }
+
+        function achSave() {
+            var title = document.getElementById('ach-f-title').value.trim();
+            var category = document.getElementById('ach-f-category').value;
+            var titleEl = document.getElementById('ach-f-title');
+            var categoryEl = document.getElementById('ach-f-category');
+            titleEl.classList.remove('is-invalid');
+            categoryEl.classList.remove('is-invalid');
+            var missing = false;
+            if (!title) { titleEl.classList.add('is-invalid'); missing = true; }
+            if (!category) { categoryEl.classList.add('is-invalid'); missing = true; }
+            if (missing) { CIPRMS.toast('Please fill in the required fields.', 'error'); return; }
+
+            var fd = new FormData();
+            fd.append('title', title);
+            fd.append('category', category);
+            fd.append('organization', document.getElementById('ach-f-org').value.trim());
+            fd.append('dateAchieved', document.getElementById('ach-f-date').value);
+            fd.append('description', document.getElementById('ach-f-desc').value.trim());
+            var fileInput = document.getElementById('ach-f-file');
+            if (fileInput.files.length) fd.append('file', fileInput.files[0]);
+            else if (ACH_REMOVE_FILE) fd.append('removeFile', '1');
+
+            var btn = document.getElementById('ach-f-save-btn');
+            var orig = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+
+            var url = ACH_EDIT_ID ? '/api/achievements/' + ACH_EDIT_ID : '/api/achievements';
+            var method = ACH_EDIT_ID ? 'PATCH' : 'POST';
+            CIPRMS.api(url, { method: method, body: fd, quiet: true }).then(function (res) {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+                if (!res.ok) { CIPRMS.toast(res.error || 'Could not save the achievement.', 'error'); return; }
+                CIPRMS.toast(ACH_EDIT_ID ? 'Achievement updated.' : 'Achievement added.', 'success');
+                achCloseForm();
+                achLoadList();
+            });
+        }
+
+        function achOpenDelete(id) {
+            var a = ACH_ALL.find(function (x) { return x.id === id; });
+            if (!a) return;
+            ACH_DELETE_ID = id;
+            document.getElementById('ach-del-title').textContent = a.title;
+            var listInstance = bootstrap.Modal.getInstance(achievementsModalEl);
+            if (listInstance) listInstance.hide();
+            bootstrap.Modal.getOrCreateInstance(achievementDeleteModalEl).show();
+        }
+
+        function achConfirmDelete() {
+            if (!ACH_DELETE_ID) return;
+            var btn = document.getElementById('ach-del-confirm-btn');
+            var orig = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Deleting…';
+            CIPRMS.api('/api/achievements/' + ACH_DELETE_ID, { method: 'DELETE', quiet: true }).then(function (res) {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+                bootstrap.Modal.getOrCreateInstance(achievementDeleteModalEl).hide();
+                bootstrap.Modal.getOrCreateInstance(achievementsModalEl).show();
+                if (!res.ok) { CIPRMS.toast(res.error || 'Could not delete the achievement.', 'error'); return; }
+                CIPRMS.toast('Achievement deleted.', 'success');
+                ACH_DELETE_ID = null;
+                achLoadList();
+            });
+        }
+
+        // Loaded once the list modal is opened (not eagerly on page load — it's behind a click, unlike the
+        // always-visible dashboard widgets above) and every time it's reopened, so edits made elsewhere are
+        // never stale.
+        if (achievementsModalEl) {
+            achievementsModalEl.addEventListener('show.bs.modal', function () { achLoadList(); });
+        }
     </script>
 
 </body>
