@@ -99,14 +99,36 @@ describe('College Dean (Auth. Personnel) — closed pages bounce to Monitoring',
     expect(menu).toContain('Logout');
   });
 
-  test('sidebar shows Monitoring, Requests, Calendar, Settings and Logout, plus the "College Dean" role label', async () => {
+  test('sidebar shows Monitoring, Requests, Calendar, Notifications, Settings and Logout (grouped Main Menu/Account), plus the "College Dean" role label', async () => {
     const html = (await agent.get('/personnel/monitoring')).text;
     const navHrefs = [...html.matchAll(/<a class="nav-link menu-link[^"]*"\s+href="([^"]+)"/g)].map(m => m[1]);
-    expect(navHrefs).toEqual(['/personnel/monitoring', '/personnel/requests', '/personnel/calendar', '/personnel/settings', '#']); // '#' = Logout
+    // 2026-11 follow-up: College Requests no longer has its own sidebar item — it moved into a tab on
+    // /personnel/requests (see personnel_requests.ejs and GET /personnel/college-requests in cirl.js, now a
+    // redirect into that tab). Notifications gained a direct sidebar shortcut to the already-authorized
+    // /personnel/notifications page (previously reachable only via the header bell), grouped into Main Menu
+    // rather than its own single-item "Management" section (a divider around one item looked sparse/
+    // disjointed next to Administrator's fuller groups).
+    expect(navHrefs).toEqual(['/personnel/monitoring', '/personnel/requests', '/personnel/calendar', '/personnel/notifications', '/personnel/settings', '#']); // '#' = Logout
+    expect(html).toContain('menu-title"><span>Main Menu</span>');
+    expect(html).not.toContain('menu-title"><span>Management</span>');
+    expect(html).toContain('menu-title"><span>Account</span>');
     expect(html).toContain('College Dean');
     for (const gone of ['/personnel/dashboard', '/personnel/documents']) {
       expect(html).not.toContain('href="' + gone + '"');
     }
+  });
+
+  test('College Requests is reachable only as a tab on the Requests page, not a separate sidebar item or page', async () => {
+    const reqHtml = (await agent.get('/personnel/requests')).text;
+    expect(reqHtml).toContain('id="tab-cdr"');
+    expect(reqHtml).toContain('id="panel-cdr"');
+    expect(reqHtml).not.toContain('href="/personnel/college-requests"');
+
+    // The old standalone route still exists (no 404 for old bookmarks/notifications) but now redirects
+    // into the tab instead of rendering its own page.
+    const redirectRes = await agent.get('/personnel/college-requests?id=42');
+    expect(redirectRes.status).toBe(302);
+    expect(redirectRes.headers.location).toBe('/personnel/requests?open=cdr&id=42');
   });
 
   test('Requests page offers Document Requests only — the Partnership Request form is gone', async () => {
@@ -214,17 +236,30 @@ describe('College Dean has NO Dashboard — /personnel/dashboard is a safe redir
   });
 });
 
-describe('College Dean can hide the sidebar to give the page the full width', () => {
-  test('every College Dean page carries the hide / show sidebar control, wired to Velzon\'s "hidden" sidebar mode', async () => {
+describe('College Dean can collapse the sidebar to a compact, icon-only mode', () => {
+  test('every College Dean page carries the expand/collapse sidebar control, wired to Velzon\'s native "sm" compact mode', async () => {
     const agent = await agentFor('Auth. Personnel');
     for (const path of ['/personnel/monitoring', '/personnel/requests', '/personnel/settings', '/personnel/calendar', '/personnel/lifecycle']) {
       const html = (await agent.get(path)).text;
       expect(html).toContain('id="topnav-hamburger-icon"');
-      expect(html).toContain("root.setAttribute('data-sidebar-visibility', 'hidden')");
+      // 2026-11 follow-up: replaces the earlier "hide the whole sidebar completely" (data-sidebar-visibility)
+      // behavior with Expanded/Compact, reusing Velzon's own native data-sidebar-size="sm" icon-only mode
+      // directly (app.min.css already implements the narrow width, logo swap, and layout repositioning for
+      // it) rather than custom CSS.
+      expect(html).toContain("root.setAttribute('data-sidebar-size', 'sm')");
       expect(html).toContain('e.stopImmediatePropagation()');                          // takes over the ☰ button on desktop widths
       expect(html).toContain('DESKTOP_MIN = 768');                                    // phones keep Velzon's own slide-in menu
-      expect(html).toContain('sidebarHidden');                                        // remembered per user
-      expect(html).toContain('html[data-sidebar-visibility="hidden"] .horizontal-logo .logo-dark'); // wordmark stays readable
+      expect(html).toContain('sidebarCompact');                                       // remembered per user, own key (not the generic sidebarSize)
+      expect(html).not.toContain('data-sidebar-visibility');                          // old hide-completely mechanism fully removed
+      expect(html).not.toContain('sidebarHidden');
+    }
+  });
+
+  test('College Dean sidebar nav links carry hover tooltips for compact-mode identification', async () => {
+    const agent = await agentFor('Auth. Personnel');
+    const html = (await agent.get('/personnel/monitoring')).text;
+    for (const label of ['Monitoring', 'Requests', 'Calendar', 'Notifications', 'Settings', 'Logout']) {
+      expect(html).toContain(`data-bs-toggle="tooltip" data-bs-placement="right" title="${label}"`);
     }
   });
 
@@ -233,8 +268,8 @@ describe('College Dean can hide the sidebar to give the page the full width', ()
       const agent = await agentFor(role);
       const html = (await agent.get(path)).text;
       expect(html).toContain('id="topnav-hamburger-icon"');
-      expect(html).not.toContain('data-sidebar-visibility');
-      expect(html).not.toContain('sidebarHidden');
+      expect(html).not.toContain('sidebarCompact');
+      expect(html).not.toContain("root.setAttribute('data-sidebar-size', 'sm')");
     }
   });
 });

@@ -52,15 +52,19 @@
 
                 <li class="nav-item">
                     <a class="nav-link menu-link <%= (typeof activePage !== 'undefined' && activePage === 'monitoring') ? 'active' : '' %>"
-                        href="/personnel/monitoring">
+                        href="/personnel/monitoring" data-bs-toggle="tooltip" data-bs-placement="right" title="Monitoring">
                         <i class="ri-refresh-line"></i>
                         <span>Monitoring</span>
                     </a>
                 </li>
 
+                <!-- Requests — College Requests (MOA/MOU/Accreditation assigned by Administrator/Staff) lives
+                     inside this same page as its own tab (2026-11 follow-up); no separate sidebar item or
+                     primary navigation destination for it anymore — see cirl.js's /personnel/requests and
+                     /personnel/college-requests (now a redirect into that tab). -->
                 <li class="nav-item">
                     <a class="nav-link menu-link <%= (typeof activePage !== 'undefined' && activePage === 'requests') ? 'active' : '' %>"
-                        href="/personnel/requests">
+                        href="/personnel/requests" data-bs-toggle="tooltip" data-bs-placement="right" title="Requests">
                         <i class="ri-briefcase-4-line"></i>
                         <span>Requests</span>
                     </a>
@@ -68,9 +72,25 @@
 
                 <li class="nav-item">
                     <a class="nav-link menu-link <%= (typeof activePage !== 'undefined' && activePage === 'calendar') ? 'active' : '' %>"
-                        href="/personnel/calendar">
+                        href="/personnel/calendar" data-bs-toggle="tooltip" data-bs-placement="right" title="Calendar">
                         <i class="ri-calendar-2-line"></i>
                         <span>Calendar</span>
+                    </a>
+                </li>
+
+                <!-- Notifications — the page already exists and is already authorized for this role
+                     (/personnel/notifications, requirePersonnel; reopened 2026-09-26, reached only via the
+                     header bell's "View All Notifications" until now). Adding the direct sidebar shortcut
+                     grants nothing new — same route, same RBAC. Kept in Main Menu rather than its own
+                     "Management" group: a divider around a single item looked sparse/disjointed next to
+                     Administrator's fuller groups, not like an intentional section. -->
+                <li class="nav-item">
+                    <a class="nav-link menu-link <%= (typeof activePage !== 'undefined' && activePage === 'notifications') ? 'active' : '' %>"
+                        href="/personnel/notifications" data-bs-toggle="tooltip" data-bs-placement="right" title="Notifications">
+                        <i class="ri-notification-3-line"></i>
+                        <span>Notifications</span>
+                        <span class="badge bg-danger rounded-pill" id="sidebar-notif-badge"
+                            style="display:none;margin-left:auto;"></span>
                     </a>
                 </li>
 
@@ -78,14 +98,14 @@
 
                 <li class="nav-item">
                     <a class="nav-link menu-link <%= (typeof activePage !== 'undefined' && activePage === 'settings') ? 'active' : '' %>"
-                        href="/personnel/settings">
+                        href="/personnel/settings" data-bs-toggle="tooltip" data-bs-placement="right" title="Settings">
                         <i class="ri-settings-3-line"></i>
                         <span>Settings</span>
                     </a>
                 </li>
 
                 <li class="nav-item">
-                    <a class="nav-link menu-link" href="#" onclick="event.preventDefault(); fetch('/logout', {method:'POST'}).then(function(){ location.href='/'; });">
+                    <a class="nav-link menu-link" href="#" data-bs-toggle="tooltip" data-bs-placement="right" title="Logout" onclick="event.preventDefault(); fetch('/logout', {method:'POST'}).then(function(){ location.href='/'; });">
                         <i class="ri-logout-box-r-line"></i>
                         <span>Logout</span>
                     </a>
@@ -97,3 +117,17 @@
     <div class="sidebar-background"></div>
 </div>
 <div class="vertical-overlay"></div>
+
+<script>
+    // Load notification badge in sidebar (same pattern as the Administrator sidebar's own copy of this script)
+    fetch('/api/notifications/unread-count')
+        .then(r => r.json())
+        .then(d => {
+            const count = d.count || 0;
+            const badge = document.getElementById('sidebar-notif-badge');
+            if (badge && count > 0) {
+                badge.textContent = count;
+                badge.style.display = '';
+            }
+        }).catch(() => { });
+</script>

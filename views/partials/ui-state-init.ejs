@@ -108,7 +108,23 @@ html[data-bs-theme="dark"][data-sidebar="dark"] {
         // immediately, before the browser paints anything.
         var saved = readState();
         if (saved.theme) root.setAttribute('data-bs-theme', saved.theme);
-        if (saved.sidebarSize) root.setAttribute('data-sidebar-size', saved.sidebarSize);
+        // 2026-11: a desktop-only icon-collapse size ("sm"/"sm-hover", set by Velzon's own hamburger handler
+        // at >=768px) must never be restored on a sub-768px load. Velzon's vendor CSS has an unconditional
+        // (non-media-gated) rule — [data-sidebar-size=sm] .navbar-menu{position:absolute;width:...!important}
+        // — that collides with its OWN mobile off-canvas rule (@media max-width:767.98px .app-menu{margin-
+        // left:-100%}), because Velzon only ever resyncs data-sidebar-size back to "lg" for mobile inside its
+        // click handler (O()), never on a plain page load. Left unguarded, a user who collapsed the sidebar
+        // on desktop and then opens (or reloads) the app on a phone gets a permanently-visible, textless
+        // icon strip instead of the hidden-until-tapped mobile drawer. Skipping the restore here is enough:
+        // every page's own <html> tag already hardcodes data-sidebar-size="lg" (see e.g. personnel_requests.
+        // ejs), which is exactly Velzon's own "mobile-safe" value, so no explicit mobile override is needed.
+        var isMobileViewport = window.innerWidth < 768;
+        var isDesktopOnlySidebarSize = saved.sidebarSize === 'sm' || saved.sidebarSize === 'sm-hover';
+        if (saved.sidebarSize && !(isMobileViewport && isDesktopOnlySidebarSize)) {
+            root.setAttribute('data-sidebar-size', saved.sidebarSize);
+        }
+        // Either way, the saved value itself is left untouched in storage (no writeState() call here) — it
+        // applies again normally the next time this user loads the app at >=768px.
     } else {
         // Logged-out page (login/signup): ALWAYS render Light, regardless of
         // any previously-logged-in user's saved dark-mode preference on this
@@ -151,7 +167,11 @@ html[data-bs-theme="dark"][data-sidebar="dark"] {
                 if (m.attributeName === 'data-bs-theme') {
                     writeState({ theme: root.getAttribute('data-bs-theme') });
                 } else if (m.attributeName === 'data-sidebar-size') {
-                    writeState({ sidebarSize: root.getAttribute('data-sidebar-size') });
+                    // Only a desktop-width (>=768px) change reflects a genuine user preference. On mobile,
+                    // Velzon's own hamburger handler (O()) forces data-sidebar-size to "lg" every time the
+                    // off-canvas drawer opens — persisting that would silently overwrite (and lose) a
+                    // desktop user's saved "sm"/"sm-hover" preference just from opening the app on a phone.
+                    if (window.innerWidth >= 768) writeState({ sidebarSize: root.getAttribute('data-sidebar-size') });
                 }
             });
         });

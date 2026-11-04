@@ -79,6 +79,30 @@
       .section-tab:hover { background: #e8eaf6; color: #405189; }
       .section-tab.active { background: #405189; color: #fff; border-color: #405189; }
 
+      /* ── College Requests tab (2026-11 follow-up) — ported from the former standalone
+         views/auth. personnel/college_requests.ejs page, which this tab replaces. ── */
+      .cdr-filter-tabs { display: flex; gap: .5rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+      .cdr-filter-tab {
+          padding: .45rem 1.15rem; border-radius: 20px; font-size: .82rem; font-weight: 600;
+          cursor: pointer; border: 2px solid transparent; transition: all .18s;
+          display: flex; align-items: center; gap: .4rem; background: #f3f4fa; color: #495057;
+      }
+      .cdr-filter-tab:hover { background: #e8eaf6; color: #405189; }
+      .cdr-filter-tab.active { background: #405189; color: #fff; border-color: #405189; }
+      .cdr-doc-chip {
+          display: inline-flex; align-items: center; gap: .4rem; background: #f3f4fa; color: #495057;
+          border-radius: 16px; padding: .3rem .8rem; font-size: .8rem; margin: .15rem;
+      }
+      .cdr-history-item { border-left: 2px solid #e9ebec; padding: .25rem 0 .25rem 1rem; margin-left: .4rem; position: relative; }
+      .cdr-history-item::before {
+          content: ''; position: absolute; left: -5px; top: .5rem; width: 8px; height: 8px;
+          border-radius: 50%; background: #405189;
+      }
+      [data-bs-theme="dark"] .cdr-filter-tab { background: #262d3d; color: #ced4da; }
+      [data-bs-theme="dark"] .cdr-filter-tab:hover { background: #2f3749; color: #7094f5; }
+      [data-bs-theme="dark"] .cdr-doc-chip { background: rgba(96,126,224,.18); color: #a9bcf5; }
+      [data-bs-theme="dark"] .cdr-history-item { border-left-color: rgba(255,255,255,.15); }
+
       /* ── CSPC-F-CIRL-04 "Documents Request Form" — styled to resemble the
          official paper form (bordered label/value rows) instead of a generic
          Bootstrap two-column grid. ── */
@@ -242,6 +266,12 @@
                     </a>
                     <a class="section-tab" id="tab-moa" href="#" onclick="switchSection('moa');return false;">
                         <i class="ri-government-line"></i> Submission of Approved MOA/MOU
+                    </a>
+                    <!-- College Requests (2026-11 follow-up) — MOA/MOU/Accreditation requests Administrator/Staff
+                         assign to this Dean specifically; replaces the former standalone College Requests page
+                         and its own sidebar item. -->
+                    <a class="section-tab" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
+                        <i class="ri-award-line"></i> College Requests
                     </a>
                 </div>
 
@@ -431,6 +461,45 @@
                     <p class="text-muted fs-13"><i class="ri-information-line me-1"></i>Track what you've sent under <strong>College Partnership Reports</strong> on the <a href="/personnel/monitoring">Monitoring</a> page.</p>
                 </div><!-- end panel-moa -->
 
+                <!-- ═══════════ PANEL: COLLEGE REQUESTS (2026-11 follow-up) ═══════════
+                     MOA/MOU/Accreditation requests Administrator/Staff assign to this Dean specifically — ported
+                     from the former standalone views/auth. personnel/college_requests.ejs page (that route now
+                     redirects here). The Dean can only view and submit/resubmit — no accept/return controls are
+                     rendered (those are Administrator/Staff-only, enforced server-side by requireStaffAccess on
+                     PATCH /api/college-requests/:id regardless of what this page shows). -->
+                <div id="panel-cdr" style="display:none;">
+                    <p class="text-muted mb-3">MOA, MOU, and Accreditation requests assigned to you by the Administrator/Staff. Open a request to review its instructions and submit the requested documents.</p>
+
+                    <div class="cdr-filter-tabs">
+                        <span class="cdr-filter-tab active" data-status="all" onclick="cdrFilterBy('all', this)"><i class="ri-list-check-2"></i> All</span>
+                        <span class="cdr-filter-tab" data-status="Pending" onclick="cdrFilterBy('Pending', this)"><i class="ri-time-line"></i> Pending</span>
+                        <span class="cdr-filter-tab" data-status="Submitted" onclick="cdrFilterBy('Submitted', this)"><i class="ri-upload-cloud-2-line"></i> Submitted</span>
+                        <span class="cdr-filter-tab" data-status="Returned for Revision" onclick="cdrFilterBy('Returned for Revision', this)"><i class="ri-arrow-go-back-line"></i> Returned for Revision</span>
+                        <span class="cdr-filter-tab" data-status="Completed" onclick="cdrFilterBy('Completed', this)"><i class="ri-checkbox-circle-line"></i> Completed</span>
+                    </div>
+
+                    <div class="card table-card">
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Title</th>
+                                            <th>Type</th>
+                                            <th>Deadline</th>
+                                            <th>Status</th>
+                                            <th></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="cdr-table-body">
+                                        <tr><td colspan="5" class="text-center text-muted py-4">Loading…</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div><!-- end panel-cdr -->
+
             </div>
         </div>
 
@@ -449,6 +518,22 @@
 
 
 <div id="req-toast"></div>
+
+<!-- ═══════ COLLEGE REQUESTS: DETAIL / SUBMIT MODAL (2026-11 follow-up) ═══════ -->
+<div class="modal fade" id="cdr-detail-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header bg-light p-3">
+        <h5 class="modal-title" id="cdr-d-title"><i class="ri-award-line me-2 text-primary"></i>Request</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="cdr-d-body">
+        <!-- populated by cdrOpenDetail() -->
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button></div>
+    </div>
+  </div>
+</div>
 
 <!-- JAVASCRIPT -->
 <script src="/velzon/assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
@@ -699,15 +784,168 @@
         });
     }
 
-    // ── Section switcher: Document Request | Submission of Approved MOA/MOU ──
+    // ── Section switcher: Document Request | Submission of Approved MOA/MOU | College Requests ──
     function switchSection(sec) {
         document.getElementById('panel-dr').style.display = sec === 'dr' ? '' : 'none';
         document.getElementById('panel-moa').style.display = sec === 'moa' ? '' : 'none';
+        document.getElementById('panel-cdr').style.display = sec === 'cdr' ? '' : 'none';
         document.getElementById('tab-dr').classList.toggle('active', sec === 'dr');
         document.getElementById('tab-moa').classList.toggle('active', sec === 'moa');
+        document.getElementById('tab-cdr').classList.toggle('active', sec === 'cdr');
     }
     // /personnel/requests?tab=moa opens the MOA/MOU tab directly (the Monitoring page links here).
-    if (new URLSearchParams(window.location.search).get('tab') === 'moa') switchSection('moa');
+    // /personnel/requests?open=cdr&id=... is the notification deep-link convention shared with the
+    // Administrator/Staff Requests pages (cdrLinkForRole in cirl.js) and with the old
+    // /personnel/college-requests?id=... bookmarks, which now redirect here.
+    (function () {
+        var params = new URLSearchParams(window.location.search);
+        // Always load the College Requests tab's data up front (same convention as the Administrator/Staff
+        // Requests pages' own init()), so it's ready whether the Dean lands here directly or clicks the tab
+        // later — not only when arriving via the ?open=cdr deep link below.
+        var cdrReady = cdrLoadList();
+        if (params.get('open') === 'cdr') {
+            switchSection('cdr');
+            cdrReady.then(function () {
+                var id = params.get('id');
+                if (id) cdrOpenDetail(parseInt(id));
+            });
+        } else if (params.get('tab') === 'moa') {
+            switchSection('moa');
+        }
+    })();
+
+    /* ═══ COLLEGE REQUESTS (2026-11 follow-up) — ported from the former standalone
+       views/auth. personnel/college_requests.ejs page. Reuses this page's own escapeHtml()/showToast()
+       (targets #req-toast) rather than redeclaring them. Only view/submit/resubmit actions are ever
+       rendered here — accept/return are Administrator/Staff-only and enforced server-side regardless. ═══ */
+    var CDR_BADGE = {
+        'Pending': 'bg-secondary-subtle text-secondary',
+        'Submitted': 'bg-info-subtle text-info',
+        'Returned for Revision': 'bg-warning-subtle text-warning',
+        'Completed': 'bg-success-subtle text-success'
+    };
+    function cdrBadge(status) {
+        return '<span class="badge ' + (CDR_BADGE[status] || 'bg-secondary-subtle text-secondary') + '">' + escapeHtml(status) + '</span>';
+    }
+    function cdrFmtDate(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        return isNaN(d) ? escapeHtml(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    var CDR_ALL = [];
+    var CDR_ACTIVE_FILTER = 'all';
+
+    function cdrRenderTable() {
+        var rows = CDR_ACTIVE_FILTER === 'all' ? CDR_ALL : CDR_ALL.filter(function (r) { return r.status === CDR_ACTIVE_FILTER; });
+        var body = document.getElementById('cdr-table-body');
+        if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No college requests assigned to you yet.</td></tr>';
+            return;
+        }
+        body.innerHTML = rows.map(function (r) {
+            return '<tr>' +
+                '<td><strong>' + escapeHtml(r.title) + '</strong></td>' +
+                '<td>' + escapeHtml(r.requestType) + '</td>' +
+                '<td>' + (r.deadline ? cdrFmtDate(r.deadline) : '<span class="text-muted">—</span>') + '</td>' +
+                '<td>' + cdrBadge(r.status) + '</td>' +
+                '<td class="text-end"><button class="btn btn-sm btn-soft-primary" onclick="cdrOpenDetail(' + r.id + ')"><i class="ri-eye-line"></i> View</button></td>' +
+                '</tr>';
+        }).join('');
+    }
+
+    function cdrFilterBy(status, el) {
+        CDR_ACTIVE_FILTER = status;
+        document.querySelectorAll('.cdr-filter-tab').forEach(function (t) { t.classList.remove('active'); });
+        el.classList.add('active');
+        cdrRenderTable();
+    }
+
+    function cdrLoadList() {
+        return fetch('/api/college-requests', { headers: { 'X-Requested-With': 'ciprms' } })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                CDR_ALL = Array.isArray(data) ? data : [];
+                cdrRenderTable();
+            })
+            .catch(function () {
+                document.getElementById('cdr-table-body').innerHTML =
+                    '<tr><td colspan="5" class="text-center text-danger py-4">Unable to load your college requests.</td></tr>';
+            });
+    }
+
+    function cdrHistoryHtml(history) {
+        if (!history || !history.length) return '<p class="text-muted mb-0">No history yet.</p>';
+        return history.slice().reverse().map(function (h) {
+            return '<div class="cdr-history-item"><strong>' + escapeHtml(h.to) + '</strong> — ' + cdrFmtDate(h.at) +
+                '<br><span class="text-muted">by ' + escapeHtml(h.by || 'System') + (h.remark ? ': ' + escapeHtml(h.remark) : '') + '</span></div>';
+        }).join('');
+    }
+
+    function cdrDocListHtml(docs, emptyLabel) {
+        if (!docs || !docs.length) return '<p class="text-muted mb-0">' + emptyLabel + '</p>';
+        return docs.map(function (d) {
+            var label = d.originalFilename || (d.note ? 'Note only' : 'Attachment');
+            return '<div class="d-flex align-items-center justify-content-between border rounded p-2 mb-2">' +
+                '<div><i class="ri-file-line me-1"></i>' + escapeHtml(label) +
+                (d.note ? '<div class="text-muted small">' + escapeHtml(d.note) + '</div>' : '') + '</div>' +
+                (d.fileLink ? '<a class="btn btn-sm btn-soft-secondary" href="' + d.fileLink + '" target="_blank"><i class="ri-download-2-line"></i></a>' : '') +
+                '</div>';
+        }).join('');
+    }
+
+    function cdrOpenDetail(id) {
+        fetch('/api/college-requests/' + id, { headers: { 'X-Requested-With': 'ciprms' } })
+            .then(function (r) { return r.json(); })
+            .then(function (r) {
+                var canSubmit = r.status === 'Pending' || r.status === 'Returned for Revision';
+                var required = (r.requiredDocuments || []).map(function (d) { return '<span class="cdr-doc-chip">' + escapeHtml(d) + '</span>'; }).join('') || '<span class="text-muted">None specified</span>';
+                document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>' + escapeHtml(r.title);
+                document.getElementById('cdr-d-body').innerHTML =
+                    '<div class="mb-3 d-flex gap-2 flex-wrap">' + cdrBadge(r.status) +
+                        '<span class="badge bg-light text-dark border">' + escapeHtml(r.requestType) + '</span>' +
+                        (r.deadline ? '<span class="badge bg-light text-dark border"><i class="ri-calendar-line"></i> Due ' + cdrFmtDate(r.deadline) + '</span>' : '') +
+                    '</div>' +
+                    '<p class="mb-1"><strong>From:</strong> ' + escapeHtml(r.createdBy) + '</p>' +
+                    (r.instructions ? '<p class="mb-1"><strong>Instructions:</strong><br>' + escapeHtml(r.instructions).replace(/\n/g, '<br>') + '</p>' : '') +
+                    (r.description ? '<p class="mb-3"><strong>Description:</strong><br>' + escapeHtml(r.description).replace(/\n/g, '<br>') + '</p>' : '') +
+                    '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +
+                    (r.status === 'Returned for Revision' && r.reviewRemark ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
+                    (r.status === 'Completed' ? '<div class="alert alert-success"><i class="ri-checkbox-circle-line me-1"></i> This request has been accepted.</div>' : '') +
+                    '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(provided by ' + escapeHtml(r.createdBy) + ')</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents were attached.') +
+                    '<p class="mb-1 mt-3"><strong>Your Submissions</strong></p>' + cdrDocListHtml(r.submittedDocuments, 'You have not submitted anything yet.') +
+                    (canSubmit ? (
+                        '<div class="border rounded p-3 mt-3 bg-light-subtle">' +
+                        '<p class="mb-2"><strong>' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + ' Documents</strong></p>' +
+                        '<input type="file" class="form-control mb-2" id="cdr-sub-file">' +
+                        '<textarea class="form-control mb-2" id="cdr-sub-note" rows="2" placeholder="Note (optional if attaching a file)"></textarea>' +
+                        '<button class="btn btn-primary w-100" onclick="cdrSubmitDocuments(' + r.id + ')"><i class="ri-upload-cloud-2-line me-1"></i> ' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + '</button>' +
+                        '</div>'
+                    ) : '') +
+                    '<p class="mb-1 mt-3"><strong>History</strong></p>' + cdrHistoryHtml(r.statusHistory);
+
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('cdr-detail-modal')).show();
+            })
+            .catch(function () { showToast('<i class="ri-error-warning-line me-2"></i> Unable to load this request.', '#f06548'); });
+    }
+
+    function cdrSubmitDocuments(id) {
+        var fileInput = document.getElementById('cdr-sub-file');
+        var note = document.getElementById('cdr-sub-note').value.trim();
+        if (!fileInput.files.length && !note) { showToast('<i class="ri-error-warning-line me-2"></i> Attach a file, add a note, or both.', '#f7b84b'); return; }
+        var fd = new FormData();
+        if (fileInput.files.length) fd.append('document', fileInput.files[0]);
+        fd.append('note', note);
+        fetch('/api/college-requests/' + id + '/documents', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'ciprms' } })
+            .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+            .then(function (res) {
+                if (!res.ok) { showToast('<i class="ri-error-warning-line me-2"></i> ' + (res.body.error || 'Submission failed.'), '#f06548'); return; }
+                showToast('<i class="ri-checkbox-circle-line me-2"></i> Submitted successfully.', '#15803d');
+                bootstrap.Modal.getInstance(document.getElementById('cdr-detail-modal')).hide();
+                cdrLoadList();
+            })
+            .catch(function () { showToast('<i class="ri-error-warning-line me-2"></i> Network error during submission.', '#f06548'); });
+    }
 
     /* ═══ SUBMISSION OF APPROVED MOA/MOU — College Partnership Report (2026-09-26) ═══
        Filed as a Partnership Request with isCollegeReport (POST /api/requests), then the approved copy is attached

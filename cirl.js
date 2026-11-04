@@ -2640,6 +2640,350 @@ app.get('/api/document-requests/:id/pdf', requireAuth, async (req, res) => {
   }
 });
 
+// ── COLLEGE DEAN REQUESTS (2026-11) ──────────────────────────────────────────
+// Administrator/Staff assign a dated request — MOA, MOU, or Accreditation — to one specific College Dean
+// (role "Auth. Personnel"), who submits documents back; Administrator/Staff then accepts or returns it for
+// revision, and the Dean can resubmit. Deliberately a NEW collection rather than an extension of
+// documentrequests above: that feature's "any reviewer, any request" model has no per-record assignee, and
+// its pipeline is strictly forward-only (no return-for-revision) — neither fits what's needed here.
+// Everything else — the upload pipeline, Document Library archiving (and therefore the existing
+// GET /uploads/documents/:filename authorization, see isOwnerOfLinkedRequest's new 'college-request' branch
+// below), notifications, and audit trail — is reused exactly as Document Requests already uses it.
+const CDR_REQUEST_TYPES = ['MOA', 'MOU', 'Accreditation'];
+const CDR_STATUSES = ['Pending', 'Submitted', 'Returned for Revision', 'Completed'];
+
+function cdrLinkForRole(role, id) {
+  // 2026-11: College Requests moved from its own standalone page into a tab on the existing Requests page
+  // for every role that has it — Administrator/Staff on views/administrator/partnership_requests.ejs's
+  // "COLLEGE REQUESTS" panel, and (2026-11 follow-up) the College Dean on their own
+  // views/auth. personnel/personnel_requests.ejs. ?open=cdr&id= matches that shared deep-link convention
+  // (?open=pr|dr|cdr&id=...). The old standalone routes (/college-requests, /staff/college-requests) still
+  // exist and are still RBAC-protected for direct URL access, but nothing links to them anymore;
+  // /personnel/college-requests now redirects into the Dean's tab rather than rendering its own page (see
+  // that route below) to avoid a second, duplicate College Requests page for this role.
+  if (role === 'Administrator') return '/partnership-requests?open=cdr&id=' + id;
+  if (role === 'Staff') return '/staff/requests?open=cdr&id=' + id;
+  // Auth. Personnel (College Dean) is the only other role with access.
+  return '/personnel/requests?open=cdr&id=' + id;
+}
+
+// Administrator/Staff always; the assigned Dean only for their own request — same shape as
+// canAccessDocumentRequest above, just keyed on assignedDeanEmail instead of requestedByEmail.
+function canAccessCollegeRequest(user, target) {
+  return REQUEST_REVIEWER_ROLES.includes(user.role) || target.assignedDeanEmail === user.email;
+}
+
+app.post('/api/college-requests', requireStaffAccess, announce('collegeRequest'), async (req, res) => {
+  const { requestType, title, instructions, description, deadline, assignedDeanId } = req.body;
+  let requiredDocuments = Array.isArray(req.body.requiredDocuments)
+    ? req.body.requiredDocuments
+    : (typeof req.body.requiredDocuments === 'string' && req.body.requiredDocuments.trim()
+        ? req.body.requiredDocuments.split(',')
+        : []);
+  requiredDocuments = requiredDocuments.map(d => (d || '').trim().slice(0, 300)).filter(Boolean).slice(0, 20);
+
+  if (!CDR_REQUEST_TYPES.includes(requestType)) {
+    return res.status(400).json({ error: `requestType must be one of: ${CDR_REQUEST_TYPES.join(', ')}.` });
+  }
+  if (!title || !title.trim()) {
+    return res.status(400).json({ error: 'A request title is required.' });
+  }
+  const deanId = parseInt(assignedDeanId);
+  if (!deanId) {
+    return res.status(400).json({ error: 'A target College Dean must be selected.' });
+  }
+  try {
+    const db = getDb();
+    const dean = await db.collection('users').findOne({ id: deanId, role: 'Auth. Personnel' });
+    if (!dean) {
+      return res.status(400).json({ error: 'The selected College Dean account was not found.' });
+    }
+
+    const entry = await insertWithNextId(db.collection('collegedeanrequests'), (nextId) => ({
+      id: nextId,
+      requestType,
+      title: title.trim().slice(0, 300),
+      instructions: (instructions || '').trim().slice(0, 4000),
+      description: (description || '').trim().slice(0, 4000),
+      requiredDocuments,
+      deadline: deadline || '',
+      assignedDeanId: dean.id,
+      assignedDeanEmail: dean.email,
+      assignedDeanName: dean.name,
+      // Snapshotted for display only — authorization always keys off assignedDeanId/Email above, never
+      // this string, since users.unit is free text and not guaranteed to match any canonical college name.
+      assignedCollege: dean.unit || '',
+      createdBy: req.session.user.name,
+      createdByEmail: req.session.user.email,
+      referenceDocuments: [],
+      submittedDocuments: [],
+      status: 'Pending',
+      statusHistory: [{ from: null, to: 'Pending', at: new Date().toISOString(), by: req.session.user.name, byEmail: req.session.user.email, remark: 'Created and assigned' }],
+      date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }));
+
+    await logActivity(db, req.session.user, 'ADD',
+      `College ${entry.requestType} request created and assigned to ${entry.assignedDeanName}: ${entry.title}`);
+
+    await notifyUsers(db, [entry.assignedDeanEmail], {
+      module: 'request',
+      tag: 'College Request',
+      icon: 'ri-award-line',
+      color: 'primary',
+      title: `New ${entry.requestType} request assigned to you: ${entry.title}`,
+      desc: `${req.session.user.name} assigned you a new ${entry.requestType} request${entry.deadline ? ', due ' + entry.deadline : ''}.`,
+      link: cdrLinkForRole('Auth. Personnel', entry.id)
+    });
+
+    res.json({ success: true, request: entry });
+  } catch (err) {
+    console.error('❌ College request create error:', err);
+    res.status(500).json({ error: 'Unable to create the college request right now. Please try again.' });
+  }
+});
+
+// Admin/Staff attach reference material after creation (0 or more times) — a separate sub-route rather
+// than folding a file into POST above, matching the Document Request draft-upload pattern exactly (multer
+// handles exactly one file per request).
+app.post('/api/college-requests/:id/reference-documents', requireStaffAccess, announce('collegeRequest'), (req, res) => {
+  uploadDoc.single('document')(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 10MB.' : err.message;
+      return res.status(400).json({ error: message });
+    }
+    if (err) {
+      if (!err.clientSafe) console.error('❌ College request reference upload error:', err);
+      return res.status(400).json({ error: err.clientSafe ? err.message : 'Upload failed. Please try again.' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ error: 'A file is required.' });
+    }
+    if (!verifyMagicBytes(req.file)) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Unsupported file type. Only PDF, JPG, JPEG, and PNG are accepted.' });
+    }
+    const id = parseInt(req.params.id);
+    const note = (req.body.note || '').trim().slice(0, 1000);
+    const actor = req.session.user;
+    try {
+      const db = getDb();
+      const target = await db.collection('collegedeanrequests').findOne({ id });
+      if (!target) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(404).json({ error: 'College request not found.' });
+      }
+
+      const { documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
+        documentType: target.requestType,
+        institution: target.assignedCollege,
+        title: `${target.requestType} Reference – ${target.title}`
+      }, {
+        uploadedBy: actor.name,
+        uploadedByEmail: actor.email,
+        requestId: id,
+        requestType: 'college-request'
+      });
+
+      const docRecord = {
+        documentId, fileLink, originalFilename: req.file.originalname,
+        uploadedAt: new Date().toISOString(), uploadedBy: actor.name, uploadedByEmail: actor.email,
+        note, fileType: req.file.mimetype, fileSize: req.file.size
+      };
+      await db.collection('collegedeanrequests').updateOne({ id }, {
+        $push: { referenceDocuments: docRecord },
+        $set: { updatedAt: new Date().toISOString() }
+      });
+      const updated = await db.collection('collegedeanrequests').findOne({ id });
+
+      await logActivity(db, actor, 'EDIT',
+        `Reference document attached to college request: ${target.title} (${req.file.originalname})`);
+
+      res.json({ success: true, documentId, fileLink, request: updated });
+    } catch (e) {
+      console.error('❌ College request reference upload error:', e);
+      res.status(500).json({ error: 'Unable to save the uploaded document right now. Please try again.' });
+    }
+  });
+});
+
+// List — Administrator/Staff see every request (their monitoring queue); the assigned Dean sees only their
+// own. No other role has any business here at all (unlike Document Requests, this isn't requester-initiated).
+app.get('/api/college-requests', requireAuth, async (req, res) => {
+  const user = req.session.user;
+  if (!REQUEST_REVIEWER_ROLES.includes(user.role) && user.role !== 'Auth. Personnel') {
+    return res.status(403).json({ error: 'You are not authorized to view college requests.' });
+  }
+  try {
+    const db = getDb();
+    const filter = REQUEST_REVIEWER_ROLES.includes(user.role) ? {} : { assignedDeanEmail: user.email };
+    const requests = await db.collection('collegedeanrequests').find(filter).sort({ id: -1 }).toArray();
+    res.json(requests);
+  } catch (err) {
+    console.error('❌ College requests list error:', err);
+    res.status(500).json({ error: 'Unable to load college requests right now. Please try again.' });
+  }
+});
+
+app.get('/api/college-requests/:id', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id);
+  try {
+    const db = getDb();
+    const target = await db.collection('collegedeanrequests').findOne({ id });
+    if (!target) return res.status(404).json({ error: 'College request not found.' });
+    if (!canAccessCollegeRequest(req.session.user, target)) {
+      return res.status(403).json({ error: 'You are not authorized to view this college request.' });
+    }
+    res.json(target);
+  } catch (err) {
+    console.error('❌ College request detail error:', err);
+    res.status(500).json({ error: 'Unable to load the college request right now. Please try again.' });
+  }
+});
+
+// The assigned Dean submits (or resubmits, after a return-for-revision) required documents. requirePersonnel
+// also admits Administrator, but the ownership check below still restricts actual submission to the one
+// Dean this request is assigned to — Administrator reviews via PATCH below, never submits on a Dean's behalf.
+app.post('/api/college-requests/:id/documents', requirePersonnel, announce('collegeRequest'), (req, res) => {
+  uploadDoc.single('document')(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 10MB.' : err.message;
+      return res.status(400).json({ error: message });
+    }
+    if (err) {
+      if (!err.clientSafe) console.error('❌ College request submission upload error:', err);
+      return res.status(400).json({ error: err.clientSafe ? err.message : 'Upload failed. Please try again.' });
+    }
+    const note = ((req.body && req.body.note) || '').trim().slice(0, 1000);
+    if (!req.file && !note) {
+      return res.status(400).json({ error: 'Provide a file, a note, or both to submit.' });
+    }
+    if (req.file && !verifyMagicBytes(req.file)) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Unsupported file type. Only PDF, JPG, JPEG, and PNG are accepted.' });
+    }
+    const id = parseInt(req.params.id);
+    const actor = req.session.user;
+    try {
+      const db = getDb();
+      const target = await db.collection('collegedeanrequests').findOne({ id });
+      if (!target) {
+        if (req.file) fs.unlink(req.file.path, () => {});
+        return res.status(404).json({ error: 'College request not found.' });
+      }
+      if (actor.role !== 'Auth. Personnel' || target.assignedDeanEmail !== actor.email) {
+        if (req.file) fs.unlink(req.file.path, () => {});
+        return res.status(403).json({ error: 'You are not authorized to submit documents for this request.' });
+      }
+      if (target.status === 'Completed') {
+        if (req.file) fs.unlink(req.file.path, () => {});
+        return res.status(400).json({ error: 'This request has already been completed — no further documents can be submitted.' });
+      }
+
+      let documentId = null, fileLink = null;
+      if (req.file) {
+        ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
+          documentType: target.requestType,
+          institution: target.assignedCollege,
+          title: `${target.requestType} Submission – ${target.title} (${target.assignedCollege || target.assignedDeanName})`
+        }, {
+          uploadedBy: actor.name,
+          uploadedByEmail: actor.email,
+          requestId: id,
+          requestType: 'college-request'
+        }));
+      }
+
+      const docRecord = {
+        documentId, fileLink, originalFilename: req.file ? req.file.originalname : null,
+        uploadedAt: new Date().toISOString(), uploadedBy: actor.name, uploadedByEmail: actor.email,
+        note, fileType: req.file ? req.file.mimetype : null, fileSize: req.file ? req.file.size : 0
+      };
+
+      const now = new Date().toISOString();
+      const wasReturned = target.status === 'Returned for Revision';
+      const historyEntry = { from: target.status, to: 'Submitted', at: now, by: actor.name, byEmail: actor.email, remark: note || (wasReturned ? 'Resubmitted' : 'Submitted') };
+
+      await db.collection('collegedeanrequests').updateOne({ id }, {
+        $push: { submittedDocuments: docRecord, statusHistory: historyEntry },
+        $set: { status: 'Submitted', updatedAt: now, submittedAt: now }
+      });
+      const updated = await db.collection('collegedeanrequests').findOne({ id });
+
+      await logActivity(db, actor, wasReturned ? 'RESUBMIT' : 'SUBMIT',
+        `College ${target.requestType} request ${wasReturned ? 'resubmitted' : 'submitted'}: ${target.title} by ${actor.name}`);
+
+      const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
+      await notifyReviewers(db, reviewers, {
+        module: 'request',
+        tag: 'College Request',
+        icon: 'ri-upload-cloud-2-line',
+        color: 'info',
+        title: `${wasReturned ? 'Resubmission' : 'Submission'} received: ${target.title}`,
+        desc: `${actor.name} ${wasReturned ? 'resubmitted' : 'submitted'} documents for the ${target.requestType} request "${target.title}".`
+      }, role => cdrLinkForRole(role, id));
+
+      res.json({ success: true, documentId, fileLink, request: updated });
+    } catch (e) {
+      console.error('❌ College request submission error:', e);
+      res.status(500).json({ error: 'Unable to save the submission right now. Please try again.' });
+    }
+  });
+});
+
+// Administrator/Staff accept or return-for-revision — only from "Submitted", matching the strict-transition
+// convention PATCH /api/document-requests/:id already uses above (no skipping, no acting on a terminal or
+// not-yet-submitted request).
+app.patch('/api/college-requests/:id', requireStaffAccess, announce('collegeRequest'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const { action, remark } = req.body;
+  if (!['accept', 'return'].includes(action)) {
+    return res.status(400).json({ error: "action must be 'accept' or 'return'." });
+  }
+  if (action === 'return' && !(remark || '').trim()) {
+    return res.status(400).json({ error: 'A comment is required when returning a request for revision.' });
+  }
+  try {
+    const db = getDb();
+    const target = await db.collection('collegedeanrequests').findOne({ id });
+    if (!target) return res.status(404).json({ error: 'College request not found.' });
+    if (target.status !== 'Submitted') {
+      return res.status(400).json({ error: `Only a request currently "Submitted" can be ${action === 'accept' ? 'accepted' : 'returned for revision'} — this one is "${target.status}".` });
+    }
+
+    const now = new Date().toISOString();
+    const newStatus = action === 'accept' ? 'Completed' : 'Returned for Revision';
+    const historyEntry = { from: target.status, to: newStatus, at: now, by: req.session.user.name, byEmail: req.session.user.email, remark: remark || '' };
+    const setFields = { status: newStatus, updatedAt: now, decidedBy: req.session.user.name, decidedByEmail: req.session.user.email };
+    if (action === 'accept') setFields.decidedAt = now;
+    if (action === 'return') setFields.reviewRemark = remark.trim();
+
+    await db.collection('collegedeanrequests').updateOne({ id }, { $set: setFields, $push: { statusHistory: historyEntry } });
+    const updated = await db.collection('collegedeanrequests').findOne({ id });
+
+    await logActivity(db, req.session.user, action === 'accept' ? 'APPROVE' : 'REJECT',
+      `College ${target.requestType} request ${action === 'accept' ? 'accepted' : 'returned for revision'}: ${target.title} (Dean: ${target.assignedDeanName})${remark ? ' — "' + remark + '"' : ''}`);
+
+    await notifyUsers(db, [target.assignedDeanEmail], {
+      module: 'request',
+      tag: 'College Request',
+      icon: action === 'accept' ? 'ri-checkbox-circle-line' : 'ri-arrow-go-back-line',
+      color: action === 'accept' ? 'success' : 'warning',
+      title: `${target.requestType} request ${action === 'accept' ? 'accepted' : 'returned for revision'}: ${target.title}`,
+      desc: action === 'accept'
+        ? `Your submission for "${target.title}" was accepted.`
+        : `Your submission for "${target.title}" was returned for revision. ${remark}`,
+      link: cdrLinkForRole('Auth. Personnel', id)
+    });
+
+    res.json({ success: true, request: updated });
+  } catch (err) {
+    console.error('❌ College request decision error:', err);
+    res.status(500).json({ error: 'Unable to update the college request right now. Please try again.' });
+  }
+});
+
 // Administrator/Auth. Personnel are scoped to their own targeted notifications
 // only, the same ownership model potential_partner already used — no role sees
 // a cross-user shared feed. (Product decision 2026-07-18: previously this route
@@ -6830,12 +7174,20 @@ function notificationHref(role, n) {
   const id = rawId && /^\d+$/.test(rawId) ? rawId : null;
   if (kind === 'calendar') return pages.calendar + (id ? '?id=' + id : '');
 
-  // Partnership (pr) vs Document (dr) request — from the link's own marker, else the notification's tag
+  // Partnership (pr), Document (dr) or College (cdr) request — from the link's own marker, else the
+  // notification's tag. 'cdr' added 2026-11 (College Requests gained its own ?open=cdr&id= deep link on
+  // every role's Requests page) — before this, a 'cdr' marker fell through the pr/dr-only check below,
+  // got reset to null, and this function returned the bare Requests page with no query string at all,
+  // silently dropping the tab+id for every role's own College Request notifications (Administrator,
+  // Staff and College Dean alike — confirmed pre-existing for Administrator before this fix too).
   let reqKind = params.get('open') || params.get('type');
-  if (reqKind !== 'pr' && reqKind !== 'dr') reqKind = /partnership/i.test(n.tag || '') ? 'pr' : /document/i.test(n.tag || '') ? 'dr' : null;
+  if (reqKind !== 'pr' && reqKind !== 'dr' && reqKind !== 'cdr') reqKind = /partnership/i.test(n.tag || '') ? 'pr' : /document/i.test(n.tag || '') ? 'dr' : /college/i.test(n.tag || '') ? 'cdr' : null;
   if ((kind === 'requests' || kind === 'monitoring') && reqKind) {
     if ((role === 'Administrator' || role === 'Staff') && id) return pages.requests + '?open=' + reqKind + '&id=' + id;
-    if (role === 'Auth. Personnel' && id) return reqKind === 'dr' ? pages.monitoring + '?type=dr&id=' + id : pages.monitoring;   // no Partnership Request page for College Dean
+    if (role === 'Auth. Personnel' && id) {
+      if (reqKind === 'cdr') return pages.requests + '?open=cdr&id=' + id;           // College Requests tab on this Dean's own Requests page
+      return reqKind === 'dr' ? pages.monitoring + '?type=dr&id=' + id : pages.monitoring;   // no Partnership Request page for College Dean
+    }
     if (role === 'potential_partner') {
       if (reqKind === 'dr') return pages.requests + '?tab=dr';                       // MOA/MOU submissions live on the Requests page itself
       if (id) return pages.monitoring + '?type=pr&id=' + id;
@@ -8818,6 +9170,13 @@ async function isOwnerOfLinkedRequest(db, doc, email) {
     const target = await db.collection('documentrequests').findOne({ id: doc.requestId });
     return !!(target && target.requestedByEmail === email);
   }
+  // College Dean Requests (2026-11) — "owner" here is the assigned Dean, not a self-submitted request, but
+  // the same principle applies: the one Dean a request is assigned to must be able to open every reference
+  // and submitted document on it, regardless of who (them or Administrator/Staff) actually uploaded it.
+  if (doc.requestType === 'college-request') {
+    const target = await db.collection('collegedeanrequests').findOne({ id: doc.requestId });
+    return !!(target && target.assignedDeanEmail === email);
+  }
   const target = await db.collection('requests').findOne({ id: doc.requestId });
   return !!(target && target.submittedByEmail === email);
 }
@@ -9218,6 +9577,14 @@ app.get('/partnership-requests', requireAdmin, (req, res) => {
   });
 });
 
+// ── COLLEGE DEAN REQUESTS PAGE (Administrator) ───────────────────────────────
+app.get('/college-requests', requireAdmin, (req, res) => {
+  res.render('administrator/college_requests', {
+    activePage: 'college-requests',
+    user: req.session.user
+  });
+});
+
 app.get('/admin/settings', requireAdmin, (req, res) => {
   res.render('administrator/admin_settings', {
     activePage: 'settings',
@@ -9303,6 +9670,17 @@ app.get('/personnel/documents', requirePersonnel, denyDepartmentPage, (req, res)
   });
 });
 
+// College Dean Requests (2026-11; folded into /personnel/requests as a tab 2026-11 follow-up) — requests
+// Administrator/Staff assign to this Dean specifically (MOA/MOU/Accreditation). This route no longer
+// renders its own page (views/auth. personnel/college_requests.ejs is now unused but left in place rather
+// than deleted) — it redirects into the "College Requests" tab on the Dean's existing Requests page, the
+// same role-permission check (requirePersonnel) still gating it, so no old bookmark/link 404s and the Dean
+// no longer has a separate College Requests sidebar item or primary navigation destination.
+app.get('/personnel/college-requests', requirePersonnel, (req, res) => {
+  const id = parseInt(req.query.id);
+  res.redirect('/personnel/requests?open=cdr' + (id ? '&id=' + id : ''));
+});
+
 app.get('/personnel/settings', requirePersonnel, (req, res) => {
   res.render('auth. personnel/personnel_settings', {
     activePage: 'settings',
@@ -9380,6 +9758,18 @@ app.get('/staff/lifecycle', requireStaffAccess, (req, res) => {
 app.get('/staff/requests', requireStaffAccess, (req, res) => {
   res.render('administrator/partnership_requests', {
     activePage: 'access-requests',
+    sidebarPartial: 'sidebar_staff',
+    user: req.session.user
+  });
+});
+
+// College Dean Requests (2026-11) — create/assign/monitor MOA, MOU, and Accreditation requests to a
+// specific College Dean. Same shared-template-with-its-own-sidebar pattern as every other Staff page
+// above; the Administrator-only equivalent (no sidebarPartial override) is registered below, next to
+// /partnership-requests.
+app.get('/staff/college-requests', requireStaffAccess, (req, res) => {
+  res.render('administrator/college_requests', {
+    activePage: 'college-requests',
     sidebarPartial: 'sidebar_staff',
     user: req.session.user
   });

@@ -374,9 +374,16 @@ refreshNotifBadge();
 
 <% if (typeof isDeptUser !== 'undefined' && isDeptUser) { %>
 <script>
-// College Dean: the ☰ button HIDES the whole sidebar (and brings it back) so the page can use the full width —
-// Velzon's own ☰ only shrinks it to an icon strip. The choice is remembered per user, next to the theme and sidebar
-// size in ui-state-init.ejs. Phones and small tablets keep Velzon's own slide-in menu, which the button still opens.
+// College Dean (2026-11 update): the ☰ button toggles the sidebar between Expanded (full labeled sidebar)
+// and Compact (icon-only) — replacing the earlier "hide the whole sidebar completely" behavior. Compact
+// mode reuses Velzon's own native data-sidebar-size="sm" feature directly (app.min.css already implements
+// the narrow width, logo-sm/logo-lg swap, hidden text labels/group headings, and main-content/topbar/
+// footer repositioning for it — no custom CSS needed here, unlike the old hide-the-whole-sidebar approach).
+// The choice is remembered per user under its own key (sidebarCompact), separate from the generic
+// sidebarSize field ui-state-init.ejs manages for every role — that field can't distinguish a genuine
+// Velzon desktop toggle (which this button fully replaces for a Dean, see below) from this button's own
+// choice, so mixing them would let the two systems overwrite each other. Phones and small tablets keep
+// Velzon's own slide-in menu, which the button still opens, always at full size.
 (function () {
     var btn = document.getElementById('topnav-hamburger-icon');
     if (!btn || !window.CIPRMS_USER) return;
@@ -385,23 +392,37 @@ refreshNotifBadge();
     var DESKTOP_MIN = 768;
 
     function isDesktop() { return window.innerWidth >= DESKTOP_MIN; }
-    function savedHidden() {
-        try { return !!JSON.parse(localStorage.getItem(KEY) || '{}').sidebarHidden; } catch (e) { return false; }
+    function savedCompact() {
+        try { return !!JSON.parse(localStorage.getItem(KEY) || '{}').sidebarCompact; } catch (e) { return false; }
     }
-    function save(hidden) {
+    function save(compact) {
         try {
             var s = JSON.parse(localStorage.getItem(KEY) || '{}');
-            s.sidebarHidden = hidden;
+            s.sidebarCompact = compact;
             localStorage.setItem(KEY, JSON.stringify(s));
         } catch (e) { /* storage unavailable: the choice just lasts for this page */ }
     }
-    var hiddenNow = savedHidden();
+    var compactNow = savedCompact();
     function apply() {
-        // The saved choice only applies where there IS a permanent sidebar to hide.
-        if (isDesktop() && hiddenNow) root.setAttribute('data-sidebar-visibility', 'hidden');
-        else root.removeAttribute('data-sidebar-visibility');
-        btn.setAttribute('aria-pressed', isDesktop() && hiddenNow ? 'true' : 'false');
-        btn.setAttribute('title', isDesktop() ? (hiddenNow ? 'Show sidebar' : 'Hide sidebar') : 'Toggle sidebar menu');
+        // The saved choice only applies where there IS a permanent sidebar to collapse.
+        if (isDesktop() && compactNow) {
+            root.setAttribute('data-sidebar-size', 'sm');
+        } else {
+            // Mobile always needs Velzon's own full-size off-canvas drawer, never the icon-only desktop
+            // layout — and a Dean who has NOT chosen compact needs the full sidebar too, on any width.
+            // Clearing "sm"/"sm-hover" here is always safe and never loses a real choice: this button is
+            // the only thing that ever sets it for a Dean (stopImmediatePropagation() below fully
+            // suppresses Velzon's own O(), the only other code that does), so finding it set here while
+            // the desktop+compact combination says otherwise can only mean a stale value got in some other
+            // way — e.g. ui-state-init.ejs's own generic, role-agnostic restore (shared with every other
+            // role) applying a leftover pre-2026-11 preference, or Velzon's resize-debounced P() restoring
+            // a stale sessionStorage snapshot (see the MutationObserver below). The Dean's actual choice
+            // always lives in compactNow/localStorage, never in this raw attribute value.
+            var size = root.getAttribute('data-sidebar-size');
+            if (size === 'sm' || size === 'sm-hover') root.removeAttribute('data-sidebar-size');
+        }
+        btn.setAttribute('aria-pressed', isDesktop() && compactNow ? 'true' : 'false');
+        btn.setAttribute('title', isDesktop() ? (compactNow ? 'Expand sidebar' : 'Collapse sidebar') : 'Toggle sidebar menu');
     }
 
     // Registered here, before Velzon's app.js (bottom of the page) adds its own click handler to this button, so on a
@@ -409,22 +430,26 @@ refreshNotifBadge();
     btn.addEventListener('click', function (e) {
         if (!isDesktop()) return;
         e.stopImmediatePropagation();
-        hiddenNow = !hiddenNow;
-        save(hiddenNow);
+        compactNow = !compactNow;
+        save(compactNow);
         apply();
     });
     window.addEventListener('resize', apply);
     apply();
+
+    // app.js's own window "resize" handler debounces a call (2s) to its P() function, which rebuilds its
+    // layout-restore object from sessionStorage — including data-sidebar-size, refreshed by ui-state-init.
+    // ejs's own snapshot taken BEFORE this script ever runs, so it reflects whatever the generic
+    // (role-agnostic) restore set, not this button's own compact choice. Left alone, that 2-second restore
+    // would silently undo a Dean's compact selection after any resize, with no further event to
+    // self-correct. Watch the attribute itself and re-assert our own state the moment anything else
+    // changes it away from it — no flag/guard needed: once apply() has made the attribute match our
+    // desired state, the mutation that fires from apply()'s own write is a no-op here.
+    new MutationObserver(function () {
+        var wantCompact = isDesktop() && compactNow;
+        var isCompact = root.getAttribute('data-sidebar-size') === 'sm';
+        if (wantCompact !== isCompact) apply();
+    }).observe(root, { attributes: true, attributeFilter: ['data-sidebar-size'] });
 })();
 </script>
-<% } %>
-<% if (typeof isDeptUser !== 'undefined' && isDeptUser) { %>
-<style>
-    /* With the sidebar hidden Velzon moves the logo into the top bar, but it picks the white-text logo for a dark
-       sidebar even though this app's top bar is light — so the "CIPRMS" wordmark vanished. Pick by theme instead. */
-    html[data-sidebar-visibility="hidden"] .horizontal-logo .logo-dark { display: inline-block !important; }
-    html[data-sidebar-visibility="hidden"] .horizontal-logo .logo-light { display: none !important; }
-    html[data-sidebar-visibility="hidden"][data-bs-theme="dark"] .horizontal-logo .logo-dark { display: none !important; }
-    html[data-sidebar-visibility="hidden"][data-bs-theme="dark"] .horizontal-logo .logo-light { display: inline-block !important; }
-</style>
 <% } %>

@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en" data-layout="vertical" data-topbar="light" data-sidebar="dark" data-sidebar-size="lg" data-sidebar-image="none" data-preloader="disable" data-theme="default" data-theme-colors="default" data-bs-theme="light">
+<head>
+    <meta charset="utf-8" />
+    <%- include('../partials/ui-state-init') %>
+    <title>College Requests | CIPRMS-CSPC-CIRL</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="shortcut icon" href="/images/cirl-logo.jpg">
+    <script src="/velzon/assets/js/layout.js"></script>
+    <link href="/velzon/assets/css/bootstrap.min.css" rel="stylesheet" type="text/css" />
+    <link href="/velzon/assets/css/icons.min.css" rel="stylesheet" type="text/css" />
+    <link href="/velzon/assets/css/app.min.css" rel="stylesheet" type="text/css" />
+    <link href="/velzon/assets/css/custom.min.css" rel="stylesheet" type="text/css" />
+    <link rel="stylesheet" href="/velzon/assets/css/ciprms-bridge.css?v=20260925d">
+    <style>
+      #cdr-toast {
+          position: fixed; bottom: 30px; right: 30px; padding: 12px 24px; border-radius: 6px;
+          color: white; font-weight: 600; box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+          opacity: 0; transition: opacity 0.3s; z-index: 9999;
+      }
+      .table-card { border-radius: 12px; border: none; box-shadow: 0 5px 15px rgba(0,0,0,0.05); background: white; }
+      .table thead th {
+          background-color: #f3f6f9; color: #878a99; font-size: 11px; font-weight: 700;
+          text-transform: uppercase; border: none; padding: 15px 20px;
+      }
+      .table tbody td { padding: 15px 20px; border-bottom: 1px solid #f3f6f9; font-size: 13px; vertical-align: middle; }
+      .cdr-filter-tabs { display: flex; gap: .5rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
+      .cdr-filter-tab {
+          padding: .45rem 1.15rem; border-radius: 20px; font-size: .82rem; font-weight: 600;
+          cursor: pointer; border: 2px solid transparent; transition: all .18s;
+          display: flex; align-items: center; gap: .4rem; background: #f3f4fa; color: #495057;
+      }
+      .cdr-filter-tab:hover { background: #e8eaf6; color: #405189; }
+      .cdr-filter-tab.active { background: #405189; color: #fff; border-color: #405189; }
+      .cdr-doc-chip {
+          display: inline-flex; align-items: center; gap: .4rem; background: #f3f4fa; color: #495057;
+          border-radius: 16px; padding: .3rem .8rem; font-size: .8rem; margin: .15rem;
+      }
+      .cdr-history-item { border-left: 2px solid #e9ebec; padding: .25rem 0 .25rem 1rem; margin-left: .4rem; position: relative; }
+      .cdr-history-item::before {
+          content: ''; position: absolute; left: -5px; top: .5rem; width: 8px; height: 8px;
+          border-radius: 50%; background: #405189;
+      }
+    </style>
+</head>
+<body>
+
+<div id="layout-wrapper">
+    <%- include('../partials/header') %>
+    <%- include('../partials/' + (typeof sidebarPartial !== 'undefined' ? sidebarPartial : 'sidebar')) %>
+
+    <div class="main-content">
+        <div class="page-content">
+            <div class="container-fluid">
+
+                <div class="row">
+                    <div class="col-12">
+                        <div class="page-title-box d-sm-flex align-items-center justify-content-between bg-galaxy-transparent">
+                            <h4 class="mb-sm-0">College Requests</h4>
+                            <div class="page-title-right d-flex align-items-center gap-2">
+                                <ol class="breadcrumb m-0 me-2">
+                                    <li class="breadcrumb-item"><a href="#">CIPRMS</a></li>
+                                    <li class="breadcrumb-item active">College Requests</li>
+                                </ol>
+                                <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#cdr-create-modal">
+                                    <i class="ri-add-line align-bottom me-1"></i> New Request
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="cdr-filter-tabs">
+                    <span class="cdr-filter-tab active" data-status="all" onclick="cdrFilterBy('all', this)"><i class="ri-list-check-2"></i> All</span>
+                    <span class="cdr-filter-tab" data-status="Pending" onclick="cdrFilterBy('Pending', this)"><i class="ri-time-line"></i> Pending</span>
+                    <span class="cdr-filter-tab" data-status="Submitted" onclick="cdrFilterBy('Submitted', this)"><i class="ri-upload-cloud-2-line"></i> Submitted</span>
+                    <span class="cdr-filter-tab" data-status="Returned for Revision" onclick="cdrFilterBy('Returned for Revision', this)"><i class="ri-arrow-go-back-line"></i> Returned for Revision</span>
+                    <span class="cdr-filter-tab" data-status="Completed" onclick="cdrFilterBy('Completed', this)"><i class="ri-checkbox-circle-line"></i> Completed</span>
+                </div>
+
+                <div class="card table-card">
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                    <tr>
+                                        <th>Title</th>
+                                        <th>Type</th>
+                                        <th>College Dean</th>
+                                        <th>College</th>
+                                        <th>Deadline</th>
+                                        <th>Status</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="cdr-table-body">
+                                    <tr><td colspan="7" class="text-center text-muted py-4">Loading…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════ CREATE / ASSIGN MODAL ═══════ -->
+<div class="modal fade" id="cdr-create-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-light p-3">
+        <h5 class="modal-title"><i class="ri-award-line me-2 text-primary"></i>New College Request</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="cdr-create-form">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label class="form-label">Request Type</label>
+              <select class="form-select" id="cdr-c-type" required>
+                <option value="" disabled selected>Select type…</option>
+                <option value="MOA">MOA Request</option>
+                <option value="MOU">MOU Request</option>
+                <option value="Accreditation">Accreditation Request</option>
+              </select>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label">Target College Dean</label>
+              <select class="form-select" id="cdr-c-dean" required>
+                <option value="" disabled selected>Loading deans…</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Submission Deadline</label>
+              <input type="date" class="form-control" id="cdr-c-deadline">
+            </div>
+            <div class="col-12">
+              <label class="form-label">Title</label>
+              <input type="text" class="form-control" id="cdr-c-title" maxlength="300" placeholder="e.g. 2027 AACCUP Accreditation Documents" required>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Instructions</label>
+              <textarea class="form-control" id="cdr-c-instructions" rows="3" maxlength="4000" placeholder="What the Dean needs to do, and by when."></textarea>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Description</label>
+              <textarea class="form-control" id="cdr-c-description" rows="2" maxlength="4000" placeholder="Additional context (optional)."></textarea>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Required Documents <span class="text-muted">(comma-separated)</span></label>
+              <input type="text" class="form-control" id="cdr-c-required" placeholder="e.g. Accomplishment Report, Faculty Profile, Curriculum Checklist">
+            </div>
+          </div>
+          <div class="invalid-feedback d-block d-none mt-2" id="cdr-c-error"></div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="cdr-c-submit" onclick="cdrSubmitCreate()">Create &amp; Assign</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ DETAIL / REVIEW MODAL ═══════ -->
+<div class="modal fade" id="cdr-detail-modal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header bg-light p-3">
+        <h5 class="modal-title" id="cdr-d-title"><i class="ri-award-line me-2 text-primary"></i>Request</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="cdr-d-body">
+        <!-- populated by cdrOpenDetail() -->
+      </div>
+      <div class="modal-footer" id="cdr-d-footer"></div>
+    </div>
+  </div>
+</div>
+
+<div id="cdr-toast"></div>
+
+<script src="/velzon/assets/libs/bootstrap/js/bootstrap.bundle.min.js"></script>
+<script src="/velzon/assets/libs/simplebar/simplebar.min.js"></script>
+<script src="/velzon/assets/libs/node-waves/waves.min.js"></script>
+<script src="/velzon/assets/libs/feather-icons/feather.min.js"></script>
+<script src="/velzon/assets/js/app.js"></script>
+
+<script>
+  function showToast(msg, color) {
+      var t = document.getElementById('cdr-toast');
+      t.style.background = color || '#405189'; t.style.opacity = '1'; t.innerHTML = msg;
+      setTimeout(function () { t.style.opacity = '0'; }, 3500);
+  }
+  function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+          return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+  }
+  var CDR_BADGE = {
+      'Pending': 'bg-secondary-subtle text-secondary',
+      'Submitted': 'bg-info-subtle text-info',
+      'Returned for Revision': 'bg-warning-subtle text-warning',
+      'Completed': 'bg-success-subtle text-success'
+  };
+  function cdrBadge(status) {
+      return '<span class="badge ' + (CDR_BADGE[status] || 'bg-secondary-subtle text-secondary') + '">' + escapeHtml(status) + '</span>';
+  }
+  function fmtDate(iso) {
+      if (!iso) return '';
+      var d = new Date(iso);
+      return isNaN(d) ? escapeHtml(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
+  var CDR_ALL = [];
+  var CDR_ACTIVE_FILTER = 'all';
+  var CDR_DEANS = [];
+
+  function cdrLoadDeans() {
+      return fetch('/api/users', { headers: { 'X-Requested-With': 'ciprms' } })
+          .then(function (r) { return r.json(); })
+          .then(function (users) {
+              CDR_DEANS = (users || []).filter(function (u) { return u.role === 'Auth. Personnel'; });
+              var sel = document.getElementById('cdr-c-dean');
+              sel.innerHTML = '<option value="" disabled selected>Select a College Dean…</option>' +
+                  CDR_DEANS.map(function (d) {
+                      return '<option value="' + d.id + '">' + escapeHtml(d.name) + (d.unit ? ' — ' + escapeHtml(d.unit) : '') + '</option>';
+                  }).join('');
+          })
+          .catch(function () { showToast('Could not load College Dean accounts.', '#f44336'); });
+  }
+
+  function cdrRenderTable() {
+      var rows = CDR_ACTIVE_FILTER === 'all' ? CDR_ALL : CDR_ALL.filter(function (r) { return r.status === CDR_ACTIVE_FILTER; });
+      var body = document.getElementById('cdr-table-body');
+      if (!rows.length) {
+          body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No college requests found.</td></tr>';
+          return;
+      }
+      body.innerHTML = rows.map(function (r) {
+          return '<tr>' +
+              '<td><strong>' + escapeHtml(r.title) + '</strong></td>' +
+              '<td>' + escapeHtml(r.requestType) + '</td>' +
+              '<td>' + escapeHtml(r.assignedDeanName || '') + '</td>' +
+              '<td>' + escapeHtml(r.assignedCollege || '—') + '</td>' +
+              '<td>' + (r.deadline ? fmtDate(r.deadline) : '<span class="text-muted">—</span>') + '</td>' +
+              '<td>' + cdrBadge(r.status) + '</td>' +
+              '<td class="text-end"><button class="btn btn-sm btn-soft-primary" onclick="cdrOpenDetail(' + r.id + ')"><i class="ri-eye-line"></i> View</button></td>' +
+              '</tr>';
+      }).join('');
+  }
+
+  function cdrFilterBy(status, el) {
+      CDR_ACTIVE_FILTER = status;
+      document.querySelectorAll('.cdr-filter-tab').forEach(function (t) { t.classList.remove('active'); });
+      el.classList.add('active');
+      cdrRenderTable();
+  }
+
+  function cdrLoadList() {
+      return fetch('/api/college-requests', { headers: { 'X-Requested-With': 'ciprms' } })
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+              CDR_ALL = Array.isArray(data) ? data : [];
+              cdrRenderTable();
+          })
+          .catch(function () {
+              document.getElementById('cdr-table-body').innerHTML =
+                  '<tr><td colspan="7" class="text-center text-danger py-4">Unable to load college requests.</td></tr>';
+          });
+  }
+
+  function cdrSubmitCreate() {
+      var errBox = document.getElementById('cdr-c-error');
+      errBox.classList.add('d-none');
+      var payload = {
+          requestType: document.getElementById('cdr-c-type').value,
+          assignedDeanId: document.getElementById('cdr-c-dean').value,
+          deadline: document.getElementById('cdr-c-deadline').value,
+          title: document.getElementById('cdr-c-title').value,
+          instructions: document.getElementById('cdr-c-instructions').value,
+          description: document.getElementById('cdr-c-description').value,
+          requiredDocuments: document.getElementById('cdr-c-required').value
+      };
+      var btn = document.getElementById('cdr-c-submit');
+      btn.disabled = true;
+      fetch('/api/college-requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ciprms' },
+          body: JSON.stringify(payload)
+      })
+      .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+      .then(function (res) {
+          btn.disabled = false;
+          if (!res.ok) {
+              errBox.textContent = res.body.error || 'Unable to create the request.';
+              errBox.classList.remove('d-none');
+              return;
+          }
+          showToast('Request created and assigned.', '#4caf50');
+          bootstrap.Modal.getInstance(document.getElementById('cdr-create-modal')).hide();
+          document.getElementById('cdr-create-form').reset();
+          cdrLoadList();
+      })
+      .catch(function () {
+          btn.disabled = false;
+          errBox.textContent = 'Network error. Please try again.';
+          errBox.classList.remove('d-none');
+      });
+  }
+
+  function cdrHistoryHtml(history) {
+      if (!history || !history.length) return '<p class="text-muted mb-0">No history yet.</p>';
+      return history.slice().reverse().map(function (h) {
+          return '<div class="cdr-history-item"><strong>' + escapeHtml(h.to) + '</strong> — ' + fmtDate(h.at) +
+              '<br><span class="text-muted">by ' + escapeHtml(h.by || 'System') + (h.remark ? ': ' + escapeHtml(h.remark) : '') + '</span></div>';
+      }).join('');
+  }
+
+  function cdrDocListHtml(docs, emptyLabel) {
+      if (!docs || !docs.length) return '<p class="text-muted mb-0">' + emptyLabel + '</p>';
+      return docs.map(function (d) {
+          var label = d.originalFilename || (d.note ? 'Note only' : 'Attachment');
+          return '<div class="d-flex align-items-center justify-content-between border rounded p-2 mb-2">' +
+              '<div><i class="ri-file-line me-1"></i>' + escapeHtml(label) +
+              (d.note ? '<div class="text-muted small">' + escapeHtml(d.note) + '</div>' : '') + '</div>' +
+              (d.fileLink ? '<a class="btn btn-sm btn-soft-secondary" href="' + d.fileLink + '" target="_blank"><i class="ri-download-2-line"></i></a>' : '') +
+              '</div>';
+      }).join('');
+  }
+
+  function cdrOpenDetail(id) {
+      fetch('/api/college-requests/' + id, { headers: { 'X-Requested-With': 'ciprms' } })
+          .then(function (r) { return r.json(); })
+          .then(function (r) {
+              document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>' + escapeHtml(r.title);
+              var required = (r.requiredDocuments || []).map(function (d) { return '<span class="cdr-doc-chip">' + escapeHtml(d) + '</span>'; }).join('') || '<span class="text-muted">None specified</span>';
+              document.getElementById('cdr-d-body').innerHTML =
+                  '<div class="mb-3 d-flex gap-2 flex-wrap">' + cdrBadge(r.status) +
+                      '<span class="badge bg-light text-dark border">' + escapeHtml(r.requestType) + '</span>' +
+                      (r.deadline ? '<span class="badge bg-light text-dark border"><i class="ri-calendar-line"></i> Due ' + fmtDate(r.deadline) + '</span>' : '') +
+                  '</div>' +
+                  '<p class="mb-1"><strong>Assigned to:</strong> ' + escapeHtml(r.assignedDeanName) + (r.assignedCollege ? ' (' + escapeHtml(r.assignedCollege) + ')' : '') + '</p>' +
+                  (r.instructions ? '<p class="mb-1"><strong>Instructions:</strong><br>' + escapeHtml(r.instructions).replace(/\n/g, '<br>') + '</p>' : '') +
+                  (r.description ? '<p class="mb-3"><strong>Description:</strong><br>' + escapeHtml(r.description).replace(/\n/g, '<br>') + '</p>' : '') +
+                  '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +
+                  (r.reviewRemark && r.status === 'Returned for Revision' ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
+                  '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(from you)</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.') +
+                  '<div class="input-group input-group-sm mb-3">' +
+                      '<input type="file" class="form-control" id="cdr-ref-file">' +
+                      '<button class="btn btn-outline-secondary" type="button" onclick="cdrAddReference(' + r.id + ')">Attach</button>' +
+                  '</div>' +
+                  '<p class="mb-1"><strong>Submitted Documents</strong> <span class="text-muted">(from the Dean)</span></p>' + cdrDocListHtml(r.submittedDocuments, 'Nothing submitted yet.') +
+                  '<p class="mb-1 mt-3"><strong>History</strong></p>' + cdrHistoryHtml(r.statusHistory);
+
+              var footer = document.getElementById('cdr-d-footer');
+              if (r.status === 'Submitted') {
+                  footer.innerHTML =
+                      '<div class="w-100">' +
+                      '<textarea class="form-control mb-2" id="cdr-return-remark" rows="2" placeholder="Comment (required if returning for revision)"></textarea>' +
+                      '<div class="d-flex justify-content-end gap-2">' +
+                      '<button class="btn btn-warning" onclick="cdrDecide(' + r.id + ', \\'return\\')"><i class="ri-arrow-go-back-line"></i> Return for Revision</button>' +
+                      '<button class="btn btn-success" onclick="cdrDecide(' + r.id + ', \\'accept\\')"><i class="ri-checkbox-circle-line"></i> Accept</button>' +
+                      '</div></div>';
+              } else {
+                  footer.innerHTML = '<button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>';
+              }
+
+              bootstrap.Modal.getOrCreateInstance(document.getElementById('cdr-detail-modal')).show();
+          })
+          .catch(function () { showToast('Unable to load this request.', '#f44336'); });
+  }
+
+  function cdrAddReference(id) {
+      var fileInput = document.getElementById('cdr-ref-file');
+      if (!fileInput.files.length) { showToast('Choose a file first.', '#ff9800'); return; }
+      var fd = new FormData();
+      fd.append('document', fileInput.files[0]);
+      fetch('/api/college-requests/' + id + '/reference-documents', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'ciprms' } })
+          .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+          .then(function (res) {
+              if (!res.ok) { showToast(res.body.error || 'Upload failed.', '#f44336'); return; }
+              showToast('Reference document attached.', '#4caf50');
+              cdrOpenDetail(id);
+              cdrLoadList();
+          })
+          .catch(function () { showToast('Network error during upload.', '#f44336'); });
+  }
+
+  function cdrDecide(id, action) {
+      var remark = (document.getElementById('cdr-return-remark') || {}).value || '';
+      if (action === 'return' && !remark.trim()) { showToast('A comment is required when returning for revision.', '#ff9800'); return; }
+      fetch('/api/college-requests/' + id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ciprms' },
+          body: JSON.stringify({ action: action, remark: remark })
+      })
+      .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+      .then(function (res) {
+          if (!res.ok) { showToast(res.body.error || 'Unable to update this request.', '#f44336'); return; }
+          showToast(action === 'accept' ? 'Request accepted.' : 'Returned for revision.', '#4caf50');
+          bootstrap.Modal.getInstance(document.getElementById('cdr-detail-modal')).hide();
+          cdrLoadList();
+      })
+      .catch(function () { showToast('Network error.', '#f44336'); });
+  }
+
+  // Query-string deep link from a notification (?id=123), same convention as the Partnership/Document Request pages.
+  document.addEventListener('DOMContentLoaded', function () {
+      cdrLoadDeans();
+      cdrLoadList().then(function () {
+          var params = new URLSearchParams(window.location.search);
+          var id = params.get('id');
+          if (id) cdrOpenDetail(parseInt(id));
+      });
+  });
+</script>
+
+</body>
+</html>
