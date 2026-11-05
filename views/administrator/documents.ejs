@@ -346,6 +346,16 @@
                                         </tbody>
                                     </table>
                                 </div>
+
+                                <!-- Pagination (2026-11 panel recommendation) — server-side; shared by Grid and List
+                                     views since both render the same current page. -->
+                                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3 pt-3 border-top">
+                                    <div class="fs-12 text-muted" id="doc-page-summary"></div>
+                                    <div class="d-flex align-items-center gap-3">
+                                        <div id="doc-page-size"></div>
+                                        <div id="doc-pagination"></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -527,14 +537,21 @@
 <script src="/velzon/assets/libs/feather-icons/feather.min.js"></script>
 <script src="/velzon/assets/js/app.js"></script>
 <script src="/js/ciprms-uploader.js"></script>
+<script src="/js/ciprms-pagination.js"></script>
 <script>
-    let allDocs = [];
+    let allDocs = []; // the full role-scoped set — used ONLY for nature-pill/stat counts (loadFacets), never rendered directly
     let allFolders = [];
     let currentType = 'All';
     let currentTag = 'All';
     let currentSearch = '';
     let currentFolder = 'all'; // 'all' | 'unfiled' | 'archived' | <folder id>
     let currentView = localStorage.getItem('docLibraryView') === 'list' ? 'list' : 'grid';
+    // Pagination (2026-11 panel recommendation) — server-side; the grid/list only ever render the current
+    // page's `records`, never the full allDocs array.
+    let docPage = 1;
+    let docPageSize = 25;
+    let docTotalCount = 0;
+    let docSearchDebounce = null;
 
     function escHtml(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -554,7 +571,12 @@
 
         document.getElementById('searchLibrary').addEventListener('input', function(e) {
             currentSearch = e.target.value.toLowerCase();
-            renderFiltered();
+            docPage = 1;
+            // Debounced (2026-11): search now queries the server (for correct pagination over the whole
+            // matching set, not just whatever page happened to be loaded), so it waits for a short pause
+            // in typing instead of firing a request on every keystroke.
+            clearTimeout(docSearchDebounce);
+            docSearchDebounce = setTimeout(loadPage, 300);
         });
 
 
@@ -600,15 +622,64 @@
         }
     });
 
-    function loadDocuments() {
+    // Facets (nature pills + stat cards) need the FULL role-scoped set to count correctly — a single,
+    // infrequent full fetch (no `page` param, so the server returns the plain unpaginated array exactly
+    // as it always has — see GET /api/documents in cirl.js). The actual grid/list rendering below never
+    // uses allDocs; it always comes from the paginated loadPage() fetch.
+    function loadFacets() {
         return fetch('/api/documents')
             .then(r => r.json())
             .then(data => {
                 allDocs = Array.isArray(data) ? data : [];
                 renderNaturePills();
-                renderFiltered();
                 updateStats();
             });
+    }
+
+    // Fetches exactly one page of documents matching the current search/type/tag/folder state from the
+    // server (2026-11 panel recommendation — server-side pagination). Preserves every existing filter:
+    // the same four dimensions renderFiltered() used to apply client-side are now sent as query params
+    // and applied server-side instead, so filtering behavior is unchanged, only WHERE it runs.
+    function loadPage() {
+        const params = new URLSearchParams({ page: docPage, pageSize: docPageSize, folder: currentFolder });
+        if (currentType !== 'All') params.set('type', currentType);
+        if (currentTag !== 'All') params.set('tag', currentTag);
+        if (currentSearch) params.set('search', currentSearch);
+        return fetch('/api/documents?' + params.toString())
+            .then(r => r.json())
+            .then(data => {
+                const records = Array.isArray(data.records) ? data.records : [];
+                docTotalCount = data.totalCount || 0;
+                docPage = data.page || docPage;
+                docPageSize = data.pageSize || docPageSize;
+                renderGrid(records);
+                renderList(records);
+                renderDocPagination();
+            });
+    }
+
+    function renderDocPagination() {
+        const totalPages = Math.max(1, Math.ceil(docTotalCount / docPageSize));
+        if (docPage > totalPages) docPage = totalPages;
+        document.getElementById('doc-pagination').innerHTML = CIPRMSPagination.buildPaginationHtml(docPage, totalPages, 'goToDocPage');
+        document.getElementById('doc-page-summary').textContent = CIPRMSPagination.summaryText(docPage, docPageSize, docTotalCount);
+        CIPRMSPagination.renderPageSizeSelector('doc-page-size', docPageSize, [10, 25, 50], function (newSize) {
+            docPageSize = newSize;
+            docPage = 1;
+            loadPage();
+        });
+    }
+
+    function goToDocPage(p) {
+        docPage = p;
+        loadPage();
+    }
+
+    // Reloads everything — facets (full set, for pills/stats) and the current page (filtered set, for
+    // the grid/list). Resets to page 1 since the underlying data changed (an upload, archive, delete...).
+    function loadDocuments() {
+        docPage = 1;
+        return Promise.all([loadFacets(), loadPage()]);
     }
 
     function updateStats() {
@@ -641,16 +712,18 @@
 
     function filterType(type, el) {
         currentType = type;
+        docPage = 1;
         document.querySelectorAll('#type-filter-group .btn').forEach(btn => btn.classList.remove('active'));
         el.classList.add('active');
-        renderFiltered();
+        loadPage();
     }
 
     function filterTag(tag, el) {
         currentTag = tag;
+        docPage = 1;
         document.querySelectorAll('#nature-pills-container .btn').forEach(btn => btn.classList.remove('active'));
         if (el) el.classList.add('active');
-        renderFiltered();
+        loadPage();
     }
 
     // Nature of Partnership filter pills — built from the ACTUAL nature values present on real MOA/MOU records
@@ -692,8 +765,9 @@
 
     function filterFolder(folder) {
         currentFolder = folder;
+        docPage = 1;
         renderFolderList();
-        renderFiltered();
+        loadPage();
     }
 
     function renderFolderList() {
@@ -767,7 +841,7 @@
             if (data.success) {
                 const doc = allDocs.find(d => d.id === docId);
                 if (doc) doc.folderId = folderId;
-                renderFiltered();
+                loadDocuments(); // folder counts + the current (possibly folder-filtered) page both need refreshing
                 showToast('<i class="ri-checkbox-circle-line me-1"></i>Document moved.');
             } else showToast(data.error || 'Failed to move document.', '#f06548');
         });
@@ -781,7 +855,7 @@
                 const doc = allDocs.find(d => d.id === docId);
                 if (doc) doc.archived = archived;
                 renderFolderList();
-                renderFiltered();
+                loadDocuments(); // archived status affects pill/stat counts and which page this doc now falls on
                 showToast('<i class="ri-checkbox-circle-line me-1"></i>' + (archived ? 'Document archived.' : 'Document unarchived.'));
             } else showToast(data.error || 'Failed to update document.', '#f06548');
         });
@@ -803,7 +877,7 @@
         fetch('/api/documents/' + docId, {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() })
         }).then(r => r.json()).then(data => {
-            if (data.success) { doc.title = title.trim(); renderFiltered(); showToast('<i class="ri-checkbox-circle-line me-1"></i>Document renamed.'); }
+            if (data.success) { doc.title = title.trim(); loadPage(); showToast('<i class="ri-checkbox-circle-line me-1"></i>Document renamed.'); }
             else showToast(data.error || 'Failed to rename document.', '#f06548');
         });
     }
@@ -816,37 +890,10 @@
         return opts;
     }
 
-    function renderFiltered() {
-        const filtered = allDocs.filter(doc => {
-            if (currentFolder === 'archived') {
-                if (!doc.archived) return false;
-            } else {
-                if (doc.archived) return false;
-                if (currentFolder === 'unfiled' && doc.folderId != null) return false;
-                else if (currentFolder !== 'all' && currentFolder !== 'unfiled' && doc.folderId !== currentFolder) return false;
-            }
-            const matchesType = currentType === 'All' || doc.type === currentType;
-            // Nature of Partnership — the real field (doc.nature), scoped to MOA/MOU records; "Other" covers an
-            // MOA/MOU with no confidently-extracted nature. Every non-MOA/MOU document (Accreditation, Contract,
-            // etc.) is left alone by this filter entirely, same as before.
-            const matchesTag = currentTag === 'All'
-                || ((doc.type === 'MOA' || doc.type === 'MOU') && (doc.nature || 'Other') === currentTag);
-            const instText = (doc.institution || doc.partner || '').toLowerCase();
-            // IDP upgrade (2026-07-28): also search the OCR-extracted text and
-            // keywords, so scanned documents are searchable by words that only
-            // ever appear inside the file itself (e.g. "Kyushu", "CHED").
-            const ocrText = (doc.ocrText || '').toLowerCase();
-            const kwText = (doc.searchKeywords || []).join(' ').toLowerCase();
-            const matchesSearch = !currentSearch || doc.title.toLowerCase().includes(currentSearch)
-                || instText.includes(currentSearch) || ocrText.includes(currentSearch) || kwText.includes(currentSearch);
-            return matchesType && matchesTag && matchesSearch;
-        });
-
-        // Both views are kept in sync on every filter/search change so toggling
-        // between them (setView) never needs to re-fetch or re-filter.
-        renderGrid(filtered);
-        renderList(filtered);
-    }
+    // Filtering (search/type/nature/folder) moved server-side with pagination (2026-11) — see loadPage()
+    // above, which now does exactly what this function used to do, but as a MongoDB query instead of an
+    // in-memory allDocs.filter(). renderGrid/renderList below are unchanged; they simply render whichever
+    // array they're given.
 
     // Existing card layout — untouched.
     function renderGrid(filtered) {

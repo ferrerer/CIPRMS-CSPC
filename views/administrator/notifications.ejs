@@ -149,7 +149,10 @@
         </div>
 
         <!-- Pagination Container -->
-        <div id="notif-pagination"></div>
+        <div class="d-flex flex-wrap align-items-center justify-content-end gap-3">
+          <div id="notif-page-size"></div>
+          <div id="notif-pagination"></div>
+        </div>
 
       </div><!-- container-fluid -->
     </div><!-- page-content -->
@@ -178,7 +181,7 @@
 
         let activeRead = 'all';
         let currentPage = 1;
-        const itemsPerPage = 4;
+        let itemsPerPage = 10; // selectable (2026-11 panel recommendation) — was a hardcoded 4
 
         // â”€â”€ API helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         function apiPatchNotif(id, payload) {
@@ -404,6 +407,13 @@
             feed.innerHTML = html;
 
             document.getElementById('notif-pagination').innerHTML = buildPaginationHtml(currentPage, totalPages, 'goToPage');
+            if (window.CIPRMSPagination) {
+                CIPRMSPagination.renderPageSizeSelector('notif-page-size', itemsPerPage, [10, 25, 50], function (newSize) {
+                    itemsPerPage = newSize;
+                    currentPage = 1;
+                    render();
+                });
+            }
         }
 
         document.addEventListener('DOMContentLoaded', () => {

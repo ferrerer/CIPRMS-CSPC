@@ -771,7 +771,10 @@
                             <tbody id="pr-tbody"></tbody>
                           </table>
                         </div>
-                        <div id="pr-pagination" class="p-3"></div>
+                        <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 px-3">
+                          <div id="pr-page-size"></div>
+                          <div id="pr-pagination" class="py-3"></div>
+                        </div>
                       </div>
 
                       <!-- Document Requests Panel -->
@@ -811,7 +814,10 @@
                             <tbody id="dr-tbody"></tbody>
                           </table>
                         </div>
-                        <div id="dr-pagination" class="p-3"></div>
+                        <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 px-3">
+                          <div id="dr-page-size"></div>
+                          <div id="dr-pagination" class="py-3"></div>
+                        </div>
                       </div>
 
                       <!-- College Requests Panel (2026-11) -->
@@ -846,6 +852,13 @@
                             </thead>
                             <tbody id="cdr-tbody"></tbody>
                           </table>
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3">
+                          <div class="fs-12 text-muted" id="cdr-page-summary"></div>
+                          <div class="d-flex align-items-center gap-3">
+                            <div id="cdr-page-size"></div>
+                            <div id="cdr-pagination"></div>
+                          </div>
                         </div>
                       </div>
                       <% } %>
@@ -1488,8 +1501,15 @@
       if (prCurrentPage > totalPages) prCurrentPage = Math.max(1, totalPages);
       const startIdx = (prCurrentPage - 1) * prItemsPerPage;
       const paged = prFiltered.slice(startIdx, startIdx + prItemsPerPage);
-      
+
       document.getElementById('pr-pagination').innerHTML = buildPaginationHtml(prCurrentPage, totalPages, 'goToPRPage');
+      if (window.CIPRMSPagination) {
+        CIPRMSPagination.renderPageSizeSelector('pr-page-size', prItemsPerPage, [10, 25, 50], function (newSize) {
+          prItemsPerPage = newSize;
+          prCurrentPage = 1;
+          renderPR();
+        });
+      }
 
       tbody.innerHTML = paged.map((r, mappedIndex) => {
         const i = startIdx + mappedIndex;
@@ -2304,8 +2324,15 @@
       if (drCurrentPage > totalPages) drCurrentPage = Math.max(1, totalPages);
       const startIdx = (drCurrentPage - 1) * drItemsPerPage;
       const paged = drFiltered.slice(startIdx, startIdx + drItemsPerPage);
-      
+
       document.getElementById('dr-pagination').innerHTML = buildPaginationHtml(drCurrentPage, totalPages, 'goToDRPage');
+      if (window.CIPRMSPagination) {
+        CIPRMSPagination.renderPageSizeSelector('dr-page-size', drItemsPerPage, [10, 25, 50], function (newSize) {
+          drItemsPerPage = newSize;
+          drCurrentPage = 1;
+          renderDR();
+        });
+      }
 
       tbody.innerHTML = paged.map((r, mappedIndex) => {
         const i = startIdx + mappedIndex;
@@ -2534,6 +2561,10 @@
     ═══════════════════════════════════════════════════════ */
     var CDR_ALL = [];
     var CDR_ACTIVE_FILTER = '';
+    // Pagination (2026-11 panel recommendation) — server-side.
+    var CDR_PAGE = 1;
+    var CDR_PAGE_SIZE = 25;
+    var CDR_TOTAL_COUNT = 0;
     var CDR_DEANS = [];
     var CDR_BADGE = {
       'Pending': 'bg-secondary-subtle text-secondary',
@@ -2655,12 +2686,21 @@
       return [];
     }
 
+    // CDR_ALL now holds just the current page's rows (server-side pagination, 2026-11) — the status
+    // filter is applied server-side too (see cdrLoadList), so this just renders whatever came back.
     function cdrRenderTable() {
-      var rows = !CDR_ACTIVE_FILTER ? CDR_ALL : CDR_ALL.filter(function (r) { return r.status === CDR_ACTIVE_FILTER; });
+      var rows = CDR_ALL;
       var body = document.getElementById('cdr-tbody');
       if (!body) return;
-      document.getElementById('cdr-count').textContent =
-          rows.length + ' of ' + CDR_ALL.length + ' request' + (CDR_ALL.length !== 1 ? 's' : '');
+      document.getElementById('cdr-count').textContent = CIPRMSPagination.summaryText(CDR_PAGE, CDR_PAGE_SIZE, CDR_TOTAL_COUNT);
+      var totalPages = Math.max(1, Math.ceil(CDR_TOTAL_COUNT / CDR_PAGE_SIZE));
+      document.getElementById('cdr-pagination').innerHTML = CIPRMSPagination.buildPaginationHtml(CDR_PAGE, totalPages, 'cdrGoToPage');
+      document.getElementById('cdr-page-summary').textContent = CIPRMSPagination.summaryText(CDR_PAGE, CDR_PAGE_SIZE, CDR_TOTAL_COUNT);
+      CIPRMSPagination.renderPageSizeSelector('cdr-page-size', CDR_PAGE_SIZE, [10, 25, 50], function (newSize) {
+        CDR_PAGE_SIZE = newSize;
+        CDR_PAGE = 1;
+        cdrLoadList();
+      });
       if (!rows.length) {
           body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No college requests found.</td></tr>';
           return;
@@ -2683,21 +2723,35 @@
 
     function cdrFilterBy(status, btn) {
       CDR_ACTIVE_FILTER = status;
+      CDR_PAGE = 1;
       document.querySelectorAll('#cdr-filter-tabs .btn').forEach(function (b) { b.classList.remove('active'); });
       if (btn) btn.classList.add('active');
-      cdrRenderTable();
+      cdrLoadList();
+    }
+
+    function cdrGoToPage(p) {
+      CDR_PAGE = p;
+      cdrLoadList();
     }
 
     function cdrLoadList() {
       // /api/college-requests already scopes correctly server-side for every role it admits, but LAU isn't
       // one of them (403) and never sees this tab anyway — same IS_LAU short-circuit as loadDR() above.
-      if (IS_LAU) { CDR_ALL = []; cdrRenderTable(); return Promise.resolve(); }
-      return fetch('/api/college-requests', { headers: { 'X-Requested-With': 'ciprms' } })
+      if (IS_LAU) { CDR_ALL = []; CDR_TOTAL_COUNT = 0; cdrRenderTable(); return Promise.resolve(); }
+      var params = new URLSearchParams({ page: CDR_PAGE, pageSize: CDR_PAGE_SIZE });
+      if (CDR_ACTIVE_FILTER) params.set('status', CDR_ACTIVE_FILTER);
+      return fetch('/api/college-requests?' + params.toString(), { headers: { 'X-Requested-With': 'ciprms' } })
           .then(function (r) { return r.json(); })
           .then(function (data) {
-              CDR_ALL = Array.isArray(data) ? data : [];
+              CDR_ALL = Array.isArray(data.records) ? data.records : [];
+              CDR_TOTAL_COUNT = data.totalCount || 0;
+              CDR_PAGE = data.page || CDR_PAGE;
+              CDR_PAGE_SIZE = data.pageSize || CDR_PAGE_SIZE;
               cdrRenderTable();
-              if (document.getElementById('tab-cnt-cdr')) document.getElementById('tab-cnt-cdr').textContent = CDR_ALL.length;
+              // The nav-tab badge always shows the grand total across every status — only meaningful while
+              // "All" is the active filter (the one time this fetch's totalCount IS the grand total),
+              // exactly matching the one-time-per-load semantics this badge already had.
+              if (!CDR_ACTIVE_FILTER && document.getElementById('tab-cnt-cdr')) document.getElementById('tab-cnt-cdr').textContent = CDR_TOTAL_COUNT;
           })
           .catch(function () {
               var body = document.getElementById('cdr-tbody');
@@ -2967,6 +3021,7 @@
   <script src="/velzon/assets/js/pages/plugins/lord-icon-2.1.0.js"></script>
   <script src="/velzon/assets/js/plugins.js"></script>
   <script src="/js/ciprms-uploader.js"></script>
+  <script src="/js/ciprms-pagination.js"></script>
   <script src="/velzon/assets/js/app.js"></script>
 </body>
 

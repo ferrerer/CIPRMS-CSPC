@@ -96,6 +96,10 @@
                      this header partial — this script must not look for it before the rest of the page has parsed. -->
                 <script src="/js/ciprms-search.js?v=2" defer></script>
                 <script src="/js/ciprms-uploader.js" defer></script>
+                <!-- Shared pagination helper (2026-11 panel recommendation) — loaded globally so any page
+                     (including ones with no other per-page utility script tag, e.g. Users/Notifications)
+                     can call window.CIPRMSPagination without its own explicit <script> include. -->
+                <script src="/js/ciprms-pagination.js" defer></script>
 <% } %>
             </div>
 

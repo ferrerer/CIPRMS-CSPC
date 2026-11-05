@@ -225,6 +225,7 @@
     <div class="card">
       <div class="card-header align-items-center d-flex">
         <h4 class="card-title mb-0 flex-grow-1"><i class="ri-filter-3-line me-1"></i>Filter Partnerships</h4>
+        <button class="btn btn-soft-primary btn-sm" onclick="monitoringGenerateReport()" title="Open Reports &amp; Analytics with these same filters already applied"><i class="ri-file-chart-2-line me-1"></i>Generate Report</button>
         <button class="btn btn-soft-danger btn-sm" onclick="clearFilters()"><i class="ri-refresh-line me-1"></i>Clear</button>
       </div>
       <div class="card-body py-3">
@@ -307,7 +308,10 @@
         <div id="reg-grid">
           <div class="table-loading"><span class="spinner-border spinner-border-sm text-primary"></span>Loading partnerships&hellip;</div>
         </div>
-        <div id="reg-pagination" class="p-3"></div>
+        <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 px-3">
+          <div id="reg-page-size"></div>
+          <div id="reg-pagination" class="py-3"></div>
+        </div>
       </div>
       <!-- Legend -->
       <div class="card-footer border-top-0 bg-transparent">
@@ -990,6 +994,10 @@
   }
   function resetBreadcrumb() { setBreadcrumb(BREADCRUMB_BASE); }
 </script>
+<!-- Shared pagination helper (2026-11 panel recommendation) — page-size selector only; the Previous/
+     Next/numbered-pages renderer below stays registry-gridjs.init.js's own existing buildPaginationHtml,
+     unchanged, since it already does exactly the same thing. -->
+<script src="/js/ciprms-pagination.js"></script>
 <!-- gridjs init — same script the standalone Registry page used; Monitoring
      is now this page's only home, see docs/SYSTEM_AUDIT_2026-07-16.md -->
 <script src="/velzon/assets/js/pages/registry-gridjs.init.js"></script>

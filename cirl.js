@@ -1347,7 +1347,7 @@ app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to retrieve dashboard stats' });
+    res.status(500).json({ error: 'Unable to load the dashboard right now. Please try again.' });
   }
 });
 
@@ -1379,7 +1379,7 @@ app.get('/api/partnerships', requireUploader, async (req, res) => {
     res.json(docs);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to retrieve partnerships' });
+    res.status(500).json({ error: 'Unable to load partnerships right now. Please try again.' });
   }
 });
 
@@ -1402,7 +1402,7 @@ app.get('/api/partnerships/mine', requireAuth, async (req, res) => {
     res.json(await partnershipsOwnedBy(db, email));
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to retrieve partnerships' });
+    res.status(500).json({ error: 'Unable to load partnerships right now. Please try again.' });
   }
 });
 
@@ -1436,7 +1436,7 @@ app.get('/api/requests', requireAuth, async (req, res) => {
     res.json(requests);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to retrieve requests' });
+    res.status(500).json({ error: 'Unable to load requests right now. Please try again.' });
   }
 });
 
@@ -1448,7 +1448,7 @@ app.post('/api/partnerships/:id/renew-request', requireAuth, announce('request')
   const id = parseInt(req.params.id);
   const { proposedEndDate, notes } = req.body;
   if (!proposedEndDate || isNaN(new Date(proposedEndDate))) {
-    return res.status(400).json({ error: 'A valid proposedEndDate is required.' });
+    return res.status(400).json({ error: 'Please provide a valid proposed end date.' });
   }
   try {
     const db = getDb();
@@ -2920,8 +2920,19 @@ app.get('/api/college-requests', requireAuth, async (req, res) => {
     const filter = REQUEST_REVIEWER_ROLES.includes(user.role)
       ? {}
       : { $or: [{ assignedDeanEmail: user.email }, { 'assignedDeans.email': user.email }] };
-    const requests = await db.collection('collegedeanrequests').find(filter).sort({ id: -1 }).toArray();
-    res.json(requests);
+
+    // Server-side pagination (2026-11 panel recommendation) — strictly opt-in via `page`; omitting it
+    // keeps the exact original behavior (the full role-scoped array), so no existing caller is affected.
+    if (req.query.page == null) {
+      const requests = await db.collection('collegedeanrequests').find(filter).sort({ id: -1 }).toArray();
+      return res.json(requests);
+    }
+    if (req.query.status) filter.status = req.query.status;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = [10, 25, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 25;
+    const totalCount = await db.collection('collegedeanrequests').countDocuments(filter);
+    const records = await db.collection('collegedeanrequests').find(filter).sort({ id: -1 }).skip((page - 1) * pageSize).limit(pageSize).toArray();
+    res.json({ records, totalCount, page, pageSize });
   } catch (err) {
     console.error('❌ College requests list error:', err);
     res.status(500).json({ error: 'Unable to load college requests right now. Please try again.' });
@@ -3189,14 +3200,57 @@ app.get('/api/documents', requireUploader, async (req, res) => {
     // original own-uploads-only behavior; Auth. Personnel/potential_partner's own file-access stays
     // restricted to their own uploads (SELF_UPLOAD_ONLY_ROLES), so they never get this broader scope.
     const wantsAll = req.query.scope === 'all' && REQUEST_REVIEWER_ROLES.includes(req.session.user.role);
-    const filter = (!wantsAll && OWN_SCOPE_ROLES.includes(req.session.user.role))
+    const roleFilter = (!wantsAll && OWN_SCOPE_ROLES.includes(req.session.user.role))
       ? { uploadedByEmail: req.session.user.email }
       : {};
-    const docs = await db.collection('documents').find(filter).toArray();
-    res.json(docs);
+
+    // Server-side pagination (2026-11 panel recommendation) — strictly OPT-IN via the `page` query param.
+    // Every existing caller that omits it (the Document Library page's own stats/nature-pill computation,
+    // which needs the full set to count correctly, and the Select Existing Documents picker's scope=all
+    // fetch) gets the exact same full, unpaginated array it always has — zero behavior change. Only a
+    // caller that explicitly passes `page` gets the new paginated shape, with the SAME role scoping
+    // (roleFilter) applied first, same as every other filter below.
+    if (req.query.page == null) {
+      const docs = await db.collection('documents').find(roleFilter).toArray();
+      return res.json(docs);
+    }
+
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = [10, 25, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 25;
+    const filter = { ...roleFilter };
+
+    // Folder/archived — doc.archived/doc.folderId are plain fields on each record, queried here exactly
+    // the same way the Document Library page's own (now-legacy, still used by the facet fetch above)
+    // client-side renderFiltered() filter already works.
+    const folder = req.query.folder;
+    if (folder === 'archived') {
+      filter.archived = true;
+    } else {
+      filter.archived = { $ne: true };
+      if (folder === 'unfiled') filter.folderId = null;
+      else if (folder && folder !== 'all') { const fid = parseInt(folder, 10); if (Number.isInteger(fid)) filter.folderId = fid; }
+    }
+    if (req.query.type && req.query.type !== 'All') filter.type = req.query.type;
+    // Nature of Partnership tag — same rule as the client filter: only ever narrows MOA/MOU records;
+    // "Other" means an MOA/MOU with no confidently-extracted nature (missing, null, or empty string).
+    if (req.query.tag && req.query.tag !== 'All') {
+      filter.type = { $in: ['MOA', 'MOU'] };
+      filter.nature = req.query.tag === 'Other' ? { $in: [null, ''] } : req.query.tag;
+    }
+    const search = (req.query.search || '').trim();
+    if (search) {
+      const re = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      // Mirrors the client's matchesSearch exactly: title, institution/partner, OCR text, and keywords —
+      // a regex against an array field (searchKeywords) already matches if ANY element matches.
+      filter.$or = [{ title: re }, { institution: re }, { partner: re }, { ocrText: re }, { searchKeywords: re }];
+    }
+
+    const totalCount = await db.collection('documents').countDocuments(filter);
+    const records = await db.collection('documents').find(filter).sort({ id: -1 }).skip((page - 1) * pageSize).limit(pageSize).toArray();
+    res.json({ records, totalCount, page, pageSize });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to retrieve documents' });
+    res.status(500).json({ error: 'Unable to load documents right now. Please try again.' });
   }
 });
 
@@ -3213,7 +3267,7 @@ app.get('/api/documents/mine', requireAuth, async (req, res) => {
     res.json(docs);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to retrieve documents' });
+    res.status(500).json({ error: 'Unable to load documents right now. Please try again.' });
   }
 });
 
@@ -3234,12 +3288,12 @@ app.patch('/api/documents/:id', requirePersonnel, announce('document'), async (r
   try {
     const db = getDb();
     const doc = await db.collection('documents').findOne({ id: parseInt(req.params.id) });
-    if (!doc) return res.status(404).json({ error: 'Not found.' });
+    if (!doc) return res.status(404).json({ error: 'The document you are trying to update could not be found.' });
     if (DOCUMENT_METADATA_SELF_ONLY_ROLES.includes(req.session.user.role) && doc.uploadedByEmail !== req.session.user.email) {
       return res.status(403).json({ error: 'You can only edit metadata for documents you uploaded.' });
     }
     const updated = await updateDocument(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ error: 'Not found.' });
+    if (!updated) return res.status(404).json({ error: 'The document you are trying to update could not be found.' });
     res.json({ success: true, document: updated });
   } catch (err) {
     console.error('❌ Document metadata update error:', err);
@@ -3569,7 +3623,8 @@ app.post('/api/partnerships', requireStaffAccess, announce('partnership'), async
     const { sourceRequestId, ...partnershipBody } = req.body;
     const unknown = Object.keys(partnershipBody).filter(k => !(k in PARTNERSHIP_FIELDS));
     if (unknown.length) {
-      return res.status(400).json({ error: 'Unknown field(s): ' + unknown.join(', ') });
+      console.warn('⚠️ Partnership create rejected — unknown field(s):', unknown.join(', '));
+      return res.status(400).json({ error: 'Some of the submitted information could not be processed. Please refresh the page and try again.' });
     }
     const db = getDb();
     const { fields, errors } = sanitizePartnershipFields(partnershipBody, { requireCore: true, validUnits: await validPartnershipUnitNames(db) });
@@ -3674,7 +3729,8 @@ app.patch('/api/partnerships/:id', requireStaffAccess, announce('partnership', {
   try {
     const unknown = Object.keys(req.body).filter(k => !(k in PARTNERSHIP_FIELDS));
     if (unknown.length) {
-      return res.status(400).json({ error: 'Unknown field(s): ' + unknown.join(', ') });
+      console.warn('⚠️ Partnership update rejected — unknown field(s):', unknown.join(', '));
+      return res.status(400).json({ error: 'Some of the submitted information could not be processed. Please refresh the page and try again.' });
     }
     const db = getDb();
     const { fields, errors } = sanitizePartnershipFields(req.body, { requireCore: false, validUnits: await validPartnershipUnitNames(db) });
@@ -3686,7 +3742,7 @@ app.patch('/api/partnerships/:id', requireStaffAccess, announce('partnership', {
     }
 
     const existing = await db.collection('partnerships').findOne({ id });
-    if (!existing) return res.status(404).json({ error: 'Not found.' });
+    if (!existing) return res.status(404).json({ error: 'The partnership record you are trying to update could not be found.' });
 
     // Re-evaluate the map location ONLY when the institution or country
     // actually changed (see resolveForUpdate) — so an edit never leaves
@@ -3700,7 +3756,7 @@ app.patch('/api/partnerships/:id', requireStaffAccess, announce('partnership', {
     }
     await db.collection('partnerships').updateOne({ id }, update);
     const updated = await db.collection('partnerships').findOne({ id });
-    if (!updated) return res.status(404).json({ error: 'Not found.' });
+    if (!updated) return res.status(404).json({ error: 'The partnership record you are trying to update could not be found.' });
     await logActivity(db, req.session.user, 'EDIT', `Partnership updated: ${updated.inst || 'Record #' + id} (${updated.type || ''})`);
     res.json({ success: true, partnership: updated });
   } catch (err) {
@@ -3952,7 +4008,7 @@ function renderTablePdf(res, { title, filename, subtitle, columns, rows, summary
   // (Roadmap v2 Phase G5, docs/SYSTEM_AUDIT_2026-07-16.md).
   doc.on('error', (err) => {
     console.error('❌ PDF generation error:', err);
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to generate PDF.' });
+    if (!res.headersSent) res.status(500).json({ error: 'Unable to generate the PDF right now. Please try again.' });
     else if (!res.writableEnded) res.end();
   });
   res.on('error', (err) => {
@@ -4068,7 +4124,7 @@ function renderDocumentRequestPdf(res, r) {
   const doc = new PDFDocument({ margin: 40, size: 'A4' });
   doc.on('error', (err) => {
     console.error('❌ Document Request PDF generation error:', err);
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to generate PDF.' });
+    if (!res.headersSent) res.status(500).json({ error: 'Unable to generate the PDF right now. Please try again.' });
     else if (!res.writableEnded) res.end();
   });
   res.on('error', (err) => console.error('❌ Document Request PDF response stream error:', err));
@@ -4314,7 +4370,7 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
   const doc = new PDFDocument({ margin: 36, size: 'A4', bufferPages: true });
   doc.on('error', (err) => {
     console.error('❌ Partnership report PDF generation error:', err);
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to generate PDF.' });
+    if (!res.headersSent) res.status(500).json({ error: 'Unable to generate the PDF right now. Please try again.' });
     else if (!res.writableEnded) res.end();
   });
   res.on('error', (err) => console.error('❌ Partnership report PDF response stream error:', err));
@@ -5359,7 +5415,7 @@ function renderComparisonReportPdf(res, { title, groupA, groupB, groupADocs, gro
   const doc = new PDFDocument({ margin: 36, size: 'A4', layout: 'landscape', bufferPages: true });
   doc.on('error', (err) => {
     console.error('❌ Comparison Report PDF error:', err);
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to generate comparison PDF.' });
+    if (!res.headersSent) res.status(500).json({ error: 'Unable to generate the comparison PDF right now. Please try again.' });
     else if (!res.writableEnded) res.end();
   });
   res.on('error', (err) => console.error('❌ Comparison Report PDF response stream error:', err));
@@ -5959,7 +6015,7 @@ app.get('/api/reports/dimension-values', requireStaffAccess, async (req, res) =>
       return res.json({ field, values: Array.from(years).sort().reverse() });
     }
     const dbField = COMPARE_DIMENSION_DB_FIELDS[field];
-    if (!dbField) return res.status(400).json({ error: 'Invalid comparison field.' });
+    if (!dbField) return res.status(400).json({ error: 'That comparison option is not available. Please choose a different one.' });
     let values = await db.collection('partnerships').distinct(dbField);
     values = values.filter(Boolean).sort();
     res.json({ field, values });
@@ -6130,7 +6186,7 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
   const doc = new PDFDocument({ margin: 36, size: 'A4', layout: 'landscape', bufferPages: true });
   doc.on('error', (err) => {
     console.error('❌ Multi-comparison PDF error:', err);
-    if (!res.headersSent) res.status(500).json({ error: 'Failed to generate comparison PDF.' });
+    if (!res.headersSent) res.status(500).json({ error: 'Unable to generate the comparison PDF right now. Please try again.' });
     else if (!res.writableEnded) res.end();
   });
   res.on('error', (err) => console.error('❌ Multi-comparison PDF response stream error:', err));
@@ -6810,7 +6866,7 @@ app.patch('/api/users/:id', requireStaffAccess, async (req, res) => {
       { $set: { ...updateData, sessionVersion: sessionVersionExpr } }
     ]);
     const updated = await db.collection('users').findOne({ id }, { projection: { password: 0 } });
-    if (!updated) return res.status(404).json({ error: 'Not found.' });
+    if (!updated) return res.status(404).json({ error: 'The user account you are trying to update could not be found.' });
     await logActivity(db, req.session.user, 'EDIT', `User updated: ${updated.name} — role: ${updated.role}, status: ${updated.status}`);
     if (updateData.role !== undefined || updateData.status !== undefined) {
       await notifyUsers(db, [updated.email], {
@@ -7712,17 +7768,18 @@ app.patch('/api/notifications/:id', requireAuth, announce('notificationState'), 
   try {
     const unknown = Object.keys(req.body).filter(k => !(k in NOTIFICATION_PATCH_FIELDS));
     if (unknown.length) {
-      return res.status(400).json({ error: 'Unknown field(s): ' + unknown.join(', ') });
+      console.warn('⚠️ Notification update rejected — unknown field(s):', unknown.join(', '));
+      return res.status(400).json({ error: 'Something went wrong updating this notification. Please try again.' });
     }
     if (req.body.unread !== undefined && typeof req.body.unread !== 'boolean') {
-      return res.status(400).json({ error: 'unread must be a boolean.' });
+      return res.status(400).json({ error: 'Something went wrong updating this notification. Please try again.' });
     }
 
     const db = getDb();
     const notif = await db.collection('notifications').findOne({ id });
-    if (!notif) return res.status(404).json({ error: 'Not found.' });
+    if (!notif) return res.status(404).json({ error: 'This notification could not be found.' });
     if (!canActOnNotification(req.session.user, notif)) {
-      return res.status(403).json({ error: 'Forbidden.' });
+      return res.status(403).json({ error: 'You do not have permission to update this notification.' });
     }
     const fields = {};
     if (req.body.unread !== undefined) fields.unread = req.body.unread;
@@ -7742,9 +7799,9 @@ app.delete('/api/notifications/:id', requireAuth, announce('notificationState'),
   try {
     const db = getDb();
     const notif = await db.collection('notifications').findOne({ id });
-    if (!notif) return res.status(404).json({ error: 'Not found.' });
+    if (!notif) return res.status(404).json({ error: 'This notification could not be found.' });
     if (!canActOnNotification(req.session.user, notif)) {
-      return res.status(403).json({ error: 'Forbidden.' });
+      return res.status(403).json({ error: 'You do not have permission to delete this notification.' });
     }
     await db.collection('notifications').deleteOne({ id });
     res.json({ success: true });
@@ -8862,7 +8919,7 @@ app.get('/api/requests/:id/google-docs', requireAuth, async (req, res) => {
 // Create an MOA/MOU draft for a request (Administrator / CIRL Staff).
 app.post('/api/requests/:id/google-docs', requireStaffAccess, announce('request'), async (req, res) => {
   const kind = req.body && req.body.kind;
-  if (!['MOA', 'MOU'].includes(kind)) return res.status(400).json({ error: 'kind must be MOA or MOU.' });
+  if (!['MOA', 'MOU'].includes(kind)) return res.status(400).json({ error: 'Please choose either MOA or MOU.' });
   try {
     const db = getDb();
     const id = parseInt(req.params.id);
@@ -9450,7 +9507,7 @@ function validateTargetInput(body) {
 
   const targetCount = parseInt(body.targetCount, 10);
   if (!Number.isInteger(targetCount) || targetCount < 1) {
-    return { error: 'targetCount must be a positive integer.' };
+    return { error: 'Please enter a target count of at least 1.' };
   }
 
   return { value: { type, year, month, targetCount } };
@@ -9467,7 +9524,7 @@ app.get('/api/targets', requireStaffAccess, async (req, res) => {
     res.json(await withTargetProgress(db, targets));
   } catch (err) {
     console.error('❌ Failed to load targets:', err);
-    res.status(500).json({ error: 'Failed to load targets.' });
+    res.status(500).json({ error: 'Unable to load targets right now. Please try again.' });
   }
 });
 
@@ -9494,7 +9551,7 @@ app.post('/api/targets', requireAdmin, async (req, res) => {
       return res.status(409).json({ error: 'A target for this period already exists.' });
     }
     console.error('❌ Failed to create target:', err);
-    res.status(500).json({ error: 'Failed to create target.' });
+    res.status(500).json({ error: 'Unable to create the target right now. Please try again.' });
   }
 });
 
@@ -9507,7 +9564,7 @@ app.patch('/api/targets/:id', requireAdmin, async (req, res) => {
 
     const targetCount = parseInt(req.body.targetCount, 10);
     if (!Number.isInteger(targetCount) || targetCount < 1) {
-      return res.status(400).json({ error: 'targetCount must be a positive integer.' });
+      return res.status(400).json({ error: 'Please enter a target count of at least 1.' });
     }
     // Only targetCount (and active) are editable — type/year/month define the
     // record's identity and are covered by the unique index; changing them
@@ -9522,7 +9579,7 @@ app.patch('/api/targets/:id', requireAdmin, async (req, res) => {
     res.json({ success: true, target: { ...updated, progress: await computeTargetAccomplishment(db, updated) } });
   } catch (err) {
     console.error('❌ Failed to update target:', err);
-    res.status(500).json({ error: 'Failed to update target.' });
+    res.status(500).json({ error: 'Unable to update the target right now. Please try again.' });
   }
 });
 
@@ -9538,7 +9595,7 @@ app.delete('/api/targets/:id', requireAdmin, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Failed to delete target:', err);
-    res.status(500).json({ error: 'Failed to delete target.' });
+    res.status(500).json({ error: 'Unable to delete the target right now. Please try again.' });
   }
 });
 

@@ -1153,8 +1153,34 @@
         });
 
         document.addEventListener('DOMContentLoaded', function () {
-            loadResponsibleUnits().then(function () { renderUnitSelect(document.getElementById('cr-unit')); });
+            loadResponsibleUnits().then(function () {
+                renderUnitSelect(document.getElementById('cr-unit'));
+                applyContextualReportDeepLink();
+            });
         });
+
+        // Contextual report generation (2026-11 panel recommendation) — a "Generate Report" button on
+        // Monitoring (or any other module later) can deep-link here with the current page's own filters
+        // pre-applied, e.g. /reports?agtype=MOA&cat=Local&status=Active — instead of landing on a blank
+        // builder, the matching fields are pre-filled and the preview opens immediately. Reuses the exact
+        // same buildReportQueryParams()/previewCustomReport() the builder's own Preview button calls; no
+        // second report-generation path. Runs only after renderUnitSelect() above has populated #cr-unit's
+        // real <option>s — setting a <select>'s value before its options exist is silently discarded.
+        function applyContextualReportDeepLink() {
+            var q = new URLSearchParams(window.location.search);
+            var fieldByParam = { reportType: 'cr-type', cat: 'cr-cat', agtype: 'cr-agtype', status: 'cr-status', country: 'cr-country', unit: 'cr-unit', groupBy: 'cr-groupby', dateFrom: 'cr-date-from', dateTo: 'cr-date-to', title: 'cr-title' };
+            var any = false;
+            Object.keys(fieldByParam).forEach(function (param) {
+                if (!q.has(param)) return;
+                var el = document.getElementById(fieldByParam[param]);
+                if (!el) return;
+                el.value = q.get(param);
+                any = true;
+            });
+            if (!any) return;
+            if (typeof onReportTypeChange === 'function') onReportTypeChange();
+            previewCustomReport();
+        }
 
         function exportReport(format, params) {
             var q = new URLSearchParams(params).toString();

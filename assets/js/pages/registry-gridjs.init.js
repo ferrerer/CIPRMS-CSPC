@@ -3,6 +3,7 @@
 var partnerships = [];
 var filtered = [];
 var regCurrentPage = 1;
+var regPageSize = 10; // selectable (2026-11 panel recommendation) — was a hardcoded 6
 
 function buildPageList(current, total) {
     var maxVisible = 5;
@@ -872,6 +873,28 @@ function clearFilters() {
   applyFilter();
 }
 
+// Contextual report generation (2026-11 panel recommendation) — opens Reports & Analytics' existing
+// Custom Report Builder with Monitoring's own current Type/Category/Status/Unit filters already applied,
+// instead of a blank form. Reuses the exact same /reports page, builder, and PDF/Excel export routes —
+// no separate report-generation system for this module. region/year/search filters have no equivalent
+// field in the builder today, so they are not carried over (the four that do match are).
+function monitoringGenerateReport() {
+  var params = new URLSearchParams({ reportType: 'Detailed' });
+  var agtype = (document.getElementById('reg-type') || {}).value;
+  var cat = (document.getElementById('reg-cat') || {}).value;
+  var status = (document.getElementById('reg-status') || {}).value;
+  var unit = (document.getElementById('reg-unit') || {}).value;
+  if (agtype) params.set('agtype', agtype);
+  if (cat) params.set('cat', cat);
+  if (status) params.set('status', status);
+  if (unit) params.set('unit', unit);
+  // Administrator reaches this page at /lifecycle, Staff at /staff/lifecycle (same template, two routes,
+  // same full-dashboard-parity convention used throughout this app) — Reports & Analytics mirrors that
+  // same split, so the destination is derived from which one the person is actually on right now.
+  var reportsBase = window.location.pathname.indexOf('/staff/') === 0 ? '/staff/reports' : '/reports';
+  window.open(reportsBase + '?' + params.toString(), '_blank');
+}
+
 function buildGrid() {
   var total    = partnerships.length;
   var nActive  = partnerships.filter(function(p){return p.status==='Active';}).length;
@@ -945,14 +968,22 @@ function buildGrid() {
     return [gridjs.html(instHtml), gridjs.html(countryHtml), natureDisplay, p.start, gridjs.html(endHtml), gridjs.html(daysBadgeHtml(p.days, p.status)), gridjs.html(statusBadge), gridjs.html(actions)];
   });
 
-  var itemsPerPage = 6;
-  var totalPages = Math.ceil(data.length / itemsPerPage);
+  var totalPages = Math.ceil(data.length / regPageSize);
   if (regCurrentPage > totalPages) regCurrentPage = Math.max(1, totalPages);
-  var startIdx = (regCurrentPage - 1) * itemsPerPage;
-  var pageData = data.slice(startIdx, startIdx + itemsPerPage);
+  var startIdx = (regCurrentPage - 1) * regPageSize;
+  var pageData = data.slice(startIdx, startIdx + regPageSize);
 
   var pagEl = document.getElementById('reg-pagination');
   if (pagEl) pagEl.innerHTML = buildPaginationHtml(regCurrentPage, totalPages, 'goToRegPage');
+  // Page-size selector (2026-11 panel recommendation) — the shared helper from ciprms-pagination.js;
+  // the Previous/Next/numbered renderer above stays this file's own (identical logic either way).
+  if (window.CIPRMSPagination) {
+    window.CIPRMSPagination.renderPageSizeSelector('reg-page-size', regPageSize, [10, 25, 50], function (newSize) {
+      regPageSize = newSize;
+      regCurrentPage = 1;
+      buildGrid();
+    });
+  }
 
   if (window._regGrid) { window._regGrid.updateConfig({data:pageData}).forceRender(); return; }
   var regGridEl = document.getElementById('reg-grid');
