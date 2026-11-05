@@ -2667,14 +2667,29 @@ function cdrLinkForRole(role, id) {
   return '/personnel/requests?open=cdr&id=' + id;
 }
 
-// Administrator/Staff always; the assigned Dean only for their own request — same shape as
-// canAccessDocumentRequest above, just keyed on assignedDeanEmail instead of requestedByEmail.
+// Normalizes a college request's dean assignment to an array of {id, email, name, college}, so every
+// read site below works whether the document was created before (singular assignedDeanId/Email/Name/
+// College only) or after (assignedDeans array) the 2026-11 multi-dean change — no backfill/migration
+// script needed for existing records.
+function getAssignedDeans(target) {
+  if (target && Array.isArray(target.assignedDeans) && target.assignedDeans.length) return target.assignedDeans;
+  if (target && target.assignedDeanId != null) {
+    return [{ id: target.assignedDeanId, email: target.assignedDeanEmail, name: target.assignedDeanName, college: target.assignedCollege || '' }];
+  }
+  return [];
+}
+function isAssignedDean(target, email) {
+  return getAssignedDeans(target).some(d => d.email === email);
+}
+
+// Administrator/Staff always; any one of the assigned Deans for their own request — same shape as
+// canAccessDocumentRequest above, just keyed on the (now possibly multiple) assigned deans.
 function canAccessCollegeRequest(user, target) {
-  return REQUEST_REVIEWER_ROLES.includes(user.role) || target.assignedDeanEmail === user.email;
+  return REQUEST_REVIEWER_ROLES.includes(user.role) || isAssignedDean(target, user.email);
 }
 
 app.post('/api/college-requests', requireStaffAccess, announce('collegeRequest'), async (req, res) => {
-  const { requestType, title, instructions, description, deadline, assignedDeanId } = req.body;
+  const { requestType, title, instructions, description, deadline } = req.body;
   let requiredDocuments = Array.isArray(req.body.requiredDocuments)
     ? req.body.requiredDocuments
     : (typeof req.body.requiredDocuments === 'string' && req.body.requiredDocuments.trim()
@@ -2688,16 +2703,31 @@ app.post('/api/college-requests', requireStaffAccess, announce('collegeRequest')
   if (!title || !title.trim()) {
     return res.status(400).json({ error: 'A request title is required.' });
   }
-  const deanId = parseInt(assignedDeanId);
-  if (!deanId) {
-    return res.status(400).json({ error: 'A target College Dean must be selected.' });
+  // Accepts an array (assignedDeanIds, the current multi-dean UI) or a single legacy value
+  // (assignedDeanId) so any not-yet-updated caller still works.
+  const rawDeanIds = Array.isArray(req.body.assignedDeanIds)
+    ? req.body.assignedDeanIds
+    : (req.body.assignedDeanIds != null ? [req.body.assignedDeanIds] : (req.body.assignedDeanId != null ? [req.body.assignedDeanId] : []));
+  const deanIds = [...new Set(rawDeanIds.map(d => parseInt(d)).filter(Boolean))];
+  if (!deanIds.length) {
+    return res.status(400).json({ error: 'At least one target College Dean must be selected.' });
   }
   try {
     const db = getDb();
-    const dean = await db.collection('users').findOne({ id: deanId, role: 'Auth. Personnel' });
-    if (!dean) {
-      return res.status(400).json({ error: 'The selected College Dean account was not found.' });
+    const deanDocs = await db.collection('users').find({ id: { $in: deanIds }, role: 'Auth. Personnel' }).toArray();
+    if (deanDocs.length !== deanIds.length) {
+      return res.status(400).json({ error: 'One or more selected College Dean accounts were not found.' });
     }
+    // Preserve the order the deans were selected in, not whatever order MongoDB happens to return them.
+    const deans = deanIds.map(id => deanDocs.find(d => d.id === id));
+    const assignedDeans = deans.map(d => ({
+      id: d.id,
+      email: d.email,
+      name: d.name,
+      // Snapshotted for display only — authorization always keys off id/email above, never this string,
+      // since users.unit is free text and not guaranteed to match any canonical college name.
+      college: d.unit || ''
+    }));
 
     const entry = await insertWithNextId(db.collection('collegedeanrequests'), (nextId) => ({
       id: nextId,
@@ -2707,12 +2737,14 @@ app.post('/api/college-requests', requireStaffAccess, announce('collegeRequest')
       description: (description || '').trim().slice(0, 4000),
       requiredDocuments,
       deadline: deadline || '',
-      assignedDeanId: dean.id,
-      assignedDeanEmail: dean.email,
-      assignedDeanName: dean.name,
-      // Snapshotted for display only — authorization always keys off assignedDeanId/Email above, never
-      // this string, since users.unit is free text and not guaranteed to match any canonical college name.
-      assignedCollege: dean.unit || '',
+      assignedDeans,
+      // Legacy singular fields, mirrored to the first assigned dean — kept so any code path that still
+      // reads them directly (instead of through getAssignedDeans()) keeps working. New code should always
+      // read assignedDeans / use getAssignedDeans().
+      assignedDeanId: assignedDeans[0].id,
+      assignedDeanEmail: assignedDeans[0].email,
+      assignedDeanName: assignedDeans[0].name,
+      assignedCollege: assignedDeans[0].college,
       createdBy: req.session.user.name,
       createdByEmail: req.session.user.email,
       referenceDocuments: [],
@@ -2725,9 +2757,9 @@ app.post('/api/college-requests', requireStaffAccess, announce('collegeRequest')
     }));
 
     await logActivity(db, req.session.user, 'ADD',
-      `College ${entry.requestType} request created and assigned to ${entry.assignedDeanName}: ${entry.title}`);
+      `College ${entry.requestType} request created and assigned to ${assignedDeans.map(d => d.name).join(', ')}: ${entry.title}`);
 
-    await notifyUsers(db, [entry.assignedDeanEmail], {
+    await notifyUsers(db, assignedDeans.map(d => d.email), {
       module: 'request',
       tag: 'College Request',
       icon: 'ri-award-line',
@@ -2777,7 +2809,7 @@ app.post('/api/college-requests/:id/reference-documents', requireStaffAccess, an
 
       const { documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
         documentType: target.requestType,
-        institution: target.assignedCollege,
+        institution: getAssignedDeans(target).map(d => d.college).filter(Boolean).join(', '),
         title: `${target.requestType} Reference – ${target.title}`
       }, {
         uploadedBy: actor.name,
@@ -2817,7 +2849,11 @@ app.get('/api/college-requests', requireAuth, async (req, res) => {
   }
   try {
     const db = getDb();
-    const filter = REQUEST_REVIEWER_ROLES.includes(user.role) ? {} : { assignedDeanEmail: user.email };
+    // 'assignedDeans.email' matches a document if ANY element of that array has this email — covers
+    // new multi-dean documents; 'assignedDeanEmail' still covers documents from before that change.
+    const filter = REQUEST_REVIEWER_ROLES.includes(user.role)
+      ? {}
+      : { $or: [{ assignedDeanEmail: user.email }, { 'assignedDeans.email': user.email }] };
     const requests = await db.collection('collegedeanrequests').find(filter).sort({ id: -1 }).toArray();
     res.json(requests);
   } catch (err) {
@@ -2872,7 +2908,7 @@ app.post('/api/college-requests/:id/documents', requirePersonnel, announce('coll
         if (req.file) fs.unlink(req.file.path, () => {});
         return res.status(404).json({ error: 'College request not found.' });
       }
-      if (actor.role !== 'Auth. Personnel' || target.assignedDeanEmail !== actor.email) {
+      if (actor.role !== 'Auth. Personnel' || !isAssignedDean(target, actor.email)) {
         if (req.file) fs.unlink(req.file.path, () => {});
         return res.status(403).json({ error: 'You are not authorized to submit documents for this request.' });
       }
@@ -2885,8 +2921,8 @@ app.post('/api/college-requests/:id/documents', requirePersonnel, announce('coll
       if (req.file) {
         ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
           documentType: target.requestType,
-          institution: target.assignedCollege,
-          title: `${target.requestType} Submission – ${target.title} (${target.assignedCollege || target.assignedDeanName})`
+          institution: actor.unit || '',
+          title: `${target.requestType} Submission – ${target.title} (${actor.unit || actor.name})`
         }, {
           uploadedBy: actor.name,
           uploadedByEmail: actor.email,
@@ -2962,10 +2998,11 @@ app.patch('/api/college-requests/:id', requireStaffAccess, announce('collegeRequ
     await db.collection('collegedeanrequests').updateOne({ id }, { $set: setFields, $push: { statusHistory: historyEntry } });
     const updated = await db.collection('collegedeanrequests').findOne({ id });
 
+    const assignedDeanNames = getAssignedDeans(target).map(d => d.name).join(', ');
     await logActivity(db, req.session.user, action === 'accept' ? 'APPROVE' : 'REJECT',
-      `College ${target.requestType} request ${action === 'accept' ? 'accepted' : 'returned for revision'}: ${target.title} (Dean: ${target.assignedDeanName})${remark ? ' — "' + remark + '"' : ''}`);
+      `College ${target.requestType} request ${action === 'accept' ? 'accepted' : 'returned for revision'}: ${target.title} (Dean: ${assignedDeanNames})${remark ? ' — "' + remark + '"' : ''}`);
 
-    await notifyUsers(db, [target.assignedDeanEmail], {
+    await notifyUsers(db, getAssignedDeans(target).map(d => d.email), {
       module: 'request',
       tag: 'College Request',
       icon: action === 'accept' ? 'ri-checkbox-circle-line' : 'ri-arrow-go-back-line',
@@ -7648,7 +7685,7 @@ app.delete('/api/notifications/:id', requireAuth, announce('notificationState'),
 // drag-resize handlers) — closes the id-mass-assignment gap (Roadmap v2 Phase
 // A2, docs/SYSTEM_AUDIT_2026-07-16.md) the same way PARTNERSHIP_FIELDS already
 // does for partnerships: never spread req.body directly into an insert/$set.
-const CALENDAR_EVENT_FIELDS = ['title', 'start', 'end', 'allDay', 'className', 'location', 'description'];
+const CALENDAR_EVENT_FIELDS = ['title', 'start', 'end', 'allDay', 'className', 'location', 'description', 'eventType'];
 function pickCalendarEventFields(body) {
   const safe = {};
   for (const f of CALENDAR_EVENT_FIELDS) {
@@ -9170,12 +9207,12 @@ async function isOwnerOfLinkedRequest(db, doc, email) {
     const target = await db.collection('documentrequests').findOne({ id: doc.requestId });
     return !!(target && target.requestedByEmail === email);
   }
-  // College Dean Requests (2026-11) — "owner" here is the assigned Dean, not a self-submitted request, but
-  // the same principle applies: the one Dean a request is assigned to must be able to open every reference
-  // and submitted document on it, regardless of who (them or Administrator/Staff) actually uploaded it.
+  // College Dean Requests (2026-11) — "owner" here is any one of the assigned Deans, not a self-submitted
+  // request, but the same principle applies: every Dean a request is assigned to must be able to open
+  // every reference and submitted document on it, regardless of who actually uploaded it.
   if (doc.requestType === 'college-request') {
     const target = await db.collection('collegedeanrequests').findOne({ id: doc.requestId });
-    return !!(target && target.assignedDeanEmail === email);
+    return !!(target && isAssignedDean(target, email));
   }
   const target = await db.collection('requests').findOne({ id: doc.requestId });
   return !!(target && target.submittedByEmail === email);

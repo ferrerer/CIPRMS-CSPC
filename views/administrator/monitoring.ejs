@@ -42,6 +42,17 @@
       .gridjs-sort-asc, .gridjs-sort-desc { opacity: 1 !important; }
       th.gridjs-th-sort:hover .gridjs-sort { opacity: 1; }
 
+      /* Partnership Registry table: keep columns to their configured widths
+         and wrap long institution/country names instead of stretching the
+         table or the page. */
+      #reg-grid { overflow-x: auto; }
+      #reg-grid .gridjs-table { width: 100% !important; table-layout: fixed; }
+      #reg-grid .gridjs-td, #reg-grid .gridjs-th {
+        white-space: normal;
+        word-break: break-word;
+        vertical-align: middle;
+      }
+
       /* ── "Responsible Unit" combobox — searchable multi-select restricted to
          the predefined CSPC unit list, with removable chips (2026-09-03). ── */
       .unit-combo { width: 100%; }

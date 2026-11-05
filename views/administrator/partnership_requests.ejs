@@ -527,6 +527,35 @@
       content: ''; position: absolute; left: -5px; top: .5rem; width: 8px; height: 8px;
       border-radius: 50%; background: #6f42c1;
     }
+
+    /* ── Target College Dean — searchable multi-select with removable chips (2026-11) ── */
+    .dean-combo-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .dean-combo-chips:empty { display: none; }
+    .dean-chip {
+      display: inline-flex; align-items: center; gap: 6px; background: #eef1fb; color: #405189;
+      border-radius: 14px; padding: .25rem .5rem .25rem .7rem; font-size: .8rem; font-weight: 500;
+    }
+    .dean-chip button {
+      border: none; background: none; color: #405189; opacity: .65; line-height: 1; font-size: 1rem;
+      cursor: pointer; padding: 0 2px;
+    }
+    .dean-chip button:hover { opacity: 1; }
+    .dean-combo-input-wrap { position: relative; }
+    .dean-combo-dropdown {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 1065;
+      background: #fff; border: 1px solid #e9ebec; border-radius: 8px; box-shadow: 0 10px 28px rgba(0,0,0,.12);
+      max-height: 220px; overflow-y: auto;
+    }
+    .dean-combo-option { padding: .5rem .75rem; font-size: .85rem; cursor: pointer; }
+    .dean-combo-option:hover, .dean-combo-option.active { background: #f0f2fb; color: #405189; }
+    .dean-combo-option small { display: block; color: #878a99; font-size: .72rem; }
+    .dean-combo-empty { padding: 10px; font-size: .8rem; color: #878a99; text-align: center; }
+    [data-bs-theme="dark"] .dean-chip { background: rgba(96,126,224,.18); color: #a9bcf5; }
+    [data-bs-theme="dark"] .dean-chip button { color: #a9bcf5; }
+    [data-bs-theme="dark"] .dean-combo-dropdown { background: #2a2f3c; border-color: #3a4053; box-shadow: 0 10px 28px rgba(0,0,0,.4); }
+    [data-bs-theme="dark"] .dean-combo-option { color: #d3d5db; }
+    [data-bs-theme="dark"] .dean-combo-option:hover, [data-bs-theme="dark"] .dean-combo-option.active { background: #363c4c; color: #a9bcf5; }
+    [data-bs-theme="dark"] .dean-combo-option small { color: #9699a3; }
 </style>
 </head>
 
@@ -1097,10 +1126,14 @@
                 </select>
               </div>
               <div class="col-md-5">
-                <label class="form-label">Target College Dean</label>
-                <select class="form-select" id="cdr-c-dean" required>
-                  <option value="" disabled selected>Loading deans…</option>
-                </select>
+                <label class="form-label">Target College Dean(s)</label>
+                <div class="dean-combo" id="cdr-c-dean-combo">
+                  <div class="dean-combo-chips" id="cdr-c-dean-chips"></div>
+                  <div class="dean-combo-input-wrap">
+                    <input type="text" class="form-control" id="cdr-c-dean-input" placeholder="Search College Dean by name or college…" autocomplete="off" aria-expanded="false">
+                    <div class="dean-combo-dropdown" id="cdr-c-dean-dropdown" role="listbox" style="display:none"></div>
+                  </div>
+                </div>
               </div>
               <div class="col-md-3">
                 <label class="form-label">Submission Deadline</label>
@@ -2350,6 +2383,15 @@
     document.addEventListener('DOMContentLoaded', function () {
       const confirmModalEl = document.getElementById('dr-status-confirm-modal');
       if (confirmModalEl) confirmModalEl.addEventListener('hidden.bs.modal', function () { pendingDrStatusChange = null; });
+
+      // Clear any leftover dean chips from a previously opened-then-cancelled "New College Request" —
+      // cdrSubmitCreate() already clears on a successful create, this covers every other way to close it.
+      const cdrCreateModalEl = document.getElementById('cdr-create-modal');
+      if (cdrCreateModalEl) cdrCreateModalEl.addEventListener('hidden.bs.modal', function () {
+        if (CDR_DEAN_COMBO) CDR_DEAN_COMBO.clear();
+        const errBox = document.getElementById('cdr-c-error');
+        if (errBox) errBox.classList.add('d-none');
+      });
     });
 
     async function confirmDrStatusChange() {
@@ -2398,6 +2440,89 @@
       return isNaN(d) ? escapeHtml(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
+    var CDR_DEAN_COMBO = null;
+
+    // Searchable multi-select with removable chips for Target College Dean(s) — same visual language
+    // (chips/dropdown) as the Responsible Unit combo elsewhere in the app, but keyed on dean user id
+    // (not a display string), since multiple deans can share the same college/display label.
+    function createDeanCombo() {
+      var selected = []; // [{id, name, email, unit}]
+      var chips = document.getElementById('cdr-c-dean-chips');
+      var input = document.getElementById('cdr-c-dean-input');
+      var dropdown = document.getElementById('cdr-c-dean-dropdown');
+      var blurTimer = null;
+
+      function renderChips() {
+        chips.innerHTML = selected.map(function (d, i) {
+          return '<span class="dean-chip">' + escapeHtml(d.name) + (d.unit ? ' — ' + escapeHtml(d.unit) : '') +
+            '<button type="button" data-i="' + i + '" aria-label="Remove ' + escapeHtml(d.name) + '">&times;</button></span>';
+        }).join('');
+        chips.querySelectorAll('button').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            selected.splice(parseInt(btn.getAttribute('data-i'), 10), 1);
+            renderChips();
+          });
+        });
+      }
+
+      function closeDropdown() {
+        dropdown.style.display = 'none';
+        dropdown.innerHTML = '';
+        input.setAttribute('aria-expanded', 'false');
+      }
+
+      function addDean(dean) {
+        if (!dean || selected.some(function (d) { return d.id === dean.id; })) { input.value = ''; closeDropdown(); return; }
+        selected.push(dean);
+        renderChips();
+        input.value = '';
+        input.classList.remove('is-invalid');
+        closeDropdown();
+        input.focus();
+      }
+
+      function openDropdown() {
+        if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
+        var q = input.value.trim().toLowerCase();
+        if (dropdown.style.display === 'block' && dropdown.dataset.q === q) return;
+        dropdown.dataset.q = q;
+        var available = CDR_DEANS.filter(function (d) { return !selected.some(function (s) { return s.id === d.id; }); });
+        var matches = q ? available.filter(function (d) {
+          return (d.name || '').toLowerCase().indexOf(q) !== -1 || (d.unit || '').toLowerCase().indexOf(q) !== -1;
+        }) : available;
+        dropdown.innerHTML = matches.length
+          ? matches.map(function (d) {
+              return '<div class="dean-combo-option" data-id="' + d.id + '">' + escapeHtml(d.name) +
+                (d.unit ? '<small>' + escapeHtml(d.unit) + '</small>' : '') + '</div>';
+            }).join('')
+          : '<div class="dean-combo-empty">' + (available.length ? 'No matching College Dean.' : 'All College Deans selected.') + '</div>';
+        dropdown.style.display = 'block';
+        input.setAttribute('aria-expanded', 'true');
+        dropdown.querySelectorAll('.dean-combo-option').forEach(function (opt) {
+          opt.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            var id = parseInt(opt.getAttribute('data-id'), 10);
+            addDean(CDR_DEANS.find(function (d) { return d.id === id; }));
+          });
+        });
+      }
+
+      input.addEventListener('focus', openDropdown);
+      input.addEventListener('click', openDropdown);
+      input.addEventListener('input', openDropdown);
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeDropdown();
+        else if (e.key === 'Backspace' && !input.value && selected.length) { selected.pop(); renderChips(); }
+      });
+      input.addEventListener('blur', function () { blurTimer = setTimeout(closeDropdown, 120); });
+
+      return {
+        getValues: function () { return selected.slice(); },
+        clear: function () { selected = []; renderChips(); input.value = ''; closeDropdown(); input.classList.remove('is-invalid'); },
+        markInvalid: function () { input.classList.add('is-invalid'); }
+      };
+    }
+
     function cdrLoadDeans() {
       // /api/users is requireStaffAccess-gated server-side — LAU would get a 403, and LAU never sees this
       // tab anyway (IS_LAU, same reasoning as loadDR() above).
@@ -2405,15 +2530,19 @@
       return fetch('/api/users', { headers: { 'X-Requested-With': 'ciprms' } })
         .then(function (r) { return r.json(); })
         .then(function (users) {
-          CDR_DEANS = (users || []).filter(function (u) { return u.role === 'Auth. Personnel'; });
-          var sel = document.getElementById('cdr-c-dean');
-          if (!sel) return;
-          sel.innerHTML = '<option value="" disabled selected>Select a College Dean…</option>' +
-              CDR_DEANS.map(function (d) {
-                return '<option value="' + d.id + '">' + escapeHtml(d.name) + (d.unit ? ' — ' + escapeHtml(d.unit) : '') + '</option>';
-              }).join('');
+          CDR_DEANS = (users || []).filter(function (u) { return u.role === 'Auth. Personnel'; })
+            .map(function (u) { return { id: u.id, name: u.name, email: u.email, unit: u.unit || '' }; });
+          if (!CDR_DEAN_COMBO && document.getElementById('cdr-c-dean-combo')) CDR_DEAN_COMBO = createDeanCombo();
         })
         .catch(function () { showToast('Could not load College Dean accounts.', '#f44336'); });
+    }
+
+    // Normalizes a request's dean assignment for display — works for both the new assignedDeans array
+    // and documents created before the 2026-11 multi-dean change (singular assignedDeanName/College only).
+    function cdrDeansOf(r) {
+      if (Array.isArray(r.assignedDeans) && r.assignedDeans.length) return r.assignedDeans;
+      if (r.assignedDeanName) return [{ name: r.assignedDeanName, college: r.assignedCollege || '' }];
+      return [];
     }
 
     function cdrRenderTable() {
@@ -2427,11 +2556,14 @@
           return;
       }
       body.innerHTML = rows.map(function (r) {
+          var deans = cdrDeansOf(r);
+          var deanNames = deans.map(function (d) { return d.name; }).join(', ');
+          var deanColleges = deans.map(function (d) { return d.college; }).filter(Boolean).join(', ');
           return '<tr>' +
               '<td><strong>' + escapeHtml(r.title) + '</strong></td>' +
               '<td>' + escapeHtml(r.requestType) + '</td>' +
-              '<td>' + escapeHtml(r.assignedDeanName || '') + '</td>' +
-              '<td>' + escapeHtml(r.assignedCollege || '—') + '</td>' +
+              '<td>' + escapeHtml(deanNames) + '</td>' +
+              '<td>' + escapeHtml(deanColleges || '—') + '</td>' +
               '<td>' + (r.deadline ? fmtDate(r.deadline) : '<span class="text-muted">—</span>') + '</td>' +
               '<td>' + cdrBadge(r.status) + '</td>' +
               '<td class="text-end"><button class="btn btn-sm btn-soft-primary" onclick="cdrOpenDetail(' + r.id + ')"><i class="ri-eye-line"></i> View</button></td>' +
@@ -2486,9 +2618,16 @@
     function cdrSubmitCreate() {
       var errBox = document.getElementById('cdr-c-error');
       errBox.classList.add('d-none');
+      var deans = CDR_DEAN_COMBO ? CDR_DEAN_COMBO.getValues() : [];
+      if (!deans.length) {
+          errBox.textContent = 'Select at least one target College Dean.';
+          errBox.classList.remove('d-none');
+          if (CDR_DEAN_COMBO) CDR_DEAN_COMBO.markInvalid();
+          return;
+      }
       var payload = {
           requestType: document.getElementById('cdr-c-type').value,
-          assignedDeanId: document.getElementById('cdr-c-dean').value,
+          assignedDeanIds: deans.map(function (d) { return d.id; }),
           deadline: document.getElementById('cdr-c-deadline').value,
           title: document.getElementById('cdr-c-title').value,
           instructions: document.getElementById('cdr-c-instructions').value,
@@ -2513,6 +2652,7 @@
           showToast('College request created and assigned.', '#4caf50');
           bootstrap.Modal.getInstance(document.getElementById('cdr-create-modal')).hide();
           document.getElementById('cdr-create-form').reset();
+          if (CDR_DEAN_COMBO) CDR_DEAN_COMBO.clear();
           cdrLoadList();
       })
       .catch(function () {
@@ -2533,7 +2673,9 @@
                       '<span class="badge bg-light text-dark border">' + escapeHtml(r.requestType) + '</span>' +
                       (r.deadline ? '<span class="badge bg-light text-dark border"><i class="ri-calendar-line"></i> Due ' + fmtDate(r.deadline) + '</span>' : '') +
                   '</div>' +
-                  '<p class="mb-1"><strong>Assigned to:</strong> ' + escapeHtml(r.assignedDeanName) + (r.assignedCollege ? ' (' + escapeHtml(r.assignedCollege) + ')' : '') + '</p>' +
+                  '<p class="mb-1"><strong>Assigned to:</strong> ' + escapeHtml(cdrDeansOf(r).map(function (d) {
+                      return d.name + (d.college ? ' (' + d.college + ')' : '');
+                  }).join(', ')) + '</p>' +
                   (r.instructions ? '<p class="mb-1"><strong>Instructions:</strong><br>' + escapeHtml(r.instructions).replace(/\n/g, '<br>') + '</p>' : '') +
                   (r.description ? '<p class="mb-3"><strong>Description:</strong><br>' + escapeHtml(r.description).replace(/\n/g, '<br>') + '</p>' : '') +
                   '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +

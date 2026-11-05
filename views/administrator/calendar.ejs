@@ -192,6 +192,10 @@
                                                 <div class="flex-shrink-0 me-3"><i class="ri-time-line text-muted fs-16"></i></div>
                                                 <div class="flex-grow-1"><h6 class="fw-semibold mb-0" id="v-time"></h6></div>
                                             </div>
+                                            <div class="d-flex align-items-center mb-2 d-none" id="v-eventtype-row">
+                                                <div class="flex-shrink-0 me-3"><i class="ri-price-tag-3-line text-muted fs-16"></i></div>
+                                                <div class="flex-grow-1"><span class="badge bg-secondary-subtle text-secondary" id="v-eventtype-badge"></span></div>
+                                            </div>
                                             <div class="d-flex align-items-center mb-2">
                                                 <div class="flex-shrink-0 me-3"><i class="ri-map-pin-line text-muted fs-16"></i></div>
                                                 <div class="flex-grow-1"><h6 class="fw-semibold mb-0" id="v-location"></h6></div>
@@ -218,16 +222,16 @@
                                             <div class="alert alert-danger py-2 px-3 fs-13 d-none" id="f-missing-alert" role="alert"></div>
                                             <div class="row g-3 mb-3">
                                                 <div class="col-md-7">
-                                                    <label class="form-label">Event Type <span class="text-danger">*</span></label>
+                                                    <label class="form-label">Calendar Color <span class="text-danger">*</span></label>
                                                     <select class="form-select" id="f-type">
-                                                        <option value="">Select event type</option>
+                                                        <option value="">Select a color</option>
                                                         <option value="bg-primary-subtle">Meeting</option>
                                                         <option value="bg-danger-subtle">Expiry / Deadline</option>
                                                         <option value="bg-success-subtle">Renewal</option>
                                                         <option value="bg-warning-subtle">Mobility / Exchange</option>
                                                         <option value="bg-info-subtle">Partnership Review</option>
                                                     </select>
-                                                    <div class="invalid-feedback">Please select the event type.</div>
+                                                    <div class="invalid-feedback">Please select a calendar color.</div>
                                                 </div>
                                                 <div class="col-md-5">
                                                     <label class="form-label">Date <span class="text-danger">*</span></label>
@@ -239,6 +243,24 @@
                                                 <label class="form-label">Event Name <span class="text-danger">*</span></label>
                                                 <input type="text" class="form-control" id="f-title">
                                                 <div class="invalid-feedback">Please provide an event name.</div>
+                                            </div>
+                                            <div class="mb-3">
+                                                <label class="form-label">Event Type <span class="text-danger">*</span></label>
+                                                <select class="form-select" id="f-event-type">
+                                                    <option value="">Select event type</option>
+                                                    <option value="Meeting">Meeting</option>
+                                                    <option value="Physical Meeting">Physical Meeting</option>
+                                                    <option value="Online Meeting">Online Meeting</option>
+                                                    <option value="Conference">Conference</option>
+                                                    <option value="Seminar">Seminar</option>
+                                                    <option value="Workshop">Workshop</option>
+                                                    <option value="Institutional Activity">Institutional Activity</option>
+                                                    <option value="Partnership Activity">Partnership Activity</option>
+                                                    <option value="Consultation">Consultation</option>
+                                                    <option value="__custom__">Other / Custom&hellip;</option>
+                                                </select>
+                                                <div class="invalid-feedback">Please select or enter an event type.</div>
+                                                <input type="text" class="form-control mt-2 d-none" id="f-event-type-custom" maxlength="80" placeholder="Enter a custom event type">
                                             </div>
                                             <div class="row g-3 mb-3">
                                                 <div class="col-sm-6">
@@ -253,7 +275,7 @@
                                                 </div>
                                             </div>
                                             <div class="mb-3">
-                                                <label class="form-label">Institution / Location <span class="text-danger">*</span></label>
+                                                <label class="form-label" id="f-location-label" for="f-location">Institution / Location <span class="text-danger">*</span></label>
                                                 <input type="text" class="form-control" id="f-location">
                                                 <div class="invalid-feedback">Please enter the institution or location.</div>
                                             </div>
@@ -505,9 +527,42 @@ function readEventDetails(){
     title: title, st: st, allDay: !st,
     start: st ? date + 'T' + st : date, end: et ? date + 'T' + et : null,
     cls: document.getElementById('f-type').value,
+    eventType: resolvedEventType(),
     loc: document.getElementById('f-location').value.trim(),
     desc: document.getElementById('f-desc').value.trim()
   };
+}
+
+// The Event Type field is a native <select> (predefined types, searchable by typing in every
+// browser) plus an "Other / Custom…" option that reveals a free-text input — resolvedEventType()
+// is the one place that turns either into the single string actually saved.
+function resolvedEventType(){
+  var sel = document.getElementById('f-event-type').value;
+  if(sel === '__custom__') return document.getElementById('f-event-type-custom').value.trim();
+  return sel;
+}
+
+// Physical Meeting has no virtual link, so its "location" is really a venue — relabel the existing
+// Institution/Location field rather than adding a second, overlapping field for the same purpose.
+function updateLocationLabelForEventType(){
+  var label = document.getElementById('f-location-label');
+  if(!label) return;
+  label.innerHTML = resolvedEventType() === 'Physical Meeting'
+    ? 'Venue <span class="text-muted fw-normal">(Building / Room / Office)</span> <span class="text-danger">*</span>'
+    : 'Institution / Location <span class="text-danger">*</span>';
+}
+
+function onEventTypeChange(){
+  var sel = document.getElementById('f-event-type').value;
+  var customInput = document.getElementById('f-event-type-custom');
+  if(sel === '__custom__'){
+    customInput.classList.remove('d-none');
+    customInput.focus();
+  } else {
+    customInput.classList.add('d-none');
+    customInput.value = '';
+  }
+  updateLocationLabelForEventType();
 }
 // Client-side approximation only (compares against the BROWSER's local clock, not APP_TIMEZONE) — a quick, friendly
 // "that's already passed" before ever hitting the network. The server (isNewEventInThePast in cirl.js, Asia/Manila /
@@ -747,7 +802,13 @@ function showView(ev){
   document.getElementById('v-location').textContent = ev.extendedProps.location || '—';
   document.getElementById('v-desc').textContent     = ev.extendedProps.description || '—';
   document.getElementById('v-gcal-badge').classList.toggle('d-none', !ev.extendedProps.googleEventId);
-  MeetingJoin.render(ev.extendedProps.dbId || ev.id, ev.extendedProps.myInvite);
+  var _vEvType = ev.extendedProps.eventType || '';
+  document.getElementById('v-eventtype-row').classList.toggle('d-none', !_vEvType);
+  document.getElementById('v-eventtype-badge').textContent = _vEvType;
+  // Physical Meeting has no Google Meet link to join — never show the Join control for one, regardless
+  // of the calendar color/className it happens to carry.
+  if (_vEvType === 'Physical Meeting') MeetingJoin.hide();
+  else MeetingJoin.render(ev.extendedProps.dbId || ev.id, ev.extendedProps.myInvite);
   renderInvitationPanel(ev);
   document.getElementById('btn-delete').classList.toggle('d-none', !CAN_MANAGE);
   document.getElementById('btn-edit-toggle').classList.toggle('d-none', !CAN_MANAGE);
@@ -761,7 +822,7 @@ function showView(ev){
 // is highlighted and listed in the warning at the top of the form; the highlight clears as soon as it is filled in.
 // (Editing an existing event keeps the older, lighter check — events created before this rule may lack some fields.)
 var REQUIRED_NEW_EVENT_FIELDS = [
-  ['f-type', 'Event Type'],
+  ['f-type', 'Calendar Color'],
   ['f-date', 'Date'],
   ['f-title', 'Event Name'],
   ['f-start', 'Start Time'],
@@ -793,10 +854,19 @@ function checkRequiredNewEventFields(){
     if(empty && f[0] === 'f-date') document.getElementById('f-date-error').textContent = 'Please choose the date.';
     if(empty) missing.push(f[1]);
   });
+  // Event Type needs its own check: the <select>'s own value can be non-empty ("__custom__") while the
+  // custom text input it reveals is still blank, which the generic loop above can't see.
+  var typeSel = document.getElementById('f-event-type');
+  var customInput = document.getElementById('f-event-type-custom');
+  var typeEmpty = !typeSel.value || (typeSel.value === '__custom__' && !customInput.value.trim());
+  typeSel.classList.toggle('is-invalid', typeEmpty);
+  customInput.classList.toggle('is-invalid', typeSel.value === '__custom__' && !customInput.value.trim());
+  if(typeEmpty) missing.push('Event Type');
   showMissingAlert(missing);
   if(missing.length){
-    var first = document.getElementById(REQUIRED_NEW_EVENT_FIELDS.filter(function(f){ return missing.indexOf(f[1]) !== -1; })[0][0]);
-    first.focus();
+    var firstField = REQUIRED_NEW_EVENT_FIELDS.filter(function(f){ return missing.indexOf(f[1]) !== -1; })[0];
+    if(firstField) document.getElementById(firstField[0]).focus();
+    else if(typeEmpty) typeSel.focus();
   }
   return !missing.length;
 }
@@ -815,6 +885,20 @@ REQUIRED_NEW_EVENT_FIELDS.forEach(function(f){
   });
 });
 
+// Same live-clear behavior as above, for the Event Type select + its custom-text companion.
+function reEvaluateEventTypeMissing(){
+  var typeSel = document.getElementById('f-event-type');
+  var customInput = document.getElementById('f-event-type-custom');
+  var typeEmpty = !typeSel.value || (typeSel.value === '__custom__' && !customInput.value.trim());
+  if(typeEmpty) return;
+  typeSel.classList.remove('is-invalid');
+  customInput.classList.remove('is-invalid');
+  var stillMissing = REQUIRED_NEW_EVENT_FIELDS.filter(function(r){ return document.getElementById(r[0]).classList.contains('is-invalid'); }).map(function(r){ return r[1]; });
+  showMissingAlert(stillMissing);
+}
+document.getElementById('f-event-type').addEventListener('change', function(){ onEventTypeChange(); reEvaluateEventTypeMissing(); });
+document.getElementById('f-event-type-custom').addEventListener('input', reEvaluateEventTypeMissing);
+
 function showAdd(dateStr, prefill){
   prefill = prefill || {};
   currentEv = null; isAdding = true; pendingRequestId = newRequestId();
@@ -832,6 +916,10 @@ function showAdd(dateStr, prefill){
   document.getElementById('f-location').value = '';
   document.getElementById('f-desc').value     = '';
   document.getElementById('f-type').value     = prefill.className || ''; // no default: the event type must be chosen
+  document.getElementById('f-event-type').value = '';
+  document.getElementById('f-event-type-custom').value = '';
+  document.getElementById('f-event-type-custom').classList.add('d-none');
+  updateLocationLabelForEventType();
   document.getElementById('v-gcal-badge').classList.add('d-none');
   // Step 1 holds only the event details: recipients are chosen on step 2.
   document.getElementById('f-recipients-wrap').classList.add('d-none');
@@ -860,6 +948,18 @@ function showEdit(){
   document.getElementById('f-location').value = currentEv.extendedProps.location    || '';
   document.getElementById('f-desc').value     = currentEv.extendedProps.description || '';
   document.getElementById('f-type').value     = currentEv.classNames[0] || 'bg-primary-subtle';
+  var _evType = currentEv.extendedProps.eventType || '';
+  var _predefinedTypes = ['Meeting','Physical Meeting','Online Meeting','Conference','Seminar','Workshop','Institutional Activity','Partnership Activity','Consultation'];
+  if(_evType && _predefinedTypes.indexOf(_evType) === -1){
+    document.getElementById('f-event-type').value = '__custom__';
+    document.getElementById('f-event-type-custom').value = _evType;
+    document.getElementById('f-event-type-custom').classList.remove('d-none');
+  } else {
+    document.getElementById('f-event-type').value = _evType;
+    document.getElementById('f-event-type-custom').value = '';
+    document.getElementById('f-event-type-custom').classList.add('d-none');
+  }
+  updateLocationLabelForEventType();
   // Editing never re-notifies the people already invited; anyone selected here is ADDED
   // (notified, added to the Google event, and e-mailed the invitation).
   document.getElementById('f-recipients-wrap').classList.remove('d-none');
@@ -884,6 +984,7 @@ function docToFcEvent(doc){
     extendedProps: {
       location:    doc.location    || '',
       description: doc.description || '',
+      eventType:   doc.eventType   || '',
       dbId:        doc.id,
       googleEventId: doc.googleEventId || null,
       googleSyncStatus: doc.googleSyncStatus || null,
@@ -1053,7 +1154,7 @@ document.addEventListener('DOMContentLoaded', function(){
     // the recipients were being chosen), go back to the details so the problem is visible.
     var d = readEventDetails();
     if(!d){ if(isAdding) showStep(1); return; }
-    var title = d.title, st = d.st, start = d.start, end = d.end, cls = d.cls, loc = d.loc, desc = d.desc;
+    var title = d.title, st = d.st, start = d.start, end = d.end, cls = d.cls, loc = d.loc, desc = d.desc, evType = d.eventType;
     // Add: the recipients picked on step 2. Edit: the attendee list on the edit form, as before.
     var recipients = isAdding
       ? selectedRecipients.map(function(r){ return r.value; })
@@ -1065,7 +1166,7 @@ document.addEventListener('DOMContentLoaded', function(){
     if(currentEv && !isAdding){
       // EDIT — persist to MongoDB then update FC event (the same event; never a new one)
       var dbId   = currentEv.extendedProps.dbId || currentEv.id;
-      var updates = { title:title, start:start, end:end, allDay:!st, className:cls, location:loc, description:desc };
+      var updates = { title:title, start:start, end:end, allDay:!st, className:cls, location:loc, description:desc, eventType:evType };
       if(recipients.length) updates.recipients = recipients;
       apiPatch(dbId, updates).then(function(data){
         if(data.success){
@@ -1075,6 +1176,7 @@ document.addEventListener('DOMContentLoaded', function(){
           currentEv.setEnd(end);
           currentEv.setExtendedProp('location', loc);
           currentEv.setExtendedProp('description', desc);
+          currentEv.setExtendedProp('eventType', evType);
           syncFromServer(currentEv, data.event);
           bsModal.hide(); upcomingEvent();
           reportInvitations(data.invitations, 'Event updated.');
@@ -1082,7 +1184,7 @@ document.addEventListener('DOMContentLoaded', function(){
       }).catch(function(e){ console.error(e); showToast('Error saving event.', '#f06548'); }).then(finish);
     } else {
       // ADD — persist to MongoDB then add to FC
-      var payload = { title:title, start:start, end:end, allDay:!st, className:cls, location:loc, description:desc, recipients:recipients, clientRequestId: pendingRequestId };
+      var payload = { title:title, start:start, end:end, allDay:!st, className:cls, location:loc, description:desc, eventType:evType, recipients:recipients, clientRequestId: pendingRequestId };
       apiPost(payload).then(function(data){
         if(data.success){
           addSavedEvent(data.event);

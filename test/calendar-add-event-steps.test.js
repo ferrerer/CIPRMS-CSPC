@@ -47,7 +47,7 @@ describe('Add Event wizard — behavior in the page script', () => {
     expect(add).toContain("document.getElementById('f-recipients-wrap').classList.add('d-none')");
     expect(add).toContain('selectedRecipients = [];');
     expect(add).toContain('showStep(1)');
-    const edit = block('function showEdit(', 1800);
+    const edit = block('function showEdit(', 2600);
     expect(edit).toContain("document.getElementById('f-recipients-wrap').classList.remove('d-none')");
     expect(edit).toContain('leaveWizard()');
     expect(block('function showView(', 300)).toContain('leaveWizard()');

@@ -359,7 +359,88 @@ describe('7. Attachment isolation between Deans (file-access authorization)', ()
   });
 });
 
-describe('8. Audit trail recording', () => {
+describe('8. Multi-dean assignment (2026-11)', () => {
+  test('a request can be assigned to multiple Deans via assignedDeanIds, and both can access it', async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAAgent, user: deanA } = await agentFor('Auth. Personnel', { unit: 'CCS' });
+    const { agent: deanBAgent, user: deanB } = await agentFor('Auth. Personnel', { unit: 'CNAS' });
+    const { agent: deanCAgent } = await agentFor('Auth. Personnel');
+
+    const res = await createRequest(adminAgent, deanA.id, { assignedDeanIds: [deanA.id, deanB.id] });
+    expect(res.status).toBe(200);
+    expect(res.body.request.assignedDeans.map(d => d.email).sort()).toEqual([deanA.email, deanB.email].sort());
+    // Legacy singular fields still mirror the first assigned dean, for any code path not yet updated.
+    expect(res.body.request.assignedDeanEmail).toBe(deanA.email);
+
+    const id = res.body.request.id;
+    const detailA = await deanAAgent.get('/api/college-requests/' + id).set('X-Requested-With', 'ciprms');
+    const detailB = await deanBAgent.get('/api/college-requests/' + id).set('X-Requested-With', 'ciprms');
+    const detailC = await deanCAgent.get('/api/college-requests/' + id).set('X-Requested-With', 'ciprms');
+    expect(detailA.status).toBe(200);
+    expect(detailB.status).toBe(200);
+    expect(detailC.status).toBe(403);
+
+    const listA = await deanAAgent.get('/api/college-requests').set('X-Requested-With', 'ciprms');
+    const listB = await deanBAgent.get('/api/college-requests').set('X-Requested-With', 'ciprms');
+    expect(listA.body.map(r => r.id)).toContain(id);
+    expect(listB.body.map(r => r.id)).toContain(id);
+  });
+
+  test('either co-assigned Dean can submit documents, and the assigned-Dean notification goes to both', async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAAgent, user: deanA } = await agentFor('Auth. Personnel');
+    const { agent: deanBAgent, user: deanB } = await agentFor('Auth. Personnel');
+
+    const r = await createRequest(adminAgent, deanA.id, { assignedDeanIds: [deanA.id, deanB.id] });
+    const id = r.body.request.id;
+
+    const notifA = await db.collection('notifications').findOne({ targetEmail: deanA.email, tag: 'College Request' });
+    const notifB = await db.collection('notifications').findOne({ targetEmail: deanB.email, tag: 'College Request' });
+    expect(notifA).toBeTruthy();
+    expect(notifB).toBeTruthy();
+
+    // Dean B (not the "first" dean) can still submit — ownership is "any assigned dean", not just deanA.
+    const submitRes = await deanBAgent.post('/api/college-requests/' + id + '/documents')
+      .set('X-Requested-With', 'ciprms').field('note', 'Submitted by the second co-assigned dean.');
+    expect(submitRes.status).toBe(200);
+    expect(submitRes.body.request.status).toBe('Submitted');
+
+    await adminAgent.patch('/api/college-requests/' + id).set('X-Requested-With', 'ciprms').send({ action: 'accept' });
+    const acceptNotifA = await db.collection('notifications').findOne({ targetEmail: deanA.email, tag: 'College Request', title: { $regex: 'accepted' } });
+    const acceptNotifB = await db.collection('notifications').findOne({ targetEmail: deanB.email, tag: 'College Request', title: { $regex: 'accepted' } });
+    expect(acceptNotifA).toBeTruthy();
+    expect(acceptNotifB).toBeTruthy();
+    // Also exercises deanAAgent so it isn't an unused variable — confirms the first dean retains access too.
+    expect((await deanAAgent.get('/api/college-requests/' + id).set('X-Requested-With', 'ciprms')).status).toBe(200);
+  });
+
+  test('a request created before the multi-dean change (singular fields only) still works for access, listing, and submission', async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel', { unit: 'CETE' });
+
+    // Simulates a pre-2026-11 document: inserted directly with only the legacy singular fields, no
+    // assignedDeans array at all — getAssignedDeans()'s fallback path is what this test is proving out.
+    const legacyId = Date.now() % 1000000;
+    await db.collection('collegedeanrequests').insertOne({
+      id: legacyId, requestType: 'MOA', title: `${TEST_TAG} Legacy single-dean request ${legacyId}`,
+      instructions: '', description: '', requiredDocuments: [], deadline: '',
+      assignedDeanId: dean.id, assignedDeanEmail: dean.email, assignedDeanName: dean.name, assignedCollege: dean.unit,
+      createdBy: 'System', createdByEmail: 'system@test.local', referenceDocuments: [], submittedDocuments: [],
+      status: 'Pending', statusHistory: [], date: new Date().toLocaleDateString('en-US'),
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
+    });
+    seededRequestIds.push(legacyId);
+
+    expect((await deanAgent.get('/api/college-requests/' + legacyId).set('X-Requested-With', 'ciprms')).status).toBe(200);
+    expect((await deanAgent.get('/api/college-requests').set('X-Requested-With', 'ciprms')).body.map(r => r.id)).toContain(legacyId);
+
+    const submitRes = await deanAgent.post('/api/college-requests/' + legacyId + '/documents')
+      .set('X-Requested-With', 'ciprms').field('note', 'Submitting against a legacy single-dean record.');
+    expect(submitRes.status).toBe(200);
+  });
+});
+
+describe('9. Audit trail recording', () => {
   test('creation/assignment, submission, and the accept/return decision are all logged', async () => {
     const { agent: adminAgent } = await agentFor('Administrator');
     const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');

@@ -579,7 +579,14 @@
                                                     </div>
                                                     <div id="cmp-result-body">
                                                         <div id="cmp-chart-card" class="mb-3">
-                                                            <div id="cmp-apex-chart" class="apex-charts" dir="ltr"></div>
+                                                            <div class="row g-3">
+                                                                <div class="col-lg-7">
+                                                                    <div id="cmp-apex-chart" class="apex-charts" dir="ltr"></div>
+                                                                </div>
+                                                                <div class="col-lg-5">
+                                                                    <div id="cmp-pie-chart" class="apex-charts" dir="ltr"></div>
+                                                                </div>
+                                                            </div>
                                                         </div>
                                                         <div class="table-responsive mb-4">
                                                             <table class="table table-sm table-bordered align-middle mb-0">
@@ -1516,6 +1523,7 @@
         // are a plain array rendered by iterating _cmpConfigIds — there is no
         // "Report A"/"Report B"-style hardcoding anywhere in this section.
         var _cmpChartInstance = null;
+        var _cmpPieChartInstance = null;
         var _lastComparisonData = null;
         var _lastComparisonQs = null;
         var _cmpConfigIds = [];
@@ -1810,6 +1818,7 @@
                 emptyEl.style.display = '';
                 bodyEl.style.display = 'none';
                 if (_cmpChartInstance) { try { _cmpChartInstance.destroy(); } catch (e) {} _cmpChartInstance = null; }
+                if (_cmpPieChartInstance) { try { _cmpPieChartInstance.destroy(); } catch (e) {} _cmpPieChartInstance = null; }
                 return;
             }
             emptyEl.style.display = 'none';
@@ -1864,6 +1873,27 @@
                 });
                 _cmpChartInstance.render();
             }
+
+            // Pie/donut chart — same per-comparison counts and colors as the
+            // bar chart above, just a different visual encoding of identical
+            // real data (no separate calculation, no mock data).
+            if (_cmpPieChartInstance) { try { _cmpPieChartInstance.destroy(); } catch (e) {} _cmpPieChartInstance = null; }
+            var pieEl = document.getElementById('cmp-pie-chart');
+            pieEl.innerHTML = '';
+            if (typeof ApexCharts !== 'undefined') {
+                var pieColors = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
+                _cmpPieChartInstance = new ApexCharts(pieEl, {
+                    series: results.map(function (r) { return r.count; }),
+                    labels: results.map(function (r) { return r.label; }),
+                    chart: { type: 'donut', height: 260 + (results.length * 20), fontFamily: 'inherit' },
+                    colors: results.map(function (r, i) { return pieColors[i % pieColors.length]; }),
+                    dataLabels: { enabled: true, formatter: function (val) { return val.toFixed(1) + '%'; } },
+                    legend: { show: true, position: 'bottom' },
+                    tooltip: { y: { formatter: function (val) { return val + ' partnership' + (val === 1 ? '' : 's'); } } },
+                    responsive: [{ breakpoint: 992, options: { chart: { height: 240 }, legend: { position: 'bottom' } } }]
+                });
+                _cmpPieChartInstance.render();
+            }
         }
 
         function changeComparison() {
@@ -1876,6 +1906,7 @@
             _lastComparisonData = null;
             _lastComparisonQs = null;
             if (_cmpChartInstance) { try { _cmpChartInstance.destroy(); } catch (e) {} _cmpChartInstance = null; }
+            if (_cmpPieChartInstance) { try { _cmpPieChartInstance.destroy(); } catch (e) {} _cmpPieChartInstance = null; }
             openCompareSelect();
         }
 
