@@ -80,7 +80,11 @@ app.use(helmet({
       // that gap without loosening anything the directive above didn't already allow.
       scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com", "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "unpkg.com"],
-      fontSrc: ["'self'", "fonts.gstatic.com", "cdn.jsdelivr.net", "cdnjs.cloudflare.com"],
+      // data:: FullCalendar's bundled "fcicons" icon font (assets/libs/fullcalendar/index.global.min.js)
+      // injects its own @font-face with a base64 data: URI rather than a separate font file. Without
+      // data: here, the browser blocks that font load, so the Prev/Next buttons' chevron glyphs (private-use
+      // Unicode codepoints with no fallback) rendered as empty-glyph boxes on every role's calendar page.
+      fontSrc: ["'self'", "data:", "fonts.gstatic.com", "cdn.jsdelivr.net", "cdnjs.cloudflare.com"],
       // tile.openstreetmap.org: the dashboard map's OSM raster-tile fallback loads actual <img> tiles
       // (Leaflet's L.tileLayer), governed by img-src, not connect-src. flagcdn.com: the Top Partner
       // Countries flag icons (admin_dashboard.ejs) — a plain <img src>, also img-src.
