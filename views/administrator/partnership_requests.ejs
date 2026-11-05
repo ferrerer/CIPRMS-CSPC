@@ -1027,6 +1027,16 @@
                 <input type="file" class="form-control" id="dr-draft-file" accept=".pdf,.jpg,.jpeg,.png">
               </div>
             </div>
+            <div class="text-center my-2 fs-12 text-muted">— or —</div>
+            <div class="mb-3">
+              <label class="form-label ocr-field-label fs-13 mb-1">Select Existing Document(s) <span class="text-muted fw-normal">(already in the Document Library — no re-upload needed)</span></label>
+              <div>
+                <button type="button" class="btn btn-sm btn-soft-primary" id="dr-draft-pick-existing-btn" onclick="openDrSelectExisting()">
+                  <i class="ri-folder-open-line me-1"></i>Browse Document Library
+                </button>
+              </div>
+              <div id="dr-draft-linked-list" class="d-flex flex-wrap gap-2 mt-2"></div>
+            </div>
             <div class="mb-3">
               <label class="form-label ocr-field-label fs-13 mb-1" for="dr-draft-note">Version Note / Remarks</label>
               <textarea class="form-control" id="dr-draft-note" rows="2" placeholder="Add a note or summary of changes for this version..."></textarea>
@@ -1034,7 +1044,7 @@
             <button type="button" class="btn btn-primary px-3 fs-13" id="dr-draft-upload-btn" onclick="uploadDRDraftDocument()">
               <i class="ri-upload-2-line me-1"></i>Upload Version
             </button>
-            <p class="text-muted fs-12 mt-2 mb-0">A file, a note, or both — at least one is required. A file (PDF, JPG, or PNG, max 10MB) is archived to the Document Library; collaborators are notified automatically.</p>
+            <p class="text-muted fs-12 mt-2 mb-0">A file, a linked existing document, a note, or any combination — at least one is required. A new file (PDF, JPG, or PNG, max 10MB) is archived to the Document Library; collaborators are notified automatically.</p>
           </div>
           <div id="dr-draft-closed-note" class="alert alert-secondary fs-13 mb-0" style="display:none;">
             <i class="ri-lock-line me-1"></i>This document request has already been decided — no further documents can be added.
@@ -1042,6 +1052,35 @@
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Select Existing Documents (2026-11) — opens on top of dr-draft-modal (Bootstrap stacks modals
+       correctly on its own). Lists every document already in the system (GET /api/documents?scope=all —
+       Administrator/Staff already have unrestricted read access to any document once it's linked to a
+       request they review, so this picker shows that same full set rather than only this reviewer's own
+       uploads), with a search box and checkable rows. "Done" just closes this modal; the actual link
+       happens when "Upload Version" is clicked back on dr-draft-modal. -->
+  <div class="modal fade" id="dr-select-existing-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+      <div class="modal-content">
+        <div class="modal-header bg-light p-3">
+          <h5 class="modal-title"><i class="ri-folder-open-line me-2 text-primary"></i>Select Existing Document(s)</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="search-box mb-2">
+            <input type="text" class="form-control" id="dr-select-existing-search" placeholder="Search by title, type, institution, or uploader…" oninput="renderDrSelectExistingList()">
+            <i class="ri-search-line search-icon"></i>
+          </div>
+          <div id="dr-select-existing-list" class="list-group" style="max-height:360px;overflow-y:auto;"></div>
+          <div class="text-muted fs-12 mt-2 d-none" id="dr-select-existing-empty">No documents found in your Document Library.</div>
+        </div>
+        <div class="modal-footer">
+          <span class="text-muted fs-12 me-auto" id="dr-select-existing-count"></span>
+          <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>
         </div>
       </div>
     </div>
@@ -1904,7 +1943,7 @@
         ${avatar}
         <div class="flex-grow-1 border rounded p-3 draft-card">
           ${header}
-          <div class="fs-13 fw-medium mt-1">${escapeHtml(item.filename)}${sizeStr ? ` <span class="text-muted fs-12">(${sizeStr})</span>` : ''}</div>
+          <div class="fs-13 fw-medium mt-1">${escapeHtml(item.filename)}${sizeStr ? ` <span class="text-muted fs-12">(${sizeStr})</span>` : ''}${item.linked ? ' <span class="badge bg-info-subtle text-info fs-10"><i class="ri-link me-1"></i>Linked from Document Library</span>' : ''}</div>
           ${item.note ? `<div class="fs-13 text-muted mt-1 fst-italic">"${escapeHtml(item.note)}"</div>` : ''}
           <div class="d-flex align-items-center flex-wrap gap-2 mt-2">
             ${previewBtn}
@@ -1970,7 +2009,7 @@
             ? new Date(d.uploadedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
             : '—',
           filename: d.originalFilename || 'Document', link: d.fileLink,
-          note: d.note || '', fileType: d.fileType, fileSize: d.fileSize
+          note: d.note || '', fileType: d.fileType, fileSize: d.fileSize, linked: !!d.linked
         });
       });
       return items;
@@ -1995,8 +2034,76 @@
       document.getElementById('dr-draft-file').value = '';
       if (window.drDraftDropzone) window.drDraftDropzone.removeFile();
       document.getElementById('dr-draft-note').value = '';
+      drLinkedDocumentIds = [];
+      renderDrLinkedChips();
       setBreadcrumb(['Requests', 'Document Request', drRequestLabel(r), 'Draft Collaboration']);
       swapToModal('dr-draft-modal', 'dr-modal');
+    }
+
+    /* ── Select Existing Documents (2026-11) — link one or more documents already in the system to a
+       Document Request's draft timeline instead of re-uploading. ── */
+    var DR_EXISTING_DOCS = null; // lazy-loaded once per page session; every document in the system
+    var drLinkedDocumentIds = []; // selected for the draft currently being composed in dr-draft-modal
+
+    async function openDrSelectExisting() {
+      if (!DR_EXISTING_DOCS) {
+        // scope=all: Administrator/Staff already have unrestricted read access to any document once it's
+        // linked to a request they review (cirl.js's GET /uploads/documents/:filename exemption) — this
+        // shows every document already in the system, not just the ones this reviewer personally uploaded,
+        // so a colleague's existing upload never has to be re-uploaded just to attach it here.
+        const res = await CIPRMS.api('/api/documents?scope=all', { quiet: true });
+        DR_EXISTING_DOCS = (res.ok && Array.isArray(res.data)) ? res.data : [];
+      }
+      document.getElementById('dr-select-existing-search').value = '';
+      renderDrSelectExistingList();
+      bootstrap.Modal.getOrCreateInstance(document.getElementById('dr-select-existing-modal')).show();
+    }
+
+    function renderDrSelectExistingList() {
+      const q = (document.getElementById('dr-select-existing-search').value || '').toLowerCase().trim();
+      const docs = (DR_EXISTING_DOCS || []).filter(d => !q
+        || (d.title || '').toLowerCase().includes(q)
+        || (d.type || '').toLowerCase().includes(q)
+        || (d.institution || '').toLowerCase().includes(q)
+        || (d.partner || '').toLowerCase().includes(q)
+        || (d.uploadedBy || '').toLowerCase().includes(q));
+      const list = document.getElementById('dr-select-existing-list');
+      const emptyEl = document.getElementById('dr-select-existing-empty');
+      emptyEl.classList.toggle('d-none', docs.length > 0);
+      list.innerHTML = docs.map(d => {
+        const checked = drLinkedDocumentIds.includes(d.id);
+        return `<label class="list-group-item d-flex align-items-start gap-2" style="cursor:pointer;">
+            <input type="checkbox" class="form-check-input flex-shrink-0 mt-1" ${checked ? 'checked' : ''} onchange="toggleDrLinkedDoc(${d.id}, this.checked)">
+            <span class="flex-grow-1">
+              <span class="fw-semibold fs-13">${escapeHtml(d.title || 'Untitled Document')}</span>
+              <span class="badge bg-primary-subtle text-primary fs-10 ms-1">${escapeHtml(d.type || 'Document')}</span>
+              <br><span class="text-muted fs-12">${escapeHtml(d.institution || d.partner || '—')} &middot; ${escapeHtml(d.date || '—')} &middot; uploaded by ${escapeHtml(d.uploadedBy || 'Unknown')}</span>
+            </span>
+          </label>`;
+      }).join('');
+      document.getElementById('dr-select-existing-count').textContent =
+        drLinkedDocumentIds.length ? drLinkedDocumentIds.length + ' selected' : '';
+    }
+
+    function toggleDrLinkedDoc(id, checked) {
+      drLinkedDocumentIds = drLinkedDocumentIds.filter(x => x !== id);
+      if (checked) drLinkedDocumentIds.push(id);
+      renderDrLinkedChips();
+      document.getElementById('dr-select-existing-count').textContent =
+        drLinkedDocumentIds.length ? drLinkedDocumentIds.length + ' selected' : '';
+    }
+
+    function renderDrLinkedChips() {
+      const wrap = document.getElementById('dr-draft-linked-list');
+      if (!wrap) return;
+      wrap.innerHTML = drLinkedDocumentIds.map(id => {
+        const doc = (DR_EXISTING_DOCS || []).find(d => d.id === id);
+        const label = doc ? doc.title : ('Document #' + id);
+        return `<span class="badge bg-info-subtle text-info d-inline-flex align-items-center gap-1 p-2 fs-12">
+            <i class="ri-link"></i>${escapeHtml(label)}
+            <button type="button" class="btn-close" style="font-size:.55rem" onclick="toggleDrLinkedDoc(${id}, false); renderDrSelectExistingList();" aria-label="Remove"></button>
+          </span>`;
+      }).join('');
     }
 
     async function uploadDRDraftDocument() {
@@ -2004,10 +2111,10 @@
       const noteInput = document.getElementById('dr-draft-note');
       const file = fileInput.files[0];
       const note = noteInput.value.trim();
-      // File is optional (2026-09-19) — notes alone are a valid new version.
-      // Only block submission when there's genuinely nothing to save.
+      // File is optional (2026-09-19), and linking an existing document is a third alternative (2026-11)
+      // — only block submission when there's genuinely nothing to save.
       if (!currentDRId) return;
-      if (!file && !note) return showToast('<i class="ri-error-warning-line me-1"></i>Add a file, a note, or both.', '#f06548');
+      if (!file && !note && !drLinkedDocumentIds.length) return showToast('<i class="ri-error-warning-line me-1"></i>Add a file, a note, or select at least one existing document.', '#f06548');
       const btn = document.getElementById('dr-draft-upload-btn');
       const originalBtnHtml = btn.innerHTML;
       btn.disabled = true;
@@ -2015,6 +2122,7 @@
       const formData = new FormData();
       if (file) formData.append('document', file);
       formData.append('note', note);
+      if (drLinkedDocumentIds.length) formData.append('documentIds', JSON.stringify(drLinkedDocumentIds));
       try {
         const res = await CIPRMS.api('/api/document-requests/' + currentDRId + '/documents', { method: 'POST', body: formData, quiet: true });
         if (!res.ok) throw new Error(res.error || 'Upload failed.');
@@ -2027,6 +2135,8 @@
         fileInput.value = '';
         if (window.drDraftDropzone) window.drDraftDropzone.removeFile();
         noteInput.value = '';
+        drLinkedDocumentIds = [];
+        renderDrLinkedChips();
         showToast('<i class="ri-checkbox-circle-line me-1"></i>New draft version uploaded.', '#0ab39c');
       } catch (e) {
         showToast('<i class="ri-error-warning-line me-1"></i>' + e.message, '#f06548');

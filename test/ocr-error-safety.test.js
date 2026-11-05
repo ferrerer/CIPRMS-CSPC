@@ -77,7 +77,9 @@ describe('routes/ocrRoutes.js multer wrapper: only the deliberate clientSafe val
     jest.doMock('../middleware/uploadMiddleware', () => {
       const clientSafeErr = new Error('Unsupported file type. Only PDF, JPG, JPEG, and PNG are accepted.');
       clientSafeErr.clientSafe = true;
-      return { single: () => (req, res, cb) => cb(clientSafeErr), UPLOAD_DIR: '/tmp' };
+      // routes/ocrRoutes.js calls .fields([...]) (2026-11 multi-photo upload), not .single() — the mock
+      // must match whichever multer method the route actually calls.
+      return { fields: () => (req, res, cb) => cb(clientSafeErr), UPLOAD_DIR: '/tmp' };
     });
     jest.doMock('../middleware/verifyMagicBytes', () => () => true);
     jest.doMock('../controllers/ocrController', () => ({ extract: jest.fn(), status: jest.fn(), confirm: jest.fn(), discard: jest.fn() }));
@@ -100,7 +102,8 @@ describe('routes/ocrRoutes.js multer wrapper: only the deliberate clientSafe val
       // A realistic unexpected failure multer/busboy could surface that is NOT the deliberate
       // fileFilter validation error — e.g. a filesystem problem — with no clientSafe flag.
       const rawErr = new Error('EACCES: permission denied, open \'/uploads/tmp/x\'');
-      return { single: () => (req, res, cb) => cb(rawErr), UPLOAD_DIR: '/tmp' };
+      // routes/ocrRoutes.js calls .fields([...]) (2026-11 multi-photo upload), not .single().
+      return { fields: () => (req, res, cb) => cb(rawErr), UPLOAD_DIR: '/tmp' };
     });
     jest.doMock('../middleware/verifyMagicBytes', () => () => true);
     jest.doMock('../controllers/ocrController', () => ({ extract: jest.fn(), status: jest.fn(), confirm: jest.fn(), discard: jest.fn() }));

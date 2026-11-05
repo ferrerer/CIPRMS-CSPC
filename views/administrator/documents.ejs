@@ -393,6 +393,25 @@
                 <span><i class="ri-shield-check-fill text-primary me-1"></i>Duplicate Detection</span>
                 <span><i class="ri-archive-fill text-info me-1"></i>Auto Archival</span>
             </div>
+
+            <!-- Multiple photos of one document (2026-11) — a separate picker from the single-file dropzone
+                 above, so a single PDF/image upload keeps behaving exactly as before. Photos are combined
+                 into one document server-side; OCR/duplicate detection/auto-fill run once on the combined
+                 result via the exact same result stage below. -->
+            <div class="text-center my-3 fs-12 text-muted">— or —</div>
+            <div id="multi-photo-picker" class="text-center">
+                <p class="ocr-helper-text mb-2 fs-13 text-muted">Have several photos of the same document (one per page)? Select them all at once — they'll be combined and extracted as a single document.</p>
+                <input type="file" id="multiPhotoInput" accept=".jpg,.jpeg,.png" multiple class="d-none">
+                <button type="button" class="btn btn-sm btn-soft-primary" id="btn-pick-multi-photos">
+                    <i class="ri-image-add-line me-1"></i>Select Photos
+                </button>
+                <div id="multi-photo-list" class="d-flex flex-wrap gap-2 justify-content-center mt-3"></div>
+                <div class="fs-12 text-muted mt-2 d-none" id="multi-photo-count"></div>
+                <div class="alert alert-danger py-2 px-3 fs-13 mt-2 d-none" id="multi-photo-error"></div>
+                <button type="button" class="btn btn-primary btn-sm mt-2 d-none" id="btn-extract-multi">
+                    <i class="ri-scan-2-line me-1"></i>Combine &amp; Extract
+                </button>
+            </div>
         </div>
 
         <!-- Stage 2: OCR Processing Spinner & Progress -->
@@ -564,6 +583,7 @@
                 var dzPrompt = document.querySelector('#doc-library-dropzone-wrap .ciprms-dropzone-prompt');
                 if (dzPreview) dzPreview.style.display = 'none';
                 if (dzPrompt) dzPrompt.style.display = 'flex';
+                resetMultiPhotoPicker();
             });
         }
 
@@ -954,8 +974,15 @@
         var input = document.getElementById('fileInput');
         var file = input.files[0];
         if (!file) return;
+        var formData = new FormData();
+        formData.append('document', file);
+        startOcrWithFormData(formData, 'Sending the file to the server.');
+    }
 
-        // Reset any previously pending job.
+    // Shared by both the single-file dropzone (startOcr, field 'document') and the multi-photo picker
+    // (startOcrMulti below, field 'documents') — everything from here on (progress, polling, result
+    // rendering, duplicate detection, save) is identical regardless of how many files started the job.
+    function startOcrWithFormData(formData, uploadingDetailText) {
         currentJobId = null;
 
         document.getElementById('upload-stage').style.display = 'none';
@@ -964,10 +991,7 @@
         document.getElementById('ocr-stage').style.display = 'block';
         document.getElementById('ocr-modal-progress-bar').style.width = '0%';
         document.getElementById('ocr-stage-heading').textContent = 'Uploading…';
-        document.getElementById('ocr-stage-detail').textContent = 'Sending the file to the server.';
-
-        var formData = new FormData();
-        formData.append('document', file);
+        document.getElementById('ocr-stage-detail').textContent = uploadingDetailText || 'Sending the file to the server.';
 
         var xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/ocr/extract');
@@ -992,6 +1016,85 @@
         xhr.onerror = function () { docOcrFail('Network error while uploading the document.'); };
         xhr.send(formData);
     }
+
+    // ── Multiple photos of one document (2026-11) ───────────────────────────────
+    // Selected cumulatively across repeated "Select Photos" clicks (never replaced), with an individual
+    // remove button per thumbnail, and an explicit "Combine & Extract" step — unlike the single-file
+    // dropzone, which starts OCR the instant a file is chosen, extraction here only begins once the user
+    // has finished picking every photo for this one document and confirms.
+    var multiPhotoFiles = [];
+    var MAX_MULTI_PHOTOS = 10;
+    var MAX_PHOTO_SIZE = 10 * 1024 * 1024; // 10MB — same per-file limit the single-file dropzone enforces
+
+    function resetMultiPhotoPicker() {
+        multiPhotoFiles = [];
+        var input = document.getElementById('multiPhotoInput');
+        if (input) input.value = '';
+        renderMultiPhotoList();
+        showMultiPhotoError('');
+    }
+
+    function showMultiPhotoError(msg) {
+        var box = document.getElementById('multi-photo-error');
+        if (!box) return;
+        if (msg) { box.textContent = msg; box.classList.remove('d-none'); }
+        else { box.textContent = ''; box.classList.add('d-none'); }
+    }
+
+    function renderMultiPhotoList() {
+        var list = document.getElementById('multi-photo-list');
+        if (list) {
+            list.innerHTML = multiPhotoFiles.map(function (f, i) {
+                return '<span class="badge bg-light text-dark border d-inline-flex align-items-center gap-1 p-2 fs-12">' +
+                    '<i class="ri-image-line text-success"></i>' + escHtml(f.name) +
+                    '<button type="button" class="btn-close" style="font-size:.55rem" data-i="' + i + '" aria-label="Remove ' + escHtml(f.name) + '"></button></span>';
+            }).join('');
+            list.querySelectorAll('.btn-close').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    multiPhotoFiles.splice(parseInt(btn.getAttribute('data-i'), 10), 1);
+                    renderMultiPhotoList();
+                });
+            });
+        }
+        var countEl = document.getElementById('multi-photo-count');
+        var extractBtn = document.getElementById('btn-extract-multi');
+        if (multiPhotoFiles.length) {
+            if (countEl) { countEl.classList.remove('d-none'); countEl.textContent = multiPhotoFiles.length + ' photo' + (multiPhotoFiles.length === 1 ? '' : 's') + ' selected (max ' + MAX_MULTI_PHOTOS + ').'; }
+            if (extractBtn) extractBtn.classList.remove('d-none');
+        } else {
+            if (countEl) countEl.classList.add('d-none');
+            if (extractBtn) extractBtn.classList.add('d-none');
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var pickBtn = document.getElementById('btn-pick-multi-photos');
+        var multiInput = document.getElementById('multiPhotoInput');
+        var extractBtn = document.getElementById('btn-extract-multi');
+        if (pickBtn && multiInput) pickBtn.addEventListener('click', function () { multiInput.click(); });
+        if (multiInput) multiInput.addEventListener('change', function (e) {
+            var picked = Array.from(e.target.files || []);
+            var errors = [];
+            picked.forEach(function (f) {
+                var ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
+                if (!['.jpg', '.jpeg', '.png'].includes(ext)) { errors.push('"' + f.name + '": unsupported file type.'); return; }
+                if (f.size > MAX_PHOTO_SIZE) { errors.push('"' + f.name + '": too large (max 10MB).'); return; }
+                if (multiPhotoFiles.length >= MAX_MULTI_PHOTOS) { errors.push('"' + f.name + '": skipped — maximum ' + MAX_MULTI_PHOTOS + ' photos per extraction.'); return; }
+                // Same name+size already selected — don't add it twice.
+                if (multiPhotoFiles.some(function (x) { return x.name === f.name && x.size === f.size; })) return;
+                multiPhotoFiles.push(f);
+            });
+            renderMultiPhotoList();
+            showMultiPhotoError(errors.join(' '));
+            e.target.value = ''; // lets the same filename be re-picked later if removed first
+        });
+        if (extractBtn) extractBtn.addEventListener('click', function () {
+            if (!multiPhotoFiles.length) return;
+            var formData = new FormData();
+            multiPhotoFiles.forEach(function (f) { formData.append('documents', f); });
+            startOcrWithFormData(formData, 'Combining ' + multiPhotoFiles.length + ' photos and sending them to the server.');
+        });
+    });
 
     function pollDocOcrStatus(jobId) {
         fetch('/api/ocr/status/' + jobId)

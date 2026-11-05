@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const sharp = require('sharp');
+const PDFDocument = require('pdfkit');
 const Tesseract = require('tesseract.js');
 const { PDFParse } = require('pdf-parse');
 const { extractFields } = require('./extractionService');
@@ -153,6 +154,47 @@ function rasterizePdfPages(filePath, outDir) {
       }
     );
   });
+}
+
+// ── Multiple photos → one merged PDF (2026-11 multi-photo upload) ───────────
+// Rather than inventing a separate "multi-image OCR" code path, N selected photos (one per page of the
+// same physical document) are combined into ONE PDF — one page per photo, in selection order — which then
+// runs through processPdf() below completely unchanged: same rasterization, same reused-Tesseract-worker
+// per-page loop, same confidence averaging, same image-quality check on page 1, same single tempFilePath
+// handed to archiveToDocumentLibrary() on confirm. This guarantees exactly one physical file and one
+// Document Library record for the whole set, never N unrelated ones.
+//
+// RASTER_SCALE mirrors services/pdfRasterWorker.js's viewportScale (3, ~216 DPI) — a merged page's PDF
+// point-size is the photo's own pixel size divided by this same factor, so rasterizing it back for OCR
+// reproduces roughly the photo's original resolution instead of needlessly blowing it up or softening it.
+// If pdfRasterWorker.js's viewportScale ever changes, this constant should change with it.
+const RASTER_SCALE = 3;
+function pxToPagePoints(px) {
+  return Math.max(1, Math.round((px || 1000) / RASTER_SCALE));
+}
+
+async function mergeImagesToPdf(imagePaths, outPath) {
+  const doc = new PDFDocument({ autoFirstPage: false });
+  const stream = fs.createWriteStream(outPath);
+  const finished = new Promise((resolve, reject) => {
+    stream.on('finish', resolve);
+    stream.on('error', reject);
+    doc.on('error', reject);
+  });
+  doc.pipe(stream);
+  for (const imgPath of imagePaths) {
+    // EXIF-auto-orient via sharp first — pdfkit does not read EXIF orientation itself, and
+    // preprocessImage() below already relies on the same rotate() convention for consistency.
+    const rotatedBuffer = await sharp(imgPath).rotate().toBuffer();
+    const meta = await sharp(rotatedBuffer).metadata();
+    const w = pxToPagePoints(meta.width);
+    const h = pxToPagePoints(meta.height);
+    doc.addPage({ size: [w, h], margin: 0 });
+    doc.image(rotatedBuffer, 0, 0, { width: w, height: h });
+  }
+  doc.end();
+  await finished;
+  return outPath;
 }
 
 // ── PDF handling: embedded-text fast path, OCR fallback for scanned pages ────
@@ -366,9 +408,30 @@ async function discardJob(jobId) {
   jobs.delete(jobId);
 }
 
-function startJob(filePath, mimetype, meta) {
+function startJob(filePathOrPaths, mimetype, meta) {
   const jobId = createJob(meta && meta.uploadedByEmail);
-  runJob(jobId, filePath, mimetype, meta); // fire-and-forget; progress/result polled via getJob()
+  if (Array.isArray(filePathOrPaths)) {
+    // Multi-photo job (2026-11): merge into one PDF first, then hand off to the exact same runJob() path
+    // a single-PDF upload already uses — see mergeImagesToPdf()'s comment above for why.
+    (async () => {
+      const mergedPath = path.join(UPLOAD_DIR, `merged-${jobId}.pdf`);
+      updateJob(jobId, { progress: 5, stage: 'combining-photos' });
+      try {
+        await mergeImagesToPdf(filePathOrPaths, mergedPath);
+      } catch (err) {
+        console.error('❌ OCR photo-merge failed:', jobId, err);
+        await Promise.all(filePathOrPaths.map((p) => fsp.unlink(p).catch(() => {})));
+        await fsp.unlink(mergedPath).catch(() => {});
+        updateJob(jobId, { status: 'error', progress: 100, stage: 'error', error: 'Could not combine the selected photos. Please try again.', tempFilePath: null });
+        return;
+      }
+      // Originals are now embedded in the merged PDF — no longer needed.
+      await Promise.all(filePathOrPaths.map((p) => fsp.unlink(p).catch(() => {})));
+      runJob(jobId, mergedPath, 'application/pdf', meta); // fire-and-forget; progress/result polled via getJob()
+    })();
+  } else {
+    runJob(jobId, filePathOrPaths, mimetype, meta); // fire-and-forget; progress/result polled via getJob()
+  }
   return jobId;
 }
 

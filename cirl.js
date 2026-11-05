@@ -2444,11 +2444,25 @@ app.post('/api/document-requests/:id/documents', requireAuth, announce('document
       return res.status(400).json({ error: err.clientSafe ? err.message : 'Upload failed. Please try again.' });
     }
     const note = (req.body.note || '').trim().slice(0, 1000);
-    // File is now OPTIONAL (2026-09-19) — same rule as the Partnership
-    // Request draft upload above: reject only when neither a file nor a
-    // note is present.
-    if (!req.file && !note) {
-      return res.status(400).json({ error: 'Provide a file, a note, or both to add a new version.' });
+    // Select Existing Documents (2026-11) — link one or more records already in the acting reviewer's own
+    // Document Library instead of (or alongside) uploading a new file. Accepts a JSON array, a real array
+    // (repeated form field), or a single value.
+    let linkedDocIds = [];
+    if (Array.isArray(req.body.documentIds)) linkedDocIds = req.body.documentIds;
+    else if (typeof req.body.documentIds === 'string' && req.body.documentIds.trim()) {
+      try {
+        const parsed = JSON.parse(req.body.documentIds);
+        linkedDocIds = Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        linkedDocIds = [req.body.documentIds];
+      }
+    }
+    linkedDocIds = [...new Set(linkedDocIds.map((x) => parseInt(x)).filter(Boolean))];
+
+    // File is OPTIONAL (2026-09-19), and linking existing documents (2026-11) is a third alternative to
+    // uploading — reject only when none of the three (file, note, link selection) is present.
+    if (!req.file && !note && !linkedDocIds.length) {
+      return res.status(400).json({ error: 'Provide a file, a note, or select at least one existing document.' });
     }
     if (req.file && !verifyMagicBytes(req.file)) {
       fs.unlink(req.file.path, () => { });
@@ -2478,6 +2492,31 @@ app.post('/api/document-requests/:id/documents', requireAuth, announce('document
         return res.status(400).json({ error: `This document request has already been ${target.status.toLowerCase()} — no further documents can be added.` });
       }
 
+      // A reviewer (Administrator/Staff) may link ANY document already in the system — they already have
+      // unrestricted read access to any document once it's attached to a request they review (the same
+      // REQUEST_REVIEWER_ROLES exemption GET /uploads/documents/:filename grants), so this matches an
+      // authorization level they already hold rather than granting a new one; it also directly satisfies
+      // "display documents already stored in the system" rather than only the acting reviewer's own
+      // uploads. A potential_partner submitter linking their OWN existing upload stays restricted to their
+      // own Document Library (SELF_UPLOAD_ONLY_ROLES' own download restriction — broadening this for them
+      // would be a real new exposure, not an alignment). Either way, any id that doesn't resolve within the
+      // applicable scope fails the WHOLE request, rather than silently skipping it, so the actor is never
+      // left thinking something linked when it didn't, and a request body can't be used to probe for ids
+      // outside that scope by manipulating documentIds.
+      let linkedDocs = [];
+      if (linkedDocIds.length) {
+        const linkFilter = isReviewer
+          ? { id: { $in: linkedDocIds } }
+          : { id: { $in: linkedDocIds }, uploadedByEmail: actor.email };
+        linkedDocs = await db.collection('documents').find(linkFilter).toArray();
+        if (linkedDocs.length !== linkedDocIds.length) {
+          if (req.file) fs.unlink(req.file.path, () => { });
+          return res.status(400).json({ error: 'One or more selected documents were not found or are not available to you.' });
+        }
+        // Preserve selection order rather than whatever order MongoDB returns.
+        linkedDocs = linkedDocIds.map((docId) => linkedDocs.find((d) => d.id === docId));
+      }
+
       // Same reviewer-attribution fix as POST /api/requests/:id/documents
       // above — a reviewer's own Document Library upload must be owned by
       // the reviewer (actor), not the requester, or it never appears in the
@@ -2499,32 +2538,63 @@ app.post('/api/document-requests/:id/documents', requireAuth, announce('document
         }));
       }
 
-      const docRecord = {
-        documentId, fileLink,
-        originalFilename: req.file ? req.file.originalname : null,
-        uploadedAt: new Date().toISOString(), uploadedBy: actor.name,
-        uploadedByEmail: actor.email, uploaderRole: actor.role,
-        note, fileType: req.file ? req.file.mimetype : null, fileSize: req.file ? req.file.size : 0
-      };
-      const setFields = { updatedAt: new Date().toISOString() };
-      // A reviewer's first draft upload signals work has actually begun —
+      const now = new Date().toISOString();
+      const newRecords = [];
+      if (req.file) {
+        newRecords.push({
+          documentId, fileLink,
+          originalFilename: req.file.originalname,
+          uploadedAt: now, uploadedBy: actor.name,
+          uploadedByEmail: actor.email, uploaderRole: actor.role,
+          note, fileType: req.file.mimetype, fileSize: req.file.size, linked: false
+        });
+      }
+      // Linking an existing document never creates a new file or a new `documents` record — it only adds
+      // a reference (documentId + the original's own fileLink) to this request's timeline. Preserves the
+      // original's own metadata/storage location/ownership entirely untouched.
+      linkedDocs.forEach((doc) => {
+        newRecords.push({
+          documentId: doc.id, fileLink: doc.fileLink,
+          originalFilename: doc.originalFilename || doc.title || null,
+          uploadedAt: now, uploadedBy: actor.name,
+          uploadedByEmail: actor.email, uploaderRole: actor.role,
+          note, fileType: EXT_MIME_TYPES[path.extname(doc.fileLink || '').toLowerCase()] || null, fileSize: null, linked: true
+        });
+      });
+      // A note-only contribution (no file, no link) is still one timeline entry.
+      if (!newRecords.length) {
+        newRecords.push({
+          documentId: null, fileLink: null, originalFilename: null,
+          uploadedAt: now, uploadedBy: actor.name,
+          uploadedByEmail: actor.email, uploaderRole: actor.role,
+          note, fileType: null, fileSize: 0, linked: false
+        });
+      }
+
+      const setFields = { updatedAt: now };
+      // A reviewer's first draft contribution signals work has actually begun —
       // auto-advance Received → Preparing (recorded in statusHistory like
       // every other transition) rather than requiring a separate manual
-      // status click for what just happened anyway. Notes-only counts too —
-      // it's still real review progress, not just a file drop.
-      const pushOps = { supportingDocuments: docRecord };
+      // status click for what just happened anyway. Notes-only (or a link-only
+      // contribution) counts too — it's still real review progress.
+      const pushOps = { supportingDocuments: { $each: newRecords } };
       if (canonicalDrStatus(target.status) === 'Received') {
         setFields.status = 'Preparing';
-        pushOps.statusHistory = { from: target.status, to: 'Preparing', at: setFields.updatedAt, by: actor.name, byEmail: actor.email, remark: 'Auto-advanced on first draft upload' };
+        pushOps.statusHistory = { from: target.status, to: 'Preparing', at: now, by: actor.name, byEmail: actor.email, remark: 'Auto-advanced on first draft upload' };
       }
       await db.collection('documentrequests').updateOne({ id }, { $push: pushOps, $set: setFields });
       const updated = await db.collection('documentrequests').findOne({ id });
 
-      const fileLabel = req.file ? req.file.originalname : 'notes only';
-      await logActivity(db, actor, 'EDIT',
-        `Draft document uploaded for document request: ${target.institution} (${fileLabel})${note ? ' — "' + note + '"' : ''}`);
+      const parts = [];
+      if (req.file) parts.push(`uploaded "${req.file.originalname}"`);
+      if (linkedDocs.length) parts.push(`linked ${linkedDocs.length} existing document${linkedDocs.length === 1 ? '' : 's'} (${linkedDocs.map((d) => d.title).join(', ')})`);
+      if (!parts.length) parts.push('added notes');
+      const actionSummary = parts.join(' and ');
 
-      // Reviewer uploaded → notify the requester. Requester uploaded a
+      await logActivity(db, actor, 'EDIT',
+        `Draft update for document request: ${target.institution} — ${actionSummary}${note ? ' — "' + note + '"' : ''}`);
+
+      // Reviewer contributed → notify the requester. Requester uploaded a
       // revision → notify every reviewer, same broadcast set used for a
       // brand-new submission.
       if (isReviewer && target.requestedByEmail) {
@@ -2535,11 +2605,9 @@ app.post('/api/document-requests/:id/documents', requireAuth, announce('document
           icon: 'ri-file-upload-line',
           color: 'info',
           title: `New draft uploaded: ${target.institution}`,
-          desc: req.file
-            ? `${actor.name} uploaded "${req.file.originalname}" for your document request (${target.institution}).${note ? ' Note: ' + note : ''}`
-            : `${actor.name} added new notes for your document request (${target.institution}).${note ? ' Note: ' + note : ''}`,
+          desc: `${actor.name} ${actionSummary} for your document request (${target.institution}).${note ? ' Note: ' + note : ''}`,
           link: drLinkForRole(requester && requester.role, id),
-          downloadLink: fileLink
+          downloadLink: fileLink || (linkedDocs[0] && linkedDocs[0].fileLink) || null
         });
       } else if (isOwner) {
         const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
@@ -2549,13 +2617,11 @@ app.post('/api/document-requests/:id/documents', requireAuth, announce('document
           icon: 'ri-file-upload-line',
           color: 'info',
           title: `Revised draft uploaded: ${target.institution}`,
-          desc: req.file
-            ? `${actor.name} uploaded a revised draft "${req.file.originalname}" for their document request (${target.institution}).${note ? ' Note: ' + note : ''}`
-            : `${actor.name} added new notes to their document request (${target.institution}).${note ? ' Note: ' + note : ''}`
+          desc: `${actor.name} ${actionSummary} for their document request (${target.institution}).${note ? ' Note: ' + note : ''}`
         }, role => drLinkForRole(role, id));
       }
 
-      res.json({ success: true, documentId, fileLink, request: updated });
+      res.json({ success: true, documentId, fileLink, linkedCount: linkedDocs.length, request: updated });
     } catch (e) {
       console.error('❌ Document request draft upload error:', e);
       res.status(500).json({ error: 'Unable to save the uploaded document right now. Please try again.' });
@@ -3114,7 +3180,16 @@ app.get('/api/notifications/all', requireAdmin, async (req, res) => {
 app.get('/api/documents', requireUploader, async (req, res) => {
   try {
     const db = getDb();
-    const filter = OWN_SCOPE_ROLES.includes(req.session.user.role)
+    // scope=all (2026-11, "Select Existing Documents" for Document Request fulfillment): Administrator/
+    // Staff already have unrestricted READ access to any document once it's linked to a request they
+    // review (see GET /uploads/documents/:filename, which deliberately exempts REQUEST_REVIEWER_ROLES from
+    // the own-uploads-only check) — this param lets their own picker show that same full set up front,
+    // rather than forcing them to re-upload something a different reviewer already archived. Every other
+    // caller — no scope param, or a non-reviewer role even if it tries to pass one — keeps the exact
+    // original own-uploads-only behavior; Auth. Personnel/potential_partner's own file-access stays
+    // restricted to their own uploads (SELF_UPLOAD_ONLY_ROLES), so they never get this broader scope.
+    const wantsAll = req.query.scope === 'all' && REQUEST_REVIEWER_ROLES.includes(req.session.user.role);
+    const filter = (!wantsAll && OWN_SCOPE_ROLES.includes(req.session.user.role))
       ? { uploadedByEmail: req.session.user.email }
       : {};
     const docs = await db.collection('documents').find(filter).toArray();
@@ -9205,7 +9280,17 @@ async function isOwnerOfLinkedRequest(db, doc, email) {
   if (!doc || doc.requestId == null || !doc.requestType) return false;
   if (doc.requestType === 'document') {
     const target = await db.collection('documentrequests').findOne({ id: doc.requestId });
-    return !!(target && target.requestedByEmail === email);
+    if (target && target.requestedByEmail === email) return true;
+    // Select Existing Documents (2026-11): this document may ALSO have been linked (not originally
+    // archived under) a different Document Request than the one requestId/requestType above still point
+    // to — a linked reference never changes the document's own original tag. Without this, the requester
+    // of that other request would get 403 opening their own fulfilled request's attachment just because
+    // the document happened to be archived under someone else's request first.
+    const linkedTarget = await db.collection('documentrequests').findOne({
+      'supportingDocuments.documentId': doc.id,
+      requestedByEmail: email
+    });
+    return !!linkedTarget;
   }
   // College Dean Requests (2026-11) — "owner" here is any one of the assigned Deans, not a self-submitted
   // request, but the same principle applies: every Dean a request is assigned to must be able to open

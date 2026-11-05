@@ -1,28 +1,38 @@
 const fs = require('fs');
 const ocrService = require('../services/ocrService');
 
-// POST /api/ocr/extract — accepts one document, starts OCR in the background,
-// and immediately returns a jobId. The heavy work (rasterizing PDF pages,
-// running Tesseract) happens after the response so the client can poll for
-// real progress instead of blocking on one long request.
-// NOTE: This endpoint does NOT save anything to the Document Library. The file
-// is held in the temp uploads directory until the user either confirms (via
-// POST /api/ocr/confirm) or discards (via POST /api/ocr/discard).
+// POST /api/ocr/extract — accepts either one document (field 'document', the original single-file path —
+// still used as-is by every existing caller) or multiple photos of one document (field 'documents',
+// 2026-11), starts OCR in the background, and immediately returns a jobId. The heavy work (merging
+// multiple photos into one PDF, rasterizing pages, running Tesseract) happens after the response so the
+// client can poll for real progress instead of blocking on one long request.
+// NOTE: This endpoint does NOT save anything to the Document Library. The file(s) are held in the temp
+// uploads directory until the user either confirms (via POST /api/ocr/confirm) or discards (via
+// POST /api/ocr/discard).
 function extract(req, res) {
-  if (!req.file) {
+  const singleFile = req.file || (req.files && req.files.document && req.files.document[0]) || null;
+  const multiFiles = (req.files && req.files.documents && req.files.documents.length) ? req.files.documents : null;
+
+  if (!singleFile && !multiFiles) {
     return res.status(400).json({ success: false, error: 'No file was uploaded.' });
   }
 
+  const allPaths = multiFiles ? multiFiles.map((f) => f.path) : [singleFile.path];
   try {
     const meta = {
-      originalName: req.file.originalname,
+      // A merged multi-photo job archives as one PDF regardless of what the individual photos were named —
+      // this is purely a display/filename fallback (see docOcrSucceed in documents.ejs), never used to
+      // infer the file's real type (archiveToDocumentLibrary infers that from the actual temp file).
+      originalName: multiFiles
+        ? (multiFiles.length === 1 ? multiFiles[0].originalname : `Combined Scan (${multiFiles.length} photos).pdf`)
+        : singleFile.originalname,
       uploadedBy: (req.session && req.session.user && req.session.user.name) || 'Unknown',
       uploadedByEmail: (req.session && req.session.user && req.session.user.email) || null
     };
-    const jobId = ocrService.startJob(req.file.path, req.file.mimetype, meta);
+    const jobId = ocrService.startJob(multiFiles ? allPaths : singleFile.path, multiFiles ? null : singleFile.mimetype, meta);
     res.status(202).json({ success: true, jobId });
   } catch (err) {
-    fs.unlink(req.file.path, () => {});
+    allPaths.forEach((p) => fs.unlink(p, () => {}));
     res.status(500).json({ success: false, error: 'Failed to start OCR processing.' });
   }
 }
