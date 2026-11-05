@@ -216,102 +216,10 @@
 </div>
 
 <div class="row">
-  <!-- ── Left Sidebar: Overview / Urgent / DSS ── -->
-  <div class="col-xl-3">
-
-    <!-- SECTION 2: Overview -->
-    <div class="card">
-      <div class="card-header align-items-center d-flex">
-        <h4 class="card-title mb-0 flex-grow-1">Overview</h4>
-      </div>
-      <div class="card-body">
-        <div class="d-flex justify-content-between mb-2">
-          <span class="text-muted fs-13">Total Agreements</span>
-          <span class="fw-bold text-dark" id="ov-total">—</span>
-        </div>
-        <div class="d-flex justify-content-between mb-2">
-          <span class="text-muted fs-13">Active</span>
-          <span class="fw-bold text-success" id="ov-active">—</span>
-        </div>
-        <div class="d-flex justify-content-between mb-2">
-          <span class="text-muted fs-13">Expiring &le; 30d</span>
-          <span class="fw-bold text-danger" id="ov-expiring30">—</span>
-        </div>
-        <div class="d-flex justify-content-between mb-2">
-          <span class="text-muted fs-13">Expiring &le; 90d</span>
-          <span class="fw-bold text-warning" id="ov-expiring90">—</span>
-        </div>
-        <div class="d-flex justify-content-between mb-3">
-          <span class="text-muted fs-13">Expired</span>
-          <span class="fw-bold text-danger" id="ov-expired">—</span>
-        </div>
-        <div class="mb-2">
-          <div class="d-flex justify-content-between fs-12 mb-1">
-            <span class="text-muted">Active rate</span><span class="fw-bold text-success" id="ov-active-rate">—</span>
-          </div>
-          <div class="progress" style="height:6px"><div class="progress-bar bg-success" id="ov-active-bar" style="width:0%"></div></div>
-        </div>
-        <div class="mb-2">
-          <div class="d-flex justify-content-between fs-12 mb-1">
-            <span class="text-muted">MOA</span><span class="fw-bold text-primary" id="ov-moa">—</span>
-          </div>
-          <div class="progress" style="height:6px"><div class="progress-bar bg-primary" id="ov-moa-bar" style="width:0%"></div></div>
-        </div>
-        <div class="mb-3">
-          <div class="d-flex justify-content-between fs-12 mb-1">
-            <span class="text-muted">MOU</span><span class="fw-bold text-info" id="ov-mou">—</span>
-          </div>
-          <div class="progress" style="height:6px"><div class="progress-bar bg-info" id="ov-mou-bar" style="width:0%"></div></div>
-        </div>
-        <div class="d-flex justify-content-between pt-2 border-top fs-13">
-          <span class="text-muted">International <strong class="text-primary" id="ov-intl">—</strong></span>
-          <span class="text-muted">Local <strong class="text-warning" id="ov-local">—</strong></span>
-        </div>
-      </div>
-    </div>
-
-    <!-- SECTION 4: Urgent (single list — sourced from the same partnership data as the table below) -->
-    <div class="card">
-      <div class="card-header align-items-center d-flex">
-        <h4 class="card-title mb-0 flex-grow-1"><i class="ri-error-warning-line text-warning me-1"></i>Urgent</h4>
-      </div>
-      <div class="card-body p-0">
-        <ul class="list-group list-group-flush" id="urgent-list">
-          <li class="list-group-item px-3 py-3 text-muted fs-12">Loading…</li>
-        </ul>
-      </div>
-    </div>
-
-    <!-- SECTION 3: DSS Smart Alerts — Administrator only, unchanged from the
-         prior Monitoring page (removed for Auth. Personnel 2026-07-23,
-         alongside their loss of Reports access, which is what this card's
-         only action button links to). -->
-    <% if (typeof user !== 'undefined' && user && user.role === 'Administrator') { %>
-    <div class="card bg-primary-subtle border border-primary text-primary">
-      <div class="card-header bg-transparent border-bottom border-primary align-items-center d-flex">
-        <h4 class="card-title mb-0 flex-grow-1 text-primary"><i class="ri-robot-2-line me-1"></i> DSS Smart Alerts</h4>
-      </div>
-      <div class="card-body fs-13">
-        <p class="mb-2"><strong>Decision Support System is active.</strong></p>
-        <div class="d-flex gap-2 mb-3 align-items-start" id="dss-action-row">
-          <i class="ri-lightbulb-flash-line fs-16 mt-1"></i>
-          <div id="dss-action-text">Loading…</div>
-        </div>
-        <div class="d-flex gap-2 align-items-start" id="dss-review-row">
-          <i class="ri-alert-line fs-16 mt-1"></i>
-          <div id="dss-review-text">Loading…</div>
-        </div>
-        <div class="mt-3 text-end">
-          <a href="/reports" class="btn btn-sm btn-primary">View Full DSS Report <i class="ri-arrow-right-line ms-1"></i></a>
-        </div>
-      </div>
-    </div>
-    <% } %>
-
-  </div><!-- end col-xl-3 -->
-
-  <!-- ── Right col: SECTION 5 — Partnership Registry (filters + one table) ── -->
-  <div class="col-xl-9">
+  <!-- Filter Partnerships + Partnership Registry now use the full width (2026-11: the Overview/Urgent/DSS
+       sidebar that used to sit beside these in a col-xl-3 was relocated below, into the collapsed-by-default
+       "Monitoring Insights" card, so it no longer takes any of this initial horizontal/vertical space). -->
+  <div class="col-12">
 
     <!-- Filters -->
     <div class="card">
@@ -414,7 +322,106 @@
         </div>
       </div>
     </div>
-  </div><!-- end col-xl-9 -->
+
+    <!-- Monitoring Insights (2026-11) — Overview / Urgent / DSS Smart Alerts, relocated here from the
+         col-xl-3 sidebar that used to sit beside Filter Partnerships/Partnership Registry above. Collapsed
+         by default so it takes no vertical space until opened; same ids as before, so the one JS population
+         path (buildGrid()/renderDssAlerts() in registry-gridjs.init.js) needs no changes at all. -->
+    <div class="card">
+      <div class="card-header align-items-center d-flex">
+        <h4 class="card-title mb-0 flex-grow-1"><i class="ri-dashboard-3-line me-1"></i>Monitoring Insights</h4>
+        <button type="button" class="btn btn-sm btn-light" data-bs-toggle="collapse" data-bs-target="#monitoring-insights-body" aria-expanded="false" aria-controls="monitoring-insights-body">
+          <i class="ri-arrow-down-s-line me-1"></i>Show / Hide
+        </button>
+      </div>
+      <div class="collapse" id="monitoring-insights-body">
+        <div class="card-body">
+          <div class="row g-3">
+
+            <!-- Overview -->
+            <div class="col-lg-4">
+              <h6 class="fw-semibold mb-2">Overview</h6>
+              <div class="d-flex justify-content-between mb-2">
+                <span class="text-muted fs-13">Total Agreements</span>
+                <span class="fw-bold text-dark" id="ov-total">—</span>
+              </div>
+              <div class="d-flex justify-content-between mb-2">
+                <span class="text-muted fs-13">Active</span>
+                <span class="fw-bold text-success" id="ov-active">—</span>
+              </div>
+              <div class="d-flex justify-content-between mb-2">
+                <span class="text-muted fs-13">Expiring &le; 30d</span>
+                <span class="fw-bold text-danger" id="ov-expiring30">—</span>
+              </div>
+              <div class="d-flex justify-content-between mb-2">
+                <span class="text-muted fs-13">Expiring &le; 90d</span>
+                <span class="fw-bold text-warning" id="ov-expiring90">—</span>
+              </div>
+              <div class="d-flex justify-content-between mb-3">
+                <span class="text-muted fs-13">Expired</span>
+                <span class="fw-bold text-danger" id="ov-expired">—</span>
+              </div>
+              <div class="mb-2">
+                <div class="d-flex justify-content-between fs-12 mb-1">
+                  <span class="text-muted">Active rate</span><span class="fw-bold text-success" id="ov-active-rate">—</span>
+                </div>
+                <div class="progress" style="height:6px"><div class="progress-bar bg-success" id="ov-active-bar" style="width:0%"></div></div>
+              </div>
+              <div class="mb-2">
+                <div class="d-flex justify-content-between fs-12 mb-1">
+                  <span class="text-muted">MOA</span><span class="fw-bold text-primary" id="ov-moa">—</span>
+                </div>
+                <div class="progress" style="height:6px"><div class="progress-bar bg-primary" id="ov-moa-bar" style="width:0%"></div></div>
+              </div>
+              <div class="mb-3">
+                <div class="d-flex justify-content-between fs-12 mb-1">
+                  <span class="text-muted">MOU</span><span class="fw-bold text-info" id="ov-mou">—</span>
+                </div>
+                <div class="progress" style="height:6px"><div class="progress-bar bg-info" id="ov-mou-bar" style="width:0%"></div></div>
+              </div>
+              <div class="d-flex justify-content-between pt-2 border-top fs-13">
+                <span class="text-muted">International <strong class="text-primary" id="ov-intl">—</strong></span>
+                <span class="text-muted">Local <strong class="text-warning" id="ov-local">—</strong></span>
+              </div>
+            </div>
+
+            <!-- Urgent (single list — sourced from the same partnership data as the table above) -->
+            <div class="col-lg-4">
+              <h6 class="fw-semibold mb-2"><i class="ri-error-warning-line text-warning me-1"></i>Urgent</h6>
+              <ul class="list-group list-group-flush" id="urgent-list">
+                <li class="list-group-item px-3 py-3 text-muted fs-12">Loading…</li>
+              </ul>
+            </div>
+
+            <!-- DSS Smart Alerts — Administrator only, unchanged from the prior Monitoring page (removed
+                 for Auth. Personnel 2026-07-23, alongside their loss of Reports access, which is what
+                 this card's only action button links to). -->
+            <% if (typeof user !== 'undefined' && user && user.role === 'Administrator') { %>
+            <div class="col-lg-4">
+              <div class="bg-primary-subtle border border-primary text-primary rounded p-3 h-100">
+                <h6 class="fw-semibold mb-2 text-primary"><i class="ri-robot-2-line me-1"></i> DSS Smart Alerts</h6>
+                <p class="mb-2 fs-13"><strong>Decision Support System is active.</strong></p>
+                <div class="d-flex gap-2 mb-3 align-items-start fs-13" id="dss-action-row">
+                  <i class="ri-lightbulb-flash-line fs-16 mt-1"></i>
+                  <div id="dss-action-text">Loading…</div>
+                </div>
+                <div class="d-flex gap-2 align-items-start fs-13" id="dss-review-row">
+                  <i class="ri-alert-line fs-16 mt-1"></i>
+                  <div id="dss-review-text">Loading…</div>
+                </div>
+                <div class="mt-3 text-end">
+                  <a href="/reports" class="btn btn-sm btn-primary">View Full DSS Report <i class="ri-arrow-right-line ms-1"></i></a>
+                </div>
+              </div>
+            </div>
+            <% } %>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end col-12 -->
 </div><!-- end row -->
 
 
