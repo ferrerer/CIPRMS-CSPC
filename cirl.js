@@ -8419,15 +8419,53 @@ app.patch('/api/calendarevents/:id', requireStaffAccess, announce('calendar'), a
     const invalid = validateCalendarEventFields(fields, { ...existing, ...fields });
     if (invalid) return res.status(400).json({ error: invalid });
     const set = { ...fields };
+    const unset = {};
 
-    // Attendees can be ADDED to an existing meeting (never silently replaced):
-    // the new people are notified, added to the Google event, and Google
-    // e-mails them the invitation.
     let addedGoogleAttendees = false;
+    let removedGoogleAttendees = false;
     let newlyInvited = [];
     let patchParticipants = null;
     const rawRecipients = Array.isArray(req.body.recipients) ? req.body.recipients : [];
-    if (rawRecipients.length) {
+    // Two shapes, both opt-in on what the request actually sends:
+    // - recipientsReplace: true (2026-11 two-step Edit wizard, see calendar.ejs's showEdit()/showStep(2)) —
+    //   `recipients` is the COMPLETE desired audience. Computed exactly like a brand-new event's audience
+    //   (POST /api/calendarevents above), then $set (never unioned) onto participantEmails/recipientEmails/
+    //   googleAttendeeEmails, so someone removed from the picker actually stops being an attendee — the
+    //   plain-additive branch below can only ever grow the list, never shrink it.
+    // - otherwise (drag/resize via saveMove(), and any other existing caller): attendees can only be ADDED,
+    //   exactly as before this feature — untouched, so nothing already relying on "recipients omitted/empty
+    //   leaves the attendee list alone" can regress.
+    if (req.body.recipientsReplace === true) {
+      const p = await resolveCalendarParticipants(db, rawRecipients);
+      patchParticipants = p;
+      const already = eventParticipantKeys(existing);
+      newlyInvited = p.users.filter(u => !already.has(meetingTime.emailKey(u.email)));
+
+      const beforeGoogle = new Set((existing.googleAttendeeEmails || []).map(meetingTime.emailKey));
+      const afterGoogleSet = new Set(p.googleEmails);
+      addedGoogleAttendees = p.googleEmails.some(e => !beforeGoogle.has(e));
+      removedGoogleAttendees = [...beforeGoogle].some(e => !afterGoogleSet.has(e));
+
+      set.participantEmails = p.emails; // replace outright — [] is valid (every recipient removed)
+      set.googleAttendeeEmails = p.googleEmails; // replace outright — [] clears every Google attendee
+      if (rawRecipients.includes('all')) {
+        set.forEveryone = true;
+        unset.recipientEmails = '';
+      } else if (rawRecipients.length) {
+        set.recipientEmails = p.emails;
+        unset.forEveryone = '';
+      } else {
+        // Nobody selected at all — matches POST's own "isScoped" false case: no recipientEmails, no
+        // forEveryone. The event becomes effectively unscoped/internal, same as creating one with no recipients.
+        unset.recipientEmails = '';
+        unset.forEveryone = '';
+      }
+      if (p.googleEmails.length && !existing.googleEventId && !existing.googleEventKey) set.googleEventKey = newGoogleEventKey();
+      if (p.invalid.length) set.inviteSkipped = p.invalid; else unset.inviteSkipped = '';
+    } else if (rawRecipients.length) {
+      // Attendees can be ADDED to an existing meeting (never silently replaced):
+      // the new people are notified, added to the Google event, and Google
+      // e-mails them the invitation.
       const p = await resolveCalendarParticipants(db, rawRecipients);
       patchParticipants = p;
       if (p.emails.length || p.invalid.length) {
@@ -8443,9 +8481,12 @@ app.patch('/api/calendarevents/:id', requireStaffAccess, announce('calendar'), a
         if (p.invalid.length) set.inviteSkipped = mergeSkipped(existing.inviteSkipped, p.invalid);
       }
     }
-    if (!Object.keys(set).length) return res.status(400).json({ error: 'No valid fields to update.' });
+    if (!Object.keys(set).length && !Object.keys(unset).length) return res.status(400).json({ error: 'No valid fields to update.' });
 
-    await db.collection('calendarevents').updateOne({ id }, { $set: set });
+    const updateOps = {};
+    if (Object.keys(set).length) updateOps.$set = set;
+    if (Object.keys(unset).length) updateOps.$unset = unset;
+    await db.collection('calendarevents').updateOne({ id }, updateOps);
     const updated = await db.collection('calendarevents').findOne({ id });
     if (!updated) return res.status(404).json({ error: 'Event not found.' });
     // Notify newly-added CIPRMS users and newly-mentioned external emails
@@ -8455,11 +8496,15 @@ app.patch('/api/calendarevents/:id', requireStaffAccess, announce('calendar'), a
       : [];
     if (newlyInvited.length || newMentioned.length) await notifyCalendarParticipants(db, updated, newlyInvited, req.session.user.name, newMentioned);
 
-    // Notify existing participants if schedule details (title, start, end, location) changed
+    // Notify existing participants if schedule details (title, start, end, location) changed. Reads the
+    // post-update attendee list (not the pre-update `existing` one) minus this call's own newlyInvited, so
+    // someone a replace-edit just removed is correctly excluded — they are no longer an attendee of this
+    // event and must not be told its schedule changed. For the plain-additive branch this is exactly
+    // equivalent to the old existing-list computation, since that branch only ever grows the attendee list.
     const scheduleChanged = ['title', 'start', 'end', 'location'].some(k => k in fields);
     if (scheduleChanged) {
       const newlyInvitedSet = new Set((newlyInvited || []).map(u => meetingTime.emailKey(u.email)));
-      const existingAttendees = eventParticipantList(existing).filter(e => !newlyInvitedSet.has(meetingTime.emailKey(e)));
+      const existingAttendees = eventParticipantList(updated).filter(e => !newlyInvitedSet.has(meetingTime.emailKey(e)));
       if (existingAttendees.length) {
         const actorName = req.session && req.session.user ? req.session.user.name : 'CIRL Staff';
         await notifyUsers(db, existingAttendees, {
@@ -8480,9 +8525,14 @@ app.patch('/api/calendarevents/:id', requireStaffAccess, announce('calendar'), a
     // attendee list), never recipientEmails — the latter is absent entirely
     // for "all users" events and would otherwise silently wipe every attendee
     // off the Google event. Best-effort, same as create (see POST above).
-    const googleRelevant = ['title', 'start', 'end', 'allDay', 'location', 'description'].some(k => k in fields) || addedGoogleAttendees;
+    // removedGoogleAttendees also triggers a sync (new, 2026-11): without it, removing every attendee of a
+    // meeting whose schedule/title/location didn't otherwise change would never reach Google at all. The
+    // `attendees.length || updated.googleEventId` guard still lets an already-synced event's attendee list be
+    // patched down to empty (updateGoogleEvent has no empty-attendees restriction — only the create-fallback
+    // path for a never-yet-synced event genuinely needs at least one attendee to insert anything).
+    const googleRelevant = ['title', 'start', 'end', 'allDay', 'location', 'description'].some(k => k in fields) || addedGoogleAttendees || removedGoogleAttendees;
     const attendees = updated.googleAttendeeEmails || [];
-    if (googleRelevant && attendees.length && (updated.googleEventId || updated.googleEventKey)) {
+    if (googleRelevant && (attendees.length || updated.googleEventId) && (updated.googleEventId || updated.googleEventKey)) {
       const sync = await googleCalendarService.syncGoogleEvent(db, updated, attendees);
       await recordGoogleSyncOnEvent(db, updated, sync);
     }

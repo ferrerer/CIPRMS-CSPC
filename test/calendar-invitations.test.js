@@ -662,3 +662,94 @@ describe('Calendar pages render for every role that can reach them', () => {
     expect(adminPage.text).toContain('create: false'); // palette drop must not auto-add a phantom event
   });
 });
+
+describe('Edit wizard — recipientsReplace (2026-11 follow-up: add/remove recipients on edit)', () => {
+  test('recipients can be both added and removed in one PATCH; Google is patched (never re-inserted) to the exact new attendee list', async () => {
+    const created = await createEvent(agents.admin, {
+      title: title('Replace Add+Remove'), start: '2026-11-14T09:00', end: '2026-11-14T10:00',
+      recipients: [users.collegeA.email, users.partnerA.email]
+    });
+    expect(created.status).toBe(200);
+    const id = created.body.event.id;
+    expect(callsOf('insert')).toHaveLength(1);
+    resetGoogle();
+
+    // Keep collegeA, drop partnerA, add partnerB.
+    const patch = await agents.admin.patch('/api/calendarevents/' + id).send({
+      recipientsReplace: true, recipients: [users.collegeA.email, users.partnerB.email]
+    });
+    expect(patch.status).toBe(200);
+    expect(patch.body.event.participantEmails.sort()).toEqual([users.collegeA.email, users.partnerB.email].sort());
+
+    // Never a second insert — the SAME Google event is patched, not duplicated.
+    expect(callsOf('insert')).toHaveLength(0);
+    expect(callsOf('patch')).toHaveLength(1);
+    const attendees = callsOf('patch')[0].args.requestBody.attendees.map(a => a.email);
+    expect(attendees.sort()).toEqual([users.collegeA.email, users.partnerB.email].sort());
+    expect(attendees).not.toContain(users.partnerA.email); // removed — must not remain a Google attendee
+
+    const doc = await db.collection('calendarevents').findOne({ id });
+    expect(doc.participantEmails.sort()).toEqual([users.collegeA.email, users.partnerB.email].sort());
+    expect(doc.googleAttendeeEmails.sort()).toEqual([users.collegeA.email, users.partnerB.email].sort());
+    expect(doc.recipientEmails.sort()).toEqual([users.collegeA.email, users.partnerB.email].sort());
+
+    // The newly-added recipient gets a fresh invite notification; the kept one does not get a duplicate.
+    const newNotif = await db.collection('notifications').findOne({ targetEmail: users.partnerB.email, tag: 'Calendar', title: { $regex: 'Replace Add\\+Remove' } });
+    expect(newNotif).toBeTruthy();
+  });
+
+  test('removing every recipient clears participantEmails/googleAttendeeEmails/recipientEmails and still patches Google to an empty attendee list', async () => {
+    const created = await createEvent(agents.admin, {
+      title: title('Replace To Empty'), start: '2026-11-14T11:00', end: '2026-11-14T12:00',
+      recipients: [users.collegeA.email]
+    });
+    const id = created.body.event.id;
+    resetGoogle();
+
+    const patch = await agents.admin.patch('/api/calendarevents/' + id).send({ recipientsReplace: true, recipients: [] });
+    expect(patch.status).toBe(200);
+    expect(patch.body.event.participantEmails).toEqual([]);
+
+    expect(callsOf('insert')).toHaveLength(0);
+    expect(callsOf('patch')).toHaveLength(1); // still synced to Google even though the new list is empty
+    expect(callsOf('patch')[0].args.requestBody.attendees).toEqual([]);
+
+    const doc = await db.collection('calendarevents').findOne({ id });
+    expect(doc.participantEmails).toEqual([]);
+    expect(doc.googleAttendeeEmails).toEqual([]);
+    expect(doc.recipientEmails).toBeUndefined();
+    expect(doc.forEveryone).toBeUndefined();
+  });
+
+  test('replacing with "all" sets forEveryone and clears recipientEmails, matching a brand-new "all" event', async () => {
+    const created = await createEvent(agents.admin, {
+      title: title('Replace To All'), start: '2026-11-14T13:00', end: '2026-11-14T14:00',
+      recipients: [users.collegeA.email]
+    });
+    const id = created.body.event.id;
+
+    const patch = await agents.admin.patch('/api/calendarevents/' + id).send({ recipientsReplace: true, recipients: ['all'] });
+    expect(patch.status).toBe(200);
+    const doc = await db.collection('calendarevents').findOne({ id });
+    expect(doc.forEveryone).toBe(true);
+    expect(doc.recipientEmails).toBeUndefined();
+  });
+
+  test('without recipientsReplace, recipients stay purely additive (backward compatible — drag/resize and any other caller is unaffected)', async () => {
+    const created = await createEvent(agents.admin, {
+      title: title('Additive Unchanged'), start: '2026-11-14T15:00', end: '2026-11-14T16:00',
+      recipients: [users.collegeA.email]
+    });
+    const id = created.body.event.id;
+
+    const patch = await agents.admin.patch('/api/calendarevents/' + id).send({ recipients: [users.partnerA.email] });
+    expect(patch.status).toBe(200);
+    // Additive: the original attendee is KEPT, not replaced.
+    expect(patch.body.event.participantEmails.sort()).toEqual([users.collegeA.email, users.partnerA.email].sort());
+
+    // A plain schedule-only PATCH (e.g. drag/resize) with no recipients field at all must never touch attendees.
+    const moveOnly = await agents.admin.patch('/api/calendarevents/' + id).send({ start: '2026-11-14T15:30', end: '2026-11-14T16:30' });
+    expect(moveOnly.status).toBe(200);
+    expect(moveOnly.body.event.participantEmails.sort()).toEqual([users.collegeA.email, users.partnerA.email].sort());
+  });
+});

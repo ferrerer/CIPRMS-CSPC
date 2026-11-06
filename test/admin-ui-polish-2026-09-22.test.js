@@ -14,11 +14,19 @@ describe('Calendar: Add Event modal is no longer cramped, and the past-date guar
   test('Event Type and Date are paired into one responsive row instead of stacking full-width', () => {
     expect(src).toMatch(/col-md-7[\s\S]{0,120}Event Type[\s\S]{0,1200}col-md-5[\s\S]{0,120}Date/);
   });
-  test('the recipients/attendees list got more visible rows', () => {
-    expect(src).toContain('id="f-recipients" multiple size="8"');
+  // 2026-11 follow-up: Edit now shares Add's own two-step wizard (step 2: recipients), so the cramped
+  // `<select multiple size="8">` this test originally covered was replaced outright by that search-and-chips
+  // picker — not merely resized. There is no fixed "visible rows" count left to assert on; the real
+  // "not cramped" property of today's picker is that it shows a scrollable, unbounded results list instead
+  // of a fixed-height multi-select at all.
+  test('the recipients/attendees picker is the shared, non-cramped step-2 search UI (not a fixed-height multi-select)', () => {
+    expect(src).toContain('id="step-recipients"');
+    expect(src).toContain('id="rcp-search"');
+    expect(src).toContain('id="rcp-results"');
+    expect(src).not.toContain('id="f-recipients"');
   });
   test('every existing field is still present (title, type, date, start/end time, description, attendees)', () => {
-    for (const id of ['f-type', 'f-title', 'f-date', 'f-start', 'f-end', 'f-location', 'f-desc', 'f-recipients']) {
+    for (const id of ['f-type', 'f-title', 'f-date', 'f-start', 'f-end', 'f-location', 'f-desc', 'rcp-search']) {
       expect(src).toContain(`id="${id}"`);
     }
   });

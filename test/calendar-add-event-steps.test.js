@@ -42,14 +42,17 @@ describe('Add Event wizard — markup', () => {
 });
 
 describe('Add Event wizard — behavior in the page script', () => {
-  test('adding hides the recipients field on step 1 and resets the wizard; editing still shows it', () => {
+  // 2026-11 follow-up: Edit now shares Add's own two-step wizard instead of a single screen with its own
+  // add-only attendee field — both reset/seed `selectedRecipients` (Add: empty; Edit: the event's current
+  // attendees) and both call showStep(1) to enter the wizard. Only View has no steps at all (leaveWizard()).
+  test('adding resets the wizard with no recipients; editing resets it pre-seeded with the current attendees', () => {
     const add = block('function showAdd(', 2200);
-    expect(add).toContain("document.getElementById('f-recipients-wrap').classList.add('d-none')");
     expect(add).toContain('selectedRecipients = [];');
     expect(add).toContain('showStep(1)');
-    const edit = block('function showEdit(', 2600);
-    expect(edit).toContain("document.getElementById('f-recipients-wrap').classList.remove('d-none')");
-    expect(edit).toContain('leaveWizard()');
+    const edit = block('function showEdit(', 2800);
+    expect(edit).toContain('selectedRecipients = (currentEv.extendedProps.participantEmails || [])');
+    expect(edit).toContain("document.getElementById('cal-steps').classList.remove('d-none')");
+    expect(edit).toContain('showStep(1)');
     expect(block('function showView(', 300)).toContain('leaveWizard()');
   });
 

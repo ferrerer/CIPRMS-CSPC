@@ -272,22 +272,11 @@
                                                 <label class="form-label">Notes</label>
                                                 <textarea class="form-control" id="f-desc" rows="3"></textarea>
                                             </div>
-                                            <div class="mb-2" id="f-recipients-wrap">
-                                                <label class="form-label" id="f-recipients-label">Notify Recipients <span class="text-muted fw-normal">(Optional)</span></label>
-                                                <select class="form-select" id="f-recipients" multiple size="8">
-                                                    <optgroup label="Roles">
-                                                        <option value="all">All Users</option>
-                                                        <option value="Administrator">Administrators</option>
-                                                        <option value="Auth. Personnel">College Dean</option>
-                                                        <option value="potential_partner">Partner</option>
-                                                        <option value="Staff">CIRL Staff</option>
-                                                    </optgroup>
-                                                    <optgroup label="Individual Users" id="f-recipients-individuals"></optgroup>
-                                                </select>
-                                                <div class="form-text" id="f-recipients-help">Ctrl/Cmd-click to select multiple. Only the users selected here will be notified and e-mailed a Google Calendar invitation. Leave blank to create the event without notifying anyone.</div>
-                                            </div>
                                         </div>
-                                        <!-- Add Event, step 2: who to notify. Search runs on the user list already loaded from /api/users. -->
+                                        <!-- Step 2: who to notify — shared by Add AND Edit (2026-11: editing used to have its
+                                             own single-screen, add-only attendee <select> here; it now reuses this exact same
+                                             step instead, so recipients can be both added and removed when editing). Search
+                                             runs on the user list already loaded from /api/users. -->
                                         <div id="step-recipients" class="d-none">
                                             <label class="form-label" for="rcp-search">Search recipients by email address <span class="text-muted fw-normal">(Optional)</span></label>
                                             <div class="position-relative search-box mb-2">
@@ -424,10 +413,11 @@ function validateNewEventDate(){
   el.classList.toggle('is-invalid', bad);
   return !bad;
 }
-// ── Add Event is two steps: 1) event details, 2) recipients ─────────────────────────────────────────────────────
-// Next validates the details and only switches panels — nothing is sent. Save (step 2) is the one and only create
-// request, with the same clientRequestId de-duplication and in-flight guard as before. Editing an existing event is
-// NOT part of this flow: it keeps its single form and Save.
+// ── Add AND Edit Event are both two steps: 1) event details, 2) recipients (2026-11: Edit used to be its own
+// single screen with an add-only attendee field; it now shares this exact wizard, pre-seeded with the
+// event's current attendees, so recipients can be removed as well as added) ──────────────────────────────
+// Next validates the details and only switches panels — nothing is sent. Save (step 2) is the one and only
+// create/update request, with the same clientRequestId de-duplication and in-flight guard as before for Add.
 var addStep = 1, allUsers = [], selectedRecipients = [];
 var RECIPIENT_GROUPS = [['all', 'All Users'], ['Administrator', 'Administrators'], ['Auth. Personnel', 'College Dean'], ['potential_partner', 'Partner'], ['Staff', 'CIRL Staff']];
 var ROLE_LABELS = { 'Administrator': 'Administrator', 'Auth. Personnel': 'College Dean', 'potential_partner': 'Partner', 'Staff': 'CIRL Staff' };
@@ -478,10 +468,16 @@ function showStep(n){
   var s1 = document.getElementById('cal-step-1'), s2 = document.getElementById('cal-step-2');
   s1.classList.toggle('active', !two); s1.classList.toggle('done', two);
   s2.classList.toggle('active', two);
-  setBreadcrumb(two ? ['Calendar', 'New Event', 'Recipients'] : ['Calendar', 'New Event']);
+  // "New Event" while adding; the event's own title while editing (falls back to a generic label the one
+  // time it's reached before currentEv is set — shouldn't normally happen, since Edit is only entered from
+  // an already-open event).
+  var subject = isAdding ? 'New Event' : ((currentEv && currentEv.title) || 'Edit Event');
+  setBreadcrumb(two ? ['Calendar', subject, 'Recipients'] : ['Calendar', subject]);
+  document.getElementById('btn-save').innerHTML = '<i class="ri-save-line"></i> ' + (isAdding ? 'Save' : 'Save Changes');
   if(two){ renderRecipients(); document.getElementById('rcp-search').focus(); }
 }
-// Leaves the Add wizard chrome behind (view / edit use the modal as before).
+// Leaves the two-step wizard chrome behind — only showView() calls this now (Add and Edit both use the
+// wizard; View is a single read-only screen with no steps at all).
 function leaveWizard(){
   ['cal-steps', 'step-recipients', 'btn-next', 'btn-back'].forEach(function(id){ document.getElementById(id).classList.add('d-none'); });
 }
@@ -692,6 +688,7 @@ function syncFromServer(fcEvent, doc){
   fcEvent.setExtendedProp('googleSyncError', doc.googleSyncError || null);
   fcEvent.setExtendedProp('inviteSkipped', doc.inviteSkipped || []);
   fcEvent.setExtendedProp('participantCount', (doc.participantEmails || []).length || fcEvent.extendedProps.participantCount || 0);
+  fcEvent.setExtendedProp('participantEmails', doc.participantEmails || fcEvent.extendedProps.participantEmails || []);
 }
 
 // â”€â”€ Upcoming events sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -891,8 +888,6 @@ function showAdd(dateStr, prefill){
   prefill = prefill || {};
   currentEv = null; isAdding = true; pendingRequestId = newRequestId();
   clearFormErrors();
-  document.getElementById('f-recipients-label').innerHTML = 'Notify Recipients <span class="text-muted fw-normal">(Optional)</span>';
-  document.getElementById('f-recipients-help').textContent = 'Ctrl/Cmd-click to select multiple. Only the users selected here will be notified and e-mailed a Google Calendar invitation. Leave blank to create the event without notifying anyone.';
   document.getElementById('modal-title').textContent = 'Add Event';
   document.getElementById('view-mode').classList.add('d-none');
   document.getElementById('edit-mode').classList.remove('d-none');
@@ -910,8 +905,6 @@ function showAdd(dateStr, prefill){
   updateLocationLabelForEventType();
   document.getElementById('v-gcal-badge').classList.add('d-none');
   // Step 1 holds only the event details: recipients are chosen on step 2.
-  document.getElementById('f-recipients-wrap').classList.add('d-none');
-  Array.from(document.getElementById('f-recipients').options).forEach(function(o){ o.selected = false; });
   selectedRecipients = [];
   document.getElementById('rcp-search').value = '';
   document.getElementById('btn-delete').classList.add('d-none');
@@ -924,7 +917,6 @@ function showAdd(dateStr, prefill){
 function showEdit(){
   if(!currentEv) return;
   clearFormErrors();
-  leaveWizard();
   document.getElementById('modal-title').textContent = 'Edit Event';
   document.getElementById('view-mode').classList.add('d-none');
   document.getElementById('edit-mode').classList.remove('d-none');
@@ -948,16 +940,19 @@ function showEdit(){
     document.getElementById('f-event-type-custom').classList.add('d-none');
   }
   updateLocationLabelForEventType();
-  // Editing never re-notifies the people already invited; anyone selected here is ADDED
-  // (notified, added to the Google event, and e-mailed the invitation).
-  document.getElementById('f-recipients-wrap').classList.remove('d-none');
-  Array.from(document.getElementById('f-recipients').options).forEach(function(o){ o.selected = false; });
-  document.getElementById('f-recipients-label').innerHTML = 'Add attendees <span class="text-muted fw-normal">(Optional)</span>';
-  document.getElementById('f-recipients-help').textContent = 'Already-invited people are kept. Anyone selected here is added and sent a Google Calendar invitation. Leave blank to change nothing.';
+  // Step 2 (recipients) now works exactly like Add's: pre-seed selectedRecipients with the event's current
+  // attendees (by email — participantEmails is the concrete, flattened list; the original "a whole role
+  // group was picked" intent isn't preserved separately, same as it never was once an event was created) so
+  // they show as already-checked, and can be removed as well as added, unlike the old add-only edit field.
+  selectedRecipients = (currentEv.extendedProps.participantEmails || []).map(function(email){
+    var u = allUsers.find(function(x){ return x.email === email; });
+    return { value: email, label: (u && u.name) ? u.name : email };
+  });
+  document.getElementById('rcp-search').value = '';
   document.getElementById('btn-delete').classList.remove('d-none');
   document.getElementById('btn-edit-toggle').classList.add('d-none');
-  document.getElementById('btn-save').classList.remove('d-none');
-  setBreadcrumb(['Calendar', currentEv.title, 'Edit']);
+  document.getElementById('cal-steps').classList.remove('d-none');
+  showStep(1);
 }
 
 // â”€â”€ Build FullCalendar event object from DB doc â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -980,7 +975,12 @@ function docToFcEvent(doc){
       inviteSkipped:    doc.inviteSkipped || [],
       participantCount: doc.participantCount || 0,
       joinedCount:      doc.joinedCount || 0,
-      myInvite:         doc.myInvite || null
+      myInvite:         doc.myInvite || null,
+      // Manager-only (calendarEventView keeps this field for Administrator/Staff, strips it for everyone
+      // else) — the concrete "who's currently invited" list, used solely to preselect Step 2's recipient
+      // picker when editing (showEdit()). Never sent back to the server as-is; Save always resolves a fresh
+      // selection through the same picker that Add uses.
+      participantEmails: doc.participantEmails || []
     }
   };
 }
@@ -1042,15 +1042,11 @@ document.addEventListener('DOMContentLoaded', function(){
     if (ev) { deepLinkOpened = true; showView(ev); }
   }
 
-  // Individual-user recipient options — /api/users is Administrator/Staff-only
-  // (requireStaffAccess), so Auth. Personnel (who can also reach this page)
-  // simply won't see this group populated; the role-based options above
-  // still work for them.
-  function escapeHtml(str){ return String(str==null?'':str).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  // Individual-user recipient list for the step-2 picker — /api/users is Administrator/Staff-only
+  // (requireStaffAccess), so Auth. Personnel (who can also reach this page but never manages events) simply
+  // never gets this populated; the role-group buttons in step 2 don't depend on it.
   fetch('/api/users').then(function(r){ return r.ok ? r.json() : []; }).then(function(users){
-    allUsers = Array.isArray(users) ? users : [];   // also feeds the Add Event step-2 search
-    var group = document.getElementById('f-recipients-individuals');
-    group.innerHTML =users.map(function(u){ return '<option value="'+escapeHtml(u.email)+'">'+escapeHtml(u.name)+' ('+escapeHtml(u.email)+')</option>'; }).join('');
+    allUsers = Array.isArray(users) ? users : [];   // feeds the shared Add/Edit step-2 recipient search
   }).catch(function(){ /* Auth. Personnel: no individual-user list, role options still work */ });
 
   cal = new FullCalendar.Calendar(calEl, {
@@ -1143,10 +1139,9 @@ document.addEventListener('DOMContentLoaded', function(){
     var d = readEventDetails();
     if(!d){ if(isAdding) showStep(1); return; }
     var title = d.title, st = d.st, start = d.start, end = d.end, cls = d.cls, loc = d.loc, desc = d.desc, evType = d.eventType;
-    // Add: the recipients picked on step 2. Edit: the attendee list on the edit form, as before.
-    var recipients = isAdding
-      ? selectedRecipients.map(function(r){ return r.value; })
-      : Array.from(document.getElementById('f-recipients').selectedOptions).map(function(o){ return o.value; });
+    // Both Add and Edit now pick recipients on the same step 2 (2026-11: editing used to read a separate,
+    // add-only <select> on the single edit screen — see showEdit()).
+    var recipients = selectedRecipients.map(function(r){ return r.value; });
     var saveBtn = document.getElementById('btn-save');
     function finish(){ saving = false; saveBtn.disabled = false; }
     saving = true; saveBtn.disabled = true;
@@ -1154,8 +1149,11 @@ document.addEventListener('DOMContentLoaded', function(){
     if(currentEv && !isAdding){
       // EDIT — persist to MongoDB then update FC event (the same event; never a new one)
       var dbId   = currentEv.extendedProps.dbId || currentEv.id;
-      var updates = { title:title, start:start, end:end, allDay:!st, className:cls, location:loc, description:desc, eventType:evType };
-      if(recipients.length) updates.recipients = recipients;
+      // recipientsReplace: true — recipients above is the COMPLETE desired audience (step 2 was pre-seeded
+      // with who's currently invited, so unchecking someone really means "remove them"), not people to add
+      // on top of whoever is already invited. Always sent, even an empty array (every recipient removed is
+      // a valid, deliberate choice) — see the matching PATCH /api/calendarevents/:id handling in cirl.js.
+      var updates = { title:title, start:start, end:end, allDay:!st, className:cls, location:loc, description:desc, eventType:evType, recipients:recipients, recipientsReplace: true };
       apiPatch(dbId, updates).then(function(data){
         if(data.success){
           currentEv.setProp('title', title);
