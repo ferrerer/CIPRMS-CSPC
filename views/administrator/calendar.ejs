@@ -220,24 +220,13 @@
                                         <div id="edit-mode" class="d-none">
                                             <!-- Shown when Save is clicked on a new event with required fields left empty -->
                                             <div class="alert alert-danger py-2 px-3 fs-13 d-none" id="f-missing-alert" role="alert"></div>
-                                            <div class="row g-3 mb-3">
-                                                <div class="col-md-7">
-                                                    <label class="form-label">Calendar Color <span class="text-danger">*</span></label>
-                                                    <select class="form-select" id="f-type">
-                                                        <option value="">Select a color</option>
-                                                        <option value="bg-primary-subtle">Meeting</option>
-                                                        <option value="bg-danger-subtle">Expiry / Deadline</option>
-                                                        <option value="bg-success-subtle">Renewal</option>
-                                                        <option value="bg-warning-subtle">Mobility / Exchange</option>
-                                                        <option value="bg-info-subtle">Partnership Review</option>
-                                                    </select>
-                                                    <div class="invalid-feedback">Please select a calendar color.</div>
-                                                </div>
-                                                <div class="col-md-5">
-                                                    <label class="form-label">Date <span class="text-danger">*</span></label>
-                                                    <input type="date" class="form-control" id="f-date">
-                                                    <div class="invalid-feedback" id="f-date-error">Please choose the date.</div>
-                                                </div>
+                                            <!-- The event's color/className is no longer user-chosen (see f-type below); it is assigned
+                                                 automatically (or carried over from the dragged palette tile / the event being edited). -->
+                                            <input type="hidden" id="f-type" value="">
+                                            <div class="mb-3">
+                                                <label class="form-label">Date <span class="text-danger">*</span></label>
+                                                <input type="date" class="form-control" id="f-date">
+                                                <div class="invalid-feedback" id="f-date-error">Please choose the date.</div>
                                             </div>
                                             <div class="mb-3">
                                                 <label class="form-label">Event Name <span class="text-danger">*</span></label>
@@ -822,7 +811,6 @@ function showView(ev){
 // is highlighted and listed in the warning at the top of the form; the highlight clears as soon as it is filled in.
 // (Editing an existing event keeps the older, lighter check — events created before this rule may lack some fields.)
 var REQUIRED_NEW_EVENT_FIELDS = [
-  ['f-type', 'Calendar Color'],
   ['f-date', 'Date'],
   ['f-title', 'Event Name'],
   ['f-start', 'Start Time'],
@@ -915,7 +903,7 @@ function showAdd(dateStr, prefill){
   document.getElementById('f-end').value      = '';
   document.getElementById('f-location').value = '';
   document.getElementById('f-desc').value     = '';
-  document.getElementById('f-type').value     = prefill.className || ''; // no default: the event type must be chosen
+  document.getElementById('f-type').value     = prefill.className || 'bg-primary-subtle'; // no picker anymore: the dragged palette tile's color is kept, otherwise a fixed default
   document.getElementById('f-event-type').value = '';
   document.getElementById('f-event-type-custom').value = '';
   document.getElementById('f-event-type-custom').classList.add('d-none');

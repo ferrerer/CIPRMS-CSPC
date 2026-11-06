@@ -873,11 +873,13 @@ function clearFilters() {
   applyFilter();
 }
 
-// Contextual report generation (2026-11 panel recommendation) — opens Reports & Analytics' existing
-// Custom Report Builder with Monitoring's own current Type/Category/Status/Unit filters already applied,
-// instead of a blank form. Reuses the exact same /reports page, builder, and PDF/Excel export routes —
-// no separate report-generation system for this module. region/year/search filters have no equivalent
-// field in the builder today, so they are not carried over (the four that do match are).
+// Contextual report generation (2026-11 panel recommendation) — fetches the Custom Report Builder's own
+// preview backend (/api/reports/custom/preview, views/administrator/reports.ejs's previewCustomReport()
+// calls the exact same endpoint) with Monitoring's current Type/Category/Status/Unit filters, and renders
+// the result into a modal on THIS page. No redirect, no new tab, no separate reporting engine — only the
+// rendering is duplicated (trimmed down: no Group By controls, no Compare view), the data and backend are
+// the same one Reports & Analytics itself uses. region/year/search filters have no equivalent field in the
+// builder today, so they are not carried over (the four that do match are).
 function monitoringGenerateReport() {
   var params = new URLSearchParams({ reportType: 'Detailed' });
   var agtype = (document.getElementById('reg-type') || {}).value;
@@ -888,11 +890,142 @@ function monitoringGenerateReport() {
   if (cat) params.set('cat', cat);
   if (status) params.set('status', status);
   if (unit) params.set('unit', unit);
-  // Administrator reaches this page at /lifecycle, Staff at /staff/lifecycle (same template, two routes,
-  // same full-dashboard-parity convention used throughout this app) — Reports & Analytics mirrors that
-  // same split, so the destination is derived from which one the person is actually on right now.
-  var reportsBase = window.location.pathname.indexOf('/staff/') === 0 ? '/staff/reports' : '/reports';
-  window.open(reportsBase + '?' + params.toString(), '_blank');
+
+  var modalEl = document.getElementById('monReportPreviewModal');
+  var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  monShowRpmLoading();
+  modal.show();
+
+  var mySeq = ++_monPreviewRequestSeq;
+  fetch('/api/reports/custom/preview?' + params.toString())
+    .then(function (r) {
+      if (!r.ok) return r.json().then(function (e) { throw new Error(e.error || 'Server error while generating the preview.'); });
+      return r.json();
+    })
+    .then(function (data) {
+      if (mySeq !== _monPreviewRequestSeq) return; // superseded by a newer Generate Report click
+      if (data.error) throw new Error(data.error);
+      monRenderReportPreview(data);
+    })
+    .catch(function (err) {
+      if (mySeq !== _monPreviewRequestSeq) return;
+      console.error('Monitoring report preview error:', err);
+      monShowRpmError('Failed to generate report preview: ' + err.message);
+    });
+}
+
+var _monPreviewRequestSeq = 0; // same stale-response guard as reports.ejs's _previewRequestSeq
+
+function monShowRpmLoading() {
+  document.getElementById('mon-rpm-loading').style.display = '';
+  document.getElementById('mon-rpm-error').style.display = 'none';
+  document.getElementById('mon-rpm-body').style.display = 'none';
+}
+function monShowRpmError(message) {
+  document.getElementById('mon-rpm-loading').style.display = 'none';
+  document.getElementById('mon-rpm-body').style.display = 'none';
+  document.getElementById('mon-rpm-error-text').textContent = message;
+  document.getElementById('mon-rpm-error').style.display = '';
+}
+
+// Trimmed-down twin of reports.ejs's renderReportPreview()/renderGroupedPreviewTable(): same data shape
+// (computeCustomReportData()'s result, via the same endpoint), same filter-badge/summary-card/status-badge
+// logic, just targeting this page's mon-prev-* element ids instead of reports.ejs's prev-*. Monitoring's
+// own Generate Report never sends a groupBy, but the grouped branch is kept so a result that happens to
+// carry one (e.g. a saved/bookmarked filter state) still renders correctly instead of showing nothing.
+function monRenderReportPreview(data) {
+  document.getElementById('mon-rpm-loading').style.display = 'none';
+  document.getElementById('mon-rpm-error').style.display = 'none';
+  document.getElementById('mon-rpm-body').style.display = '';
+
+  document.getElementById('mon-prev-title').textContent = data.title;
+  document.getElementById('mon-prev-meta').textContent = 'Generated ' + data.generatedDate + ' by ' + data.generatedBy + ' • Total Records: ' + data.totalRecords;
+
+  var filtersEl = document.getElementById('mon-prev-filters');
+  var badgesHtml = '';
+  if (data.filters) {
+    var LABELS = { reportType: 'Report Type', category: 'Category', dateFrom: 'Date From', dateTo: 'Date To', unit: 'College / Unit', agreementType: 'Agreement Type', country: 'Country', status: 'Status', compareBy: 'Compare By', groupBy: 'Group By' };
+    Object.entries(data.filters).forEach(function (pair) {
+      var label = LABELS[pair[0]] || pair[0];
+      badgesHtml += '<span class="badge bg-secondary-subtle text-secondary me-1 mb-1"><strong class="text-secondary-emphasis">' + escapeHtml(label) + ':</strong> ' + escapeHtml(pair[1]) + '</span>';
+    });
+  }
+  filtersEl.innerHTML = badgesHtml;
+
+  var cardsEl = document.getElementById('mon-prev-summary-cards');
+  var sum = data.summary || {};
+  cardsEl.innerHTML =
+    '<div class="col-md-3"><div class="card card-animate mb-0 bg-primary-subtle border-0"><div class="card-body p-3">' +
+      '<h6 class="fs-12 text-uppercase text-primary fw-semibold mb-1">Total Partnerships</h6><h3 class="mb-0 text-primary fw-bold">' + (sum.totalCount || 0) + '</h3></div></div></div>' +
+    '<div class="col-md-3"><div class="card card-animate mb-0 bg-success-subtle border-0"><div class="card-body p-3">' +
+      '<h6 class="fs-12 text-uppercase text-success fw-semibold mb-1">Active Agreements</h6><h3 class="mb-0 text-success fw-bold">' + (sum.activeCount || 0) + '</h3></div></div></div>' +
+    '<div class="col-md-3"><div class="card card-animate mb-0 bg-warning-subtle border-0"><div class="card-body p-3">' +
+      '<h6 class="fs-12 text-uppercase text-warning fw-semibold mb-1">Expiring Soon</h6><h3 class="mb-0 text-warning fw-bold">' + (sum.expiringSoonCount || 0) + '</h3></div></div></div>' +
+    '<div class="col-md-3"><div class="card card-animate mb-0 bg-danger-subtle border-0"><div class="card-body p-3">' +
+      '<h6 class="fs-12 text-uppercase text-danger fw-semibold mb-1">Expired / Inactive</h6><h3 class="mb-0 text-danger fw-bold">' + (sum.inactiveCount || 0) + '</h3></div></div></div>';
+
+  var groupedWrap = document.getElementById('mon-prev-grouped-wrap');
+  var flatWrap = document.getElementById('mon-prev-flat-wrap');
+  if (data.isComparison && Array.isArray(data.comparisonData)) {
+    flatWrap.style.display = 'none';
+    groupedWrap.style.display = '';
+    monRenderGroupedPreviewTable(data);
+    return;
+  }
+  groupedWrap.style.display = 'none';
+  flatWrap.style.display = '';
+
+  var recCountEl = document.getElementById('mon-prev-records-count');
+  var recTbody = document.getElementById('mon-prev-records-tbody');
+  var records = data.records || [];
+  recCountEl.textContent = records.length;
+
+  var recHtml = '';
+  if (records.length === 0) {
+    recHtml = '<tr><td colspan="10" class="text-center text-muted py-3">No partnerships found matching the selected filters.</td></tr>';
+  } else {
+    records.forEach(function (p, i) {
+      var stBadge = CIPRMS_STATUS_COLORS.badgeClass(p.status);
+      recHtml += '<tr>'
+        + '<td>' + (i + 1) + '</td>'
+        + '<td class="fw-semibold">' + escapeHtml(p.inst) + '</td>'
+        + '<td>' + escapeHtml(p.country || '—') + '</td>'
+        + '<td>' + escapeHtml(p.region || '—') + '</td>'
+        + '<td><span class="badge bg-primary-subtle text-primary">' + escapeHtml(p.type || '—') + '</span></td>'
+        + '<td>' + escapeHtml((Array.isArray(p.nature) ? p.nature.join(', ') : p.nature) || '—') + '</td>'
+        + '<td><span class="badge bg-secondary-subtle text-secondary">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
+        + '<td>' + escapeHtml(p.start || '—') + '</td>'
+        + '<td>' + escapeHtml(p.end || '—') + '</td>'
+        + '<td><span class="badge ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span></td>'
+        + '</tr>';
+    });
+  }
+  recTbody.innerHTML = recHtml;
+}
+
+function monRenderGroupedPreviewTable(data) {
+  var theadRow = document.getElementById('mon-prev-grouped-thead-row');
+  var tbody = document.getElementById('mon-prev-grouped-tbody');
+  var metrics = data.metrics || [];
+  theadRow.innerHTML = metrics.map(function (m) {
+    var swatch = CIPRMS_STATUS_COLORS.isKnownStatus(m)
+      ? '<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + CIPRMS_STATUS_COLORS.hex(m) + ';margin-right:5px;"></span>'
+      : '';
+    return '<th>' + swatch + escapeHtml(m) + '</th>';
+  }).join('');
+
+  var rows = data.comparisonData || [];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="' + Math.max(metrics.length, 1) + '" class="text-center text-muted py-3">No partnerships found matching the selected filters.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(function (row) {
+    return '<tr>' + metrics.map(function (m) {
+      var v = row[m];
+      if (Array.isArray(v)) v = v.join(', ');
+      return '<td>' + escapeHtml(v === undefined || v === null || v === '' ? '—' : v) + '</td>';
+    }).join('') + '</tr>';
+  }).join('');
 }
 
 function buildGrid() {

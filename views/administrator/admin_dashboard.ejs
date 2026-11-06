@@ -65,9 +65,20 @@
         .ach-filter-tab.active { background: #405189; color: #fff; border-color: #405189; }
         .ach-card {
             border: 1px solid var(--vz-border-color, #e9ebec); border-radius: 10px; height: 100%;
-            display: flex; flex-direction: column; transition: box-shadow .15s ease-in-out;
+            display: flex; flex-direction: column; transition: box-shadow .15s ease-in-out; overflow: hidden;
         }
         .ach-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+        .ach-card-image {
+            width: 100%; height: 140px; object-fit: contain; background: #f3f4fa;
+            border-bottom: 1px solid var(--vz-border-color, #e9ebec); padding: .5rem;
+        }
+        .ach-card-image-placeholder {
+            width: 100%; height: 140px; display: flex; align-items: center; justify-content: center;
+            background: #f3f4fa; border-bottom: 1px solid var(--vz-border-color, #e9ebec);
+            color: #adb5bd; font-size: 2.25rem;
+        }
+        [data-bs-theme="dark"] .ach-card-image,
+        [data-bs-theme="dark"] .ach-card-image-placeholder { background: #262d3d; border-color: rgba(255,255,255,.1); }
         .ach-card-body { padding: 1rem; flex: 1; display: flex; flex-direction: column; }
         .ach-card-title { font-weight: 700; font-size: .95rem; margin-bottom: .25rem; }
         .ach-card-meta { font-size: .76rem; color: #878a99; margin-bottom: .5rem; }
@@ -1346,6 +1357,15 @@
             if (fileType === 'image/jpeg' || fileType === 'image/png') return 'ri-image-2-line';
             return 'ri-file-line';
         }
+        function achIsImage(fileType) { return fileType === 'image/jpeg' || fileType === 'image/png'; }
+        // Swaps a broken/unavailable achievement image for the same placeholder used when no file was
+        // uploaded at all (deleted-on-disk file, failed Drive fetch, etc. — never a blank/broken-image icon).
+        function achImgError(img) {
+            var ph = document.createElement('div');
+            ph.className = 'ach-card-image-placeholder';
+            ph.innerHTML = '<i class="ri-image-line"></i>';
+            img.replaceWith(ph);
+        }
 
         function achRenderList() {
             var el = document.getElementById('ach-list');
@@ -1361,8 +1381,12 @@
                 var fileHtml = a.fileLink
                     ? '<a class="btn btn-sm btn-soft-secondary" href="' + a.fileLink + '" target="_blank" rel="noopener"><i class="' + achFileIcon(a.fileType) + ' me-1"></i>View File</a>'
                     : '';
+                var imageHtml = a.fileLink && achIsImage(a.fileType)
+                    ? '<img class="ach-card-image" src="' + a.fileLink + '" alt="" onerror="achImgError(this)">'
+                    : '<div class="ach-card-image-placeholder"><i class="' + (a.fileLink ? achFileIcon(a.fileType) : 'ri-trophy-line') + '"></i></div>';
                 return '<div class="col-md-6 col-lg-4">' +
                     '<div class="ach-card">' +
+                        imageHtml +
                         '<div class="ach-card-body">' +
                             '<div class="mb-2">' + achCategoryBadge(a.category) + '</div>' +
                             '<div class="ach-card-title">' + esc(a.title) + '</div>' +

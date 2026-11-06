@@ -5,9 +5,11 @@
 // cross-dean attachment isolation (via the existing GET /uploads/documents/:filename authorization), and
 // audit trail recording.
 const request = require('supertest');
+const fs = require('fs');
 const app = require('../cirl');
 const { connectDB, closeDB } = require('../db');
 const { createTestUser, loginAs, cleanupAll, uniqueEmail, TEST_TAG } = require('./helpers');
+const uploadMiddleware = require('../middleware/uploadMiddleware');
 
 let db;
 const seededRequestIds = [];
@@ -465,5 +467,169 @@ describe('9. Audit trail recording', () => {
     await adminAgent.patch('/api/college-requests/' + r.body.request.id).set('X-Requested-With', 'ciprms').send({ action: 'accept' });
     const acceptLog = await db.collection('activitylogs').findOne({ action: 'APPROVE', record: { $regex: title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') } });
     expect(acceptLog).toBeTruthy();
+  });
+});
+
+describe('10. Multiple document submission (2026-11 follow-up)', () => {
+  test('the assigned Dean can submit several files and a note in one call; every file is stored, linked, and individually downloadable', async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, dean.id);
+
+    const res = await deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents')
+      .set('X-Requested-With', 'ciprms')
+      .field('note', 'Three files for accreditation.')
+      .attach('documents', pdfBuffer('multi-1'), 'file1.pdf')
+      .attach('documents', pdfBuffer('multi-2'), 'file2.pdf')
+      .attach('documents', pdfBuffer('multi-3'), 'file3.pdf');
+
+    expect(res.status).toBe(200);
+    expect(res.body.request.status).toBe('Submitted');
+    expect(res.body.request.submittedDocuments.length).toBe(3);
+    expect(res.body.request.submittedDocuments.map((d) => d.originalFilename)).toEqual(['file1.pdf', 'file2.pdf', 'file3.pdf']);
+    expect(res.body.documents.length).toBe(3);
+    // Backward-compat top-level documentId/fileLink still point at the first file.
+    expect(res.body.fileLink).toBe(res.body.documents[0].fileLink);
+
+    for (const d of res.body.documents) {
+      expect(d.fileLink).toBeTruthy();
+      const dl = await deanAgent.get(d.fileLink);
+      expect(dl.status).toBe(200);
+    }
+  });
+
+  test('a mixed valid+invalid batch is rejected entirely, leaves no orphaned files, and the request keeps its original status', async () => {
+    const uploadsTmp = uploadMiddleware.UPLOAD_DIR;
+    const before = new Set(fs.readdirSync(uploadsTmp));
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, dean.id);
+
+    const res = await deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents')
+      .set('X-Requested-With', 'ciprms')
+      .attach('documents', pdfBuffer('good'), 'good.pdf')
+      .attach('documents', Buffer.from('not a real pdf, just text'), 'bad.pdf');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/bad\.pdf/);
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(new Set(fs.readdirSync(uploadsTmp))).toEqual(before);
+
+    const check = await deanAgent.get('/api/college-requests/' + r.body.request.id).set('X-Requested-With', 'ciprms');
+    expect(check.body.status).toBe('Pending');
+    expect(check.body.submittedDocuments.length).toBe(0);
+  });
+
+  test('exceeding the maximum file count (10) is rejected with a clear error and leaves no files behind', async () => {
+    const uploadsTmp = uploadMiddleware.UPLOAD_DIR;
+    const before = new Set(fs.readdirSync(uploadsTmp));
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, dean.id);
+
+    let req = deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents').set('X-Requested-With', 'ciprms');
+    for (let i = 0; i < 11; i++) req = req.attach('documents', pdfBuffer('overflow-' + i), `overflow-${i}.pdf`);
+    const res = await req;
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/maximum/i);
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(new Set(fs.readdirSync(uploadsTmp))).toEqual(before);
+  });
+
+  test('an oversized file (over 10MB) among several files is rejected and leaves no files behind', async () => {
+    const uploadsTmp = uploadMiddleware.UPLOAD_DIR;
+    const before = new Set(fs.readdirSync(uploadsTmp));
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, dean.id);
+
+    const bigBuffer = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(11 * 1024 * 1024)]);
+    const res = await deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents')
+      .set('X-Requested-With', 'ciprms')
+      .attach('documents', pdfBuffer('small-ok'), 'small-ok.pdf')
+      .attach('documents', bigBuffer, 'too-big.pdf');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/too large/i);
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(new Set(fs.readdirSync(uploadsTmp))).toEqual(before);
+  });
+
+  test('sending both "document" and "documents" in the same request is rejected and leaks neither file', async () => {
+    const uploadsTmp = uploadMiddleware.UPLOAD_DIR;
+    const before = new Set(fs.readdirSync(uploadsTmp));
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, dean.id);
+
+    const res = await deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents')
+      .set('X-Requested-With', 'ciprms')
+      .attach('document', pdfBuffer('single'), 'single.pdf')
+      .attach('documents', pdfBuffer('multi'), 'multi.pdf');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not both/i);
+
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(new Set(fs.readdirSync(uploadsTmp))).toEqual(before);
+  });
+
+  test("a different Dean cannot access another Dean's multi-file submission attachments", async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAAgent, user: deanA } = await agentFor('Auth. Personnel');
+    const { agent: deanBAgent } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, deanA.id);
+
+    const res = await deanAAgent.post('/api/college-requests/' + r.body.request.id + '/documents')
+      .set('X-Requested-With', 'ciprms')
+      .attach('documents', pdfBuffer('iso-1'), 'iso-1.pdf')
+      .attach('documents', pdfBuffer('iso-2'), 'iso-2.pdf');
+    expect(res.status).toBe(200);
+
+    for (const d of res.body.documents) {
+      expect((await deanBAgent.get(d.fileLink)).status).toBe(403);
+      expect((await deanAAgent.get(d.fileLink)).status).toBe(200);
+    }
+  });
+
+  test('a legacy single-document submission (the "document" field) still works exactly as before', async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, dean.id);
+
+    const res = await deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents')
+      .set('X-Requested-With', 'ciprms')
+      .field('note', 'single legacy submission')
+      .attach('document', pdfBuffer('legacy-single'), 'legacy-single.pdf');
+
+    expect(res.status).toBe(200);
+    expect(res.body.request.submittedDocuments.length).toBe(1);
+    expect(res.body.fileLink).toBeTruthy();
+    expect(res.body.documents.length).toBe(1);
+  });
+
+  test('a resubmission can add a different number of files than the original submission', async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, dean.id);
+
+    await deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents')
+      .set('X-Requested-With', 'ciprms').attach('documents', pdfBuffer('v1'), 'v1.pdf');
+    await adminAgent.patch('/api/college-requests/' + r.body.request.id).set('X-Requested-With', 'ciprms')
+      .send({ action: 'return', remark: 'Needs more detail.' });
+
+    const resubmit = await deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents')
+      .set('X-Requested-With', 'ciprms')
+      .attach('documents', pdfBuffer('v2-a'), 'v2-a.pdf')
+      .attach('documents', pdfBuffer('v2-b'), 'v2-b.pdf');
+
+    expect(resubmit.status).toBe(200);
+    expect(resubmit.body.request.status).toBe('Submitted');
+    // 1 from the original submission + 2 from the resubmission = 3 total, cumulative across both calls.
+    expect(resubmit.body.request.submittedDocuments.length).toBe(3);
   });
 });

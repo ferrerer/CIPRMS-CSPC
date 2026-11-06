@@ -2959,26 +2959,51 @@ app.get('/api/college-requests/:id', requireAuth, async (req, res) => {
   }
 });
 
-// The assigned Dean submits (or resubmits, after a return-for-revision) required documents. requirePersonnel
-// also admits Administrator, but the ownership check below still restricts actual submission to the one
-// Dean this request is assigned to — Administrator reviews via PATCH below, never submits on a Dean's behalf.
+// Up to this many files in one Submit/Resubmit Documents call (2026-11: College Dean multi-document
+// submission) — same cap and the same dual-field multer pattern already used for multi-photo OCR uploads
+// (routes/ocrRoutes.js's MAX_MULTI_PHOTOS/'document'+'documents' fields), so a request body stays bounded
+// at MAX_CDR_SUBMIT_FILES * uploadMiddleware's own 10MB-per-file limit, with no separate size cap to keep
+// in sync, and existing single-file callers (sending 'document') are completely unaffected.
+const MAX_CDR_SUBMIT_FILES = 10;
+
+// The assigned Dean submits (or resubmits, after a return-for-revision) required documents — now 0 to
+// MAX_CDR_SUBMIT_FILES files per call (previously exactly one). requirePersonnel also admits Administrator,
+// but the ownership check below still restricts actual submission to the one Dean this request is assigned
+// to — Administrator reviews via PATCH below, never submits on a Dean's behalf.
+// 'document' (singular, maxCount 1): the original field, kept so every existing single-file caller keeps
+// working unchanged. 'documents' (plural, 2026-11): the new multi-file picker appends one or more files here
+// instead. Never both in the same request — see the explicit rejection below (same fix already applied to
+// routes/ocrRoutes.js's multi-photo upload for the identical two-field shape).
 app.post('/api/college-requests/:id/documents', requirePersonnel, announce('collegeRequest'), (req, res) => {
-  uploadDoc.single('document')(req, res, async (err) => {
+  uploadDoc.fields([{ name: 'document', maxCount: 1 }, { name: 'documents', maxCount: MAX_CDR_SUBMIT_FILES }])(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
-      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 10MB.' : err.message;
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'One of the files is too large. Maximum size is 10MB per file.'
+        : err.code === 'LIMIT_UNEXPECTED_FILE' ? `Too many files selected. Maximum ${MAX_CDR_SUBMIT_FILES} per submission.`
+        : err.message;
       return res.status(400).json({ error: message });
     }
     if (err) {
       if (!err.clientSafe) console.error('❌ College request submission upload error:', err);
       return res.status(400).json({ error: err.clientSafe ? err.message : 'Upload failed. Please try again.' });
     }
-    const note = ((req.body && req.body.note) || '').trim().slice(0, 1000);
-    if (!req.file && !note) {
-      return res.status(400).json({ error: 'Provide a file, a note, or both to submit.' });
+    if (req.files && req.files.document && req.files.document.length && req.files.documents && req.files.documents.length) {
+      [...req.files.document, ...req.files.documents].forEach((f) => { if (f.path) fs.unlink(f.path, () => {}); });
+      return res.status(400).json({ error: 'Send either one document or one or more files, not both in the same request.' });
     }
-    if (req.file && !verifyMagicBytes(req.file)) {
-      fs.unlink(req.file.path, () => {});
-      return res.status(400).json({ error: 'Unsupported file type. Only PDF, JPG, JPEG, and PNG are accepted.' });
+    const files = [].concat((req.files && req.files.document) || [], (req.files && req.files.documents) || []);
+    const note = ((req.body && req.body.note) || '').trim().slice(0, 1000);
+    if (!files.length && !note) {
+      return res.status(400).json({ error: 'Provide at least one file, a note, or both to submit.' });
+    }
+    // Every file is validated BEFORE any of them is archived — a batch with even one unsupported file is
+    // rejected as a whole (all of this request's temp files removed, nothing archived, nothing recorded on
+    // the request), rather than silently keeping the good files and dropping the bad one.
+    const badFile = files.find((f) => !verifyMagicBytes(f));
+    if (badFile) {
+      // verifyMagicBytes() already deleted badFile itself on mismatch; remove the rest of this batch's
+      // still-on-disk temp files so a rejected submission never leaves any of them behind.
+      files.forEach((f) => { if (f !== badFile) fs.unlink(f.path, () => {}); });
+      return res.status(400).json({ error: `"${badFile.originalname}" is not a supported file type. Only PDF, JPG, JPEG, and PNG are accepted.` });
     }
     const id = parseInt(req.params.id);
     const actor = req.session.user;
@@ -2986,50 +3011,72 @@ app.post('/api/college-requests/:id/documents', requirePersonnel, announce('coll
       const db = getDb();
       const target = await db.collection('collegedeanrequests').findOne({ id });
       if (!target) {
-        if (req.file) fs.unlink(req.file.path, () => {});
+        files.forEach((f) => fs.unlink(f.path, () => {}));
         return res.status(404).json({ error: 'College request not found.' });
       }
       if (actor.role !== 'Auth. Personnel' || !isAssignedDean(target, actor.email)) {
-        if (req.file) fs.unlink(req.file.path, () => {});
+        files.forEach((f) => fs.unlink(f.path, () => {}));
         return res.status(403).json({ error: 'You are not authorized to submit documents for this request.' });
       }
       if (target.status === 'Completed') {
-        if (req.file) fs.unlink(req.file.path, () => {});
+        files.forEach((f) => fs.unlink(f.path, () => {}));
         return res.status(400).json({ error: 'This request has already been completed — no further documents can be submitted.' });
       }
 
-      let documentId = null, fileLink = null;
-      if (req.file) {
-        ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
-          documentType: target.requestType,
-          institution: actor.unit || '',
-          title: `${target.requestType} Submission – ${target.title} (${actor.unit || actor.name})`
-        }, {
-          uploadedBy: actor.name,
-          uploadedByEmail: actor.email,
-          requestId: id,
-          requestType: 'college-request'
-        }));
+      // One Document Library record (archiveToDocumentLibrary — same as the single-file path, same as
+      // the reference-documents route above) per file, archived one at a time so a failure partway
+      // through never races a later file's own disk move; the request's own submittedDocuments array is
+      // only updated once, after every file in the batch has archived successfully.
+      const docRecords = [];
+      try {
+        for (const f of files) {
+          const { documentId, fileLink } = await archiveToDocumentLibrary(f.path, f.originalname, {
+            documentType: target.requestType,
+            institution: actor.unit || '',
+            title: `${target.requestType} Submission – ${target.title} (${actor.unit || actor.name})`
+          }, {
+            uploadedBy: actor.name,
+            uploadedByEmail: actor.email,
+            requestId: id,
+            requestType: 'college-request'
+          });
+          docRecords.push({
+            documentId, fileLink, originalFilename: f.originalname,
+            uploadedAt: new Date().toISOString(), uploadedBy: actor.name, uploadedByEmail: actor.email,
+            note, fileType: f.mimetype, fileSize: f.size
+          });
+        }
+      } catch (archiveErr) {
+        // A file not yet reached by the loop above is still sitting in the temp upload dir — remove it so
+        // an archive failure partway through a batch never leaves an orphaned temp file. Files already
+        // archived before the failure keep their own Document Library record (archiveToDocumentLibrary
+        // already moved them off disk into permanent storage); they are not retroactively deleted, matching
+        // this route's existing single-file behavior, which never rolled back a successful archive either.
+        files.forEach((f) => fs.unlink(f.path, () => {}));
+        throw archiveErr;
       }
-
-      const docRecord = {
-        documentId, fileLink, originalFilename: req.file ? req.file.originalname : null,
-        uploadedAt: new Date().toISOString(), uploadedBy: actor.name, uploadedByEmail: actor.email,
-        note, fileType: req.file ? req.file.mimetype : null, fileSize: req.file ? req.file.size : 0
-      };
+      if (!docRecords.length) {
+        // Note-only submission (no files) — preserves the exact one-record-with-nulls shape the single-
+        // file version of this route always produced for a note-only submission.
+        docRecords.push({
+          documentId: null, fileLink: null, originalFilename: null,
+          uploadedAt: new Date().toISOString(), uploadedBy: actor.name, uploadedByEmail: actor.email,
+          note, fileType: null, fileSize: 0
+        });
+      }
 
       const now = new Date().toISOString();
       const wasReturned = target.status === 'Returned for Revision';
       const historyEntry = { from: target.status, to: 'Submitted', at: now, by: actor.name, byEmail: actor.email, remark: note || (wasReturned ? 'Resubmitted' : 'Submitted') };
 
       await db.collection('collegedeanrequests').updateOne({ id }, {
-        $push: { submittedDocuments: docRecord, statusHistory: historyEntry },
+        $push: { submittedDocuments: { $each: docRecords }, statusHistory: historyEntry },
         $set: { status: 'Submitted', updatedAt: now, submittedAt: now }
       });
       const updated = await db.collection('collegedeanrequests').findOne({ id });
 
       await logActivity(db, actor, wasReturned ? 'RESUBMIT' : 'SUBMIT',
-        `College ${target.requestType} request ${wasReturned ? 'resubmitted' : 'submitted'}: ${target.title} by ${actor.name}`);
+        `College ${target.requestType} request ${wasReturned ? 'resubmitted' : 'submitted'}: ${target.title} by ${actor.name}` + (docRecords.length > 1 ? ` (${docRecords.length} files)` : ''));
 
       const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
       await notifyReviewers(db, reviewers, {
@@ -3041,7 +3088,16 @@ app.post('/api/college-requests/:id/documents', requirePersonnel, announce('coll
         desc: `${actor.name} ${wasReturned ? 'resubmitted' : 'submitted'} documents for the ${target.requestType} request "${target.title}".`
       }, role => cdrLinkForRole(role, id));
 
-      res.json({ success: true, documentId, fileLink, request: updated });
+      // documentId/fileLink at the top level (the first file, or null for a note-only submission) are kept
+      // for backward compatibility with the single-file version of this response; `documents` is the full
+      // per-file list new (multi-file) callers should use instead.
+      res.json({
+        success: true,
+        documentId: docRecords[0].documentId,
+        fileLink: docRecords[0].fileLink,
+        documents: docRecords.map((d) => ({ documentId: d.documentId, fileLink: d.fileLink, originalFilename: d.originalFilename })),
+        request: updated
+      });
     } catch (e) {
       console.error('❌ College request submission error:', e);
       res.status(500).json({ error: 'Unable to save the submission right now. Please try again.' });
@@ -6181,7 +6237,25 @@ function parseComparisonConfigs(req) {
 // Distinct, cycling color per comparison slot — used by both the multi PDF
 // and the frontend chart so a given comparison's color is visually
 // consistent-looking across the feature, without hardcoding exactly two.
+// Reserved for a comparison that is NOT restricted to one specific status
+// (e.g. compared by Unit, Country or date range) — see multiComparisonColor().
 const MULTI_COMPARISON_COLORS = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
+
+// Root cause of the panel-reported "Active is red in one comparison, blue in another" bug: color used to be
+// assigned purely by the result's ARRAY POSITION (idx % MULTI_COMPARISON_COLORS.length), so the same status
+// got a different color depending only on which slot it happened to occupy. A comparison configuration
+// restricted to exactly one real status (filters.status is not 'All' — see computeCustomReportData's
+// effectiveStatusFilter) now always gets that status's own semantic color (statusColors — the same mapping
+// every status badge elsewhere in the app already uses), regardless of slot order. Only a comparison that is
+// NOT status-restricted (compared by Unit/Country/date range/etc.) falls back to the fixed, position-based
+// palette above, which is exactly what "assign a fixed, distinct palette to each comparison slot" means for
+// that case. Shared by the frontend chart (an identical copy lives in reports.ejs, since the browser has no
+// require()) and both PDF color sites below, so preview/chart/legend/tooltip/PDF can never disagree.
+function multiComparisonColor(r, idx) {
+  const status = r.filters && r.filters.status;
+  if (status && status !== 'All' && statusColors.isKnownStatus(status)) return statusColors.hex(status);
+  return MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
+}
 
 function renderMultiComparisonReportPdf(res, { title, results, periodLabel, generatedBy }) {
   res.setHeader('Content-Type', 'application/pdf');
@@ -6240,7 +6314,7 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
     const rowY = doc.y;
     const fill = idx % 2 === 1 ? '#F5F7FA' : '#FFFFFF';
     doc.rect(left, rowY, contentWidth, 18).fill(fill).stroke('#ddd');
-    const color = MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
+    const color = multiComparisonColor(r, idx);
     let rx = left;
     doc.font('Helvetica-Bold').fontSize(9).fillColor(color).text(r.label, rx + 4, rowY + 4, { width: summaryColW[0] - 8, lineBreak: false, ellipsis: true });
     rx += summaryColW[0];
@@ -6265,7 +6339,7 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
   ];
 
   results.forEach((r, idx) => {
-    const color = MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
+    const color = multiComparisonColor(r, idx);
     if (doc.y + 75 > doc.page.height - doc.page.margins.bottom) { doc.addPage(); doc.y = doc.page.margins.top; }
     const shY = doc.y;
     doc.rect(left, shY, contentWidth, 18).fillAndStroke(color, color);

@@ -225,7 +225,7 @@
     <div class="card">
       <div class="card-header align-items-center d-flex">
         <h4 class="card-title mb-0 flex-grow-1"><i class="ri-filter-3-line me-1"></i>Filter Partnerships</h4>
-        <button class="btn btn-soft-primary btn-sm" onclick="monitoringGenerateReport()" title="Open Reports &amp; Analytics with these same filters already applied"><i class="ri-file-chart-2-line me-1"></i>Generate Report</button>
+        <button class="btn btn-soft-primary btn-sm" onclick="monitoringGenerateReport()" title="Preview a report with these same filters, right here"><i class="ri-file-chart-2-line me-1"></i>Generate Report</button>
         <button class="btn btn-soft-danger btn-sm" onclick="clearFilters()"><i class="ri-refresh-line me-1"></i>Clear</button>
       </div>
       <div class="card-body py-3">
@@ -930,6 +930,76 @@
 </div>
 <!--end delete modal -->
 
+<!-- Generate Report preview (2026-11: replaces the old window.open(/reports?...) redirect — this reuses
+     the exact same /api/reports/custom/preview backend the Custom Report Builder's own Preview button calls
+     (views/administrator/reports.ejs, previewCustomReport()/renderReportPreview()), just rendered into a
+     modal on THIS page instead of navigating to Reports & Analytics. No separate reporting engine. -->
+<div class="modal fade zoomIn" id="monReportPreviewModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="flex-grow-1">
+          <h5 class="modal-title mb-1" id="mon-prev-title">Report Preview</h5>
+          <p class="text-muted fs-12 mb-0" id="mon-prev-meta"></p>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+
+        <!-- Loading state -->
+        <div id="mon-rpm-loading" class="text-center py-5">
+          <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading…</span></div>
+          <p class="text-muted mt-3 mb-0">Generating report…</p>
+        </div>
+
+        <!-- Error state — see reports.ejs's #rpm-error for why the display-toggle target stays free of any
+             `d-flex`/other !important display utility class. -->
+        <div id="mon-rpm-error" class="alert alert-danger" style="display:none;">
+          <div class="d-flex align-items-center gap-2">
+            <i class="ri-error-warning-line fs-4"></i>
+            <div class="flex-grow-1" id="mon-rpm-error-text">Something went wrong.</div>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="monitoringGenerateReport()">Retry</button>
+          </div>
+        </div>
+
+        <div id="mon-rpm-body" style="display:none;">
+          <div class="mb-3 d-flex align-items-center flex-wrap gap-1" id="mon-prev-filters"></div>
+          <div class="row g-3 mb-4" id="mon-prev-summary-cards"></div>
+
+          <div class="table-responsive" id="mon-prev-grouped-wrap" style="display:none;">
+            <div class="d-flex align-items-center mb-2">
+              <h6 class="fw-semibold mb-0 text-dark flex-grow-1"><i class="ri-bar-chart-2-line me-1 text-primary"></i>Grouped Breakdown</h6>
+            </div>
+            <table class="table table-sm table-bordered align-middle mb-0">
+              <thead class="bg-light"><tr id="mon-prev-grouped-thead-row"></tr></thead>
+              <tbody id="mon-prev-grouped-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="table-responsive" id="mon-prev-flat-wrap">
+            <div class="d-flex align-items-center mb-2">
+              <h6 class="fw-semibold mb-0 text-dark flex-grow-1"><i class="ri-list-check-2 me-1 text-primary"></i>Included Records (<span id="mon-prev-records-count">0</span>)</h6>
+            </div>
+            <table class="table table-sm table-bordered align-middle mb-0">
+              <thead class="bg-light">
+                <tr>
+                  <th>#</th><th>Institution</th><th>Country</th><th>Region</th><th>Type</th>
+                  <th>Nature</th><th>Unit</th><th>Start</th><th>End</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="mon-prev-records-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+<!-- end Generate Report preview -->
+
 <%- include('../partials/add_unit_modal') %>
 
 <!-- toast -->
@@ -998,6 +1068,9 @@
      Next/numbered-pages renderer below stays registry-gridjs.init.js's own existing buildPaginationHtml,
      unchanged, since it already does exactly the same thing. -->
 <script src="/js/ciprms-pagination.js"></script>
+<!-- Needed by monitoringGenerateReport()'s in-page report preview (registry-gridjs.init.js) for the same
+     status badge colors Reports & Analytics' own preview uses — see assets/js/shared/status-colors.js. -->
+<script src="/velzon/assets/js/shared/status-colors.js"></script>
 <!-- gridjs init — same script the standalone Registry page used; Monitoring
      is now this page's only home, see docs/SYSTEM_AUDIT_2026-07-16.md -->
 <script src="/velzon/assets/js/pages/registry-gridjs.init.js"></script>

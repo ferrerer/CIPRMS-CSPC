@@ -882,6 +882,65 @@
         }).join('');
     }
 
+    // Multiple-document submission (2026-11) — mirrors the Document Library's own multi-photo picker
+    // (views/administrator/documents.ejs: multiPhotoFiles/renderMultiPhotoList()) exactly: a plain array of
+    // picked File objects, re-rendered as removable chips, validated client-side before FormData is built.
+    var CDR_MAX_FILES = 10;
+    var CDR_MAX_FILE_BYTES = 10 * 1024 * 1024;
+    var cdrPendingFiles = [];
+
+    function cdrFmtFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function cdrShowSubError(msg) {
+        var box = document.getElementById('cdr-sub-error');
+        if (!box) return;
+        if (msg) { box.textContent = msg; box.classList.remove('d-none'); }
+        else { box.textContent = ''; box.classList.add('d-none'); }
+    }
+
+    function cdrRenderFileList() {
+        var list = document.getElementById('cdr-sub-file-list');
+        if (!list) return;
+        list.innerHTML = cdrPendingFiles.map(function (f, i) {
+            return '<div class="d-flex align-items-center justify-content-between border rounded p-2 mb-1">' +
+                '<span><i class="ri-file-line me-1"></i>' + escapeHtml(f.name) + ' <span class="text-muted fs-12">(' + cdrFmtFileSize(f.size) + ')</span></span>' +
+                '<button type="button" class="btn-close" data-i="' + i + '" aria-label="Remove ' + escapeHtml(f.name) + '"></button>' +
+                '</div>';
+        }).join('');
+        list.querySelectorAll('.btn-close').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                cdrPendingFiles.splice(parseInt(btn.getAttribute('data-i'), 10), 1);
+                cdrRenderFileList();
+            });
+        });
+        var countEl = document.getElementById('cdr-sub-file-count');
+        if (countEl) {
+            countEl.textContent = cdrPendingFiles.length
+                ? cdrPendingFiles.length + ' file' + (cdrPendingFiles.length === 1 ? '' : 's') + ' selected (max ' + CDR_MAX_FILES + ').'
+                : '';
+        }
+    }
+
+    function cdrOnFilesPicked(e) {
+        var picked = Array.from(e.target.files || []);
+        var errors = [];
+        picked.forEach(function (f) {
+            var ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
+            if (!['.pdf', '.jpg', '.jpeg', '.png'].includes(ext)) { errors.push('"' + f.name + '": unsupported file type.'); return; }
+            if (f.size > CDR_MAX_FILE_BYTES) { errors.push('"' + f.name + '": too large (max 10MB).'); return; }
+            if (cdrPendingFiles.length >= CDR_MAX_FILES) { errors.push('"' + f.name + '": skipped — maximum ' + CDR_MAX_FILES + ' files per submission.'); return; }
+            if (cdrPendingFiles.some(function (x) { return x.name === f.name && x.size === f.size; })) return; // already selected
+            cdrPendingFiles.push(f);
+        });
+        cdrRenderFileList();
+        cdrShowSubError(errors.join(' '));
+        e.target.value = ''; // lets the same filename be re-picked later if removed first
+    }
+
     function cdrDocListHtml(docs, emptyLabel) {
         if (!docs || !docs.length) return '<p class="text-muted mb-0">' + emptyLabel + '</p>';
         return docs.map(function (d) {
@@ -917,12 +976,25 @@
                     (canSubmit ? (
                         '<div class="border rounded p-3 mt-3 bg-light-subtle">' +
                         '<p class="mb-2"><strong>' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + ' Documents</strong></p>' +
-                        '<input type="file" class="form-control mb-2" id="cdr-sub-file">' +
-                        '<textarea class="form-control mb-2" id="cdr-sub-note" rows="2" placeholder="Note (optional if attaching a file)"></textarea>' +
-                        '<button class="btn btn-primary w-100" onclick="cdrSubmitDocuments(' + r.id + ')"><i class="ri-upload-cloud-2-line me-1"></i> ' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + '</button>' +
+                        '<input type="file" id="cdr-sub-file" class="d-none" accept=".pdf,.jpg,.jpeg,.png" multiple>' +
+                        '<button type="button" class="btn btn-sm btn-soft-primary mb-2" id="cdr-sub-pick-btn"><i class="ri-attachment-2 me-1"></i>Select Files</button>' +
+                        '<div id="cdr-sub-file-list"></div>' +
+                        '<div class="fs-12 text-muted mb-2" id="cdr-sub-file-count"></div>' +
+                        '<div class="alert alert-danger py-2 px-3 fs-13 mb-2 d-none" id="cdr-sub-error"></div>' +
+                        '<textarea class="form-control mb-2" id="cdr-sub-note" rows="2" placeholder="Note (optional if attaching at least one file)"></textarea>' +
+                        '<button class="btn btn-primary w-100" id="cdr-sub-btn" onclick="cdrSubmitDocuments(' + r.id + ')"><i class="ri-upload-cloud-2-line me-1"></i> ' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + '</button>' +
                         '</div>'
                     ) : '') +
                     '<p class="mb-1 mt-3"><strong>History</strong></p>' + cdrHistoryHtml(r.statusHistory);
+
+                cdrPendingFiles = [];
+                var pickBtn = document.getElementById('cdr-sub-pick-btn');
+                var pickInput = document.getElementById('cdr-sub-file');
+                if (pickBtn && pickInput) {
+                    pickBtn.addEventListener('click', function () { pickInput.click(); });
+                    pickInput.addEventListener('change', cdrOnFilesPicked);
+                }
+                cdrRenderFileList();
 
                 bootstrap.Modal.getOrCreateInstance(document.getElementById('cdr-detail-modal')).show();
             })
@@ -930,21 +1002,28 @@
     }
 
     function cdrSubmitDocuments(id) {
-        var fileInput = document.getElementById('cdr-sub-file');
         var note = document.getElementById('cdr-sub-note').value.trim();
-        if (!fileInput.files.length && !note) { showToast('<i class="ri-error-warning-line me-2"></i> Attach a file, add a note, or both.', '#f7b84b'); return; }
+        if (!cdrPendingFiles.length && !note) { showToast('<i class="ri-error-warning-line me-2"></i> Attach at least one file, add a note, or both.', '#f7b84b'); return; }
         var fd = new FormData();
-        if (fileInput.files.length) fd.append('document', fileInput.files[0]);
+        cdrPendingFiles.forEach(function (f) { fd.append('documents', f); });
         fd.append('note', note);
+        var btn = document.getElementById('cdr-sub-btn');
+        var origHtml = btn ? btn.innerHTML : '';
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Submitting…'; }
         fetch('/api/college-requests/' + id + '/documents', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'ciprms' } })
             .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
             .then(function (res) {
+                if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
                 if (!res.ok) { showToast('<i class="ri-error-warning-line me-2"></i> ' + (res.body.error || 'Submission failed.'), '#f06548'); return; }
-                showToast('<i class="ri-checkbox-circle-line me-2"></i> Submitted successfully.', '#15803d');
+                cdrPendingFiles = [];
+                showToast('<i class="ri-checkbox-circle-line me-2"></i> Submitted successfully' + (res.body.documents && res.body.documents.length > 1 ? ' (' + res.body.documents.length + ' files).' : '.'), '#15803d');
                 bootstrap.Modal.getInstance(document.getElementById('cdr-detail-modal')).hide();
                 cdrLoadList();
             })
-            .catch(function () { showToast('<i class="ri-error-warning-line me-2"></i> Network error during submission.', '#f06548'); });
+            .catch(function () {
+                if (btn) { btn.disabled = false; btn.innerHTML = origHtml; }
+                showToast('<i class="ri-error-warning-line me-2"></i> Network error during submission.', '#f06548');
+            });
     }
 
     /* ═══ SUBMISSION OF APPROVED MOA/MOU — College Partnership Report (2026-09-26) ═══

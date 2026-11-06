@@ -1852,9 +1852,10 @@
 
             // Summary table: one row per comparison, from an iterated array.
             var summaryTbody = document.getElementById('cmp-summary-tbody');
-            summaryTbody.innerHTML = results.map(function (r) {
+            summaryTbody.innerHTML = results.map(function (r, i) {
+                var swatch = '<span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:' + multiComparisonColor(r, i) + ';margin-right:6px;"></span>';
                 return '<tr>' +
-                    '<td class="fw-semibold">' + escapeHtml(r.label) + '</td>' +
+                    '<td class="fw-semibold">' + swatch + escapeHtml(r.label) + '</td>' +
                     '<td>' + r.count + '</td>' +
                     '<td>' + Number(r.percentage).toFixed(1) + '%</td>' +
                     '</tr>';
@@ -1864,12 +1865,13 @@
             // same array, so which records belong to which configuration is
             // always unambiguous.
             var configResultsEl = document.getElementById('cmp-config-results');
-            configResultsEl.innerHTML = results.map(function (r) {
+            configResultsEl.innerHTML = results.map(function (r, i) {
                 var tbodyId = 'cmp-records-' + r.id;
+                var swatch = '<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + multiComparisonColor(r, i) + ';margin-right:6px;"></span>';
                 return '' +
                     '<div class="card border mb-3">' +
                     '  <div class="card-header bg-light d-flex align-items-center justify-content-between">' +
-                    '    <h6 class="fw-semibold mb-0">' + escapeHtml(r.label) + '</h6>' +
+                    '    <h6 class="fw-semibold mb-0">' + swatch + escapeHtml(r.label) + '</h6>' +
                     '    <span class="badge bg-primary-subtle text-primary">' + r.count + ' partnership' + (r.count === 1 ? '' : 's') + ' • ' + Number(r.percentage).toFixed(1) + '%</span>' +
                     '  </div>' +
                     '  <div class="table-responsive">' +
@@ -1887,11 +1889,10 @@
             var chartEl = document.getElementById('cmp-apex-chart');
             chartEl.innerHTML = '';
             if (typeof ApexCharts !== 'undefined') {
-                var colors = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
                 _cmpChartInstance = new ApexCharts(chartEl, {
                     series: [{ name: 'Partnerships', data: results.map(function (r) { return r.count; }) }],
                     chart: { type: 'bar', height: 180 + (results.length * 20), toolbar: { show: false }, fontFamily: 'inherit' },
-                    colors: results.map(function (r, i) { return colors[i % colors.length]; }),
+                    colors: results.map(function (r, i) { return multiComparisonColor(r, i); }),
                     plotOptions: { bar: { horizontal: true, barHeight: '55%', borderRadius: 4, distributed: true } },
                     dataLabels: { enabled: true },
                     xaxis: { categories: results.map(function (r) { return r.label; }) },
@@ -1907,12 +1908,11 @@
             var pieEl = document.getElementById('cmp-pie-chart');
             pieEl.innerHTML = '';
             if (typeof ApexCharts !== 'undefined') {
-                var pieColors = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
                 _cmpPieChartInstance = new ApexCharts(pieEl, {
                     series: results.map(function (r) { return r.count; }),
                     labels: results.map(function (r) { return r.label; }),
                     chart: { type: 'donut', height: 260 + (results.length * 20), fontFamily: 'inherit' },
-                    colors: results.map(function (r, i) { return pieColors[i % pieColors.length]; }),
+                    colors: results.map(function (r, i) { return multiComparisonColor(r, i); }),
                     dataLabels: { enabled: true, formatter: function (val) { return val.toFixed(1) + '%'; } },
                     legend: { show: true, position: 'bottom' },
                     tooltip: { y: { formatter: function (val) { return val + ' partnership' + (val === 1 ? '' : 's'); } } },
@@ -1920,6 +1920,20 @@
                 });
                 _cmpPieChartInstance.render();
             }
+        }
+
+        // Server-side twin of cirl.js's multiComparisonColor() (the browser has no require() to share the
+        // one function) — kept in exact sync so Preview's chart/legend/tooltips and the exported PDF never
+        // disagree. Root cause this fixes: colors used to cycle purely by array position, so the same status
+        // (e.g. Active) could render red in one comparison and green in another depending only on slot order.
+        // A comparison restricted to exactly one real status (filters.status is not 'All') always gets that
+        // status's own semantic color; only a non-status comparison (by Unit/Country/date range/etc.) falls
+        // back to the fixed, position-based palette.
+        var MULTI_COMPARISON_COLORS = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
+        function multiComparisonColor(r, idx) {
+            var status = r.filters && r.filters.status;
+            if (status && status !== 'All' && CIPRMS_STATUS_COLORS.isKnownStatus(status)) return CIPRMS_STATUS_COLORS.hex(status);
+            return MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
         }
 
         function changeComparison() {
