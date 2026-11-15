@@ -104,6 +104,17 @@ async function connectDB() {
     } catch (indexErr) {
       console.error('⚠️  Could not create unique index on geocodecache.key:', indexErr.message);
     }
+    // 2026-11 Gemini AI Integration (Phase 1): cache of validated Gemini insight responses, keyed by
+    // a hash of {scope, dataFingerprint, modelId, promptVersion, schemaVersion} (services/
+    // aiInsightService.js). A brand-new collection, same non-fatal precedent as the indexes above.
+    // The TTL index auto-expires entries past expiresAt — a belt-and-suspenders backstop alongside
+    // the service's own expiry check, not a replacement for it.
+    try {
+      await db.collection('aiinsightscache').createIndex({ cacheKey: 1 }, { unique: true });
+      await db.collection('aiinsightscache').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+    } catch (indexErr) {
+      console.error('⚠️  Could not create index(es) on aiinsightscache:', indexErr.message);
+    }
     // 2026-09-17 performance fix: every "get next sequential id" write path
     // in this app (partnerships, users, requests, documentrequests,
     // documentfolders, activitylogs, notifications, calendarevents, targets —

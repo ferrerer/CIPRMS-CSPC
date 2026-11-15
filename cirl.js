@@ -35,6 +35,10 @@ const notificationService = require('./services/notificationService');
 const realtime = require('./services/realtime');
 const searchService = require('./services/searchService');
 const geocoding = require('./services/geocodingService');
+const { computeStatusFromEnd, LIFECYCLE_EXPIRING_WINDOW_DAYS } = require('./services/partnershipStatus');
+const strategicAnalyticsService = require('./services/strategicAnalyticsService');
+const aiInsightService = require('./services/aiInsightService');
+const analyticsIntentService = require('./services/analyticsIntentService');
 const uploadAvatar = require('./middleware/avatarUploadMiddleware');
 const uploadDoc = require('./middleware/uploadMiddleware');
 const verifyMagicBytes = require('./middleware/verifyMagicBytes');
@@ -7499,31 +7503,15 @@ function drLinkForRole(role, id) {
 }
 
 // ── LIFECYCLE AUTOMATION — status computation & notification generation ──────
-const LIFECYCLE_EXPIRING_WINDOW_DAYS = 90;
+// computeStatusFromEnd/LIFECYCLE_EXPIRING_WINDOW_DAYS now live in
+// services/partnershipStatus.js (required near the top of this file) so the
+// new strategicAnalyticsService can reuse the identical rule rather than
+// duplicating it — this is the SINGLE authoritative status rule for every
+// part of the app that computes a status rather than reading one already
+// stored (Reports & Analytics, the Dashboard widget, this file's hourly
+// lifecycle job, and every client-side computeStatus/computeEditStatus/
+// computeRenewStatus in lifecycle-gridjs.init.js and registry-gridjs.init.js).
 const LIFECYCLE_CHECK_INTERVAL_MS = parseInt(process.env.LIFECYCLE_CHECK_INTERVAL_MS, 10) || 60 * 60 * 1000; // hourly by default
-
-/**
- * Derives a partnership's status purely from its end date — the SINGLE authoritative rule for every part of
- * the app that computes a status rather than reading one already stored (Reports & Analytics, the Dashboard
- * widget, this file's hourly lifecycle job, and every client-side computeStatus/computeEditStatus/
- * computeRenewStatus in lifecycle-gridjs.init.js and registry-gridjs.init.js — all independently written but
- * all already using this same boundary; see the 2026-11 Phase 2 fix note below for the one place that didn't).
- *
- * Agreed day boundaries (days = ceil((end date) − (now), in days)):
- *   days > 90   → Active
- *   0 < days <= 90  → Expiring Soon   (includes the day before expiry, days === 1)
- *   days === 0  → Expiring Soon   (the expiry date itself — still counted as not yet expired for the
- *                                  whole of that day; it only becomes Expired once that date is in the past)
- *   days < 0    → Expired         (the day after expiry onward)
- */
-function computeStatusFromEnd(endStr) {
-  const end = new Date(endStr);
-  if (isNaN(end)) return null; // unparseable/missing end date — leave the record alone
-  const daysLeft = Math.ceil((end - new Date()) / 86400000);
-  if (daysLeft < 0) return 'Expired';
-  if (daysLeft <= LIFECYCLE_EXPIRING_WINDOW_DAYS) return 'Expiring Soon';
-  return 'Active';
-}
 
 /**
  * Recomputes every partnership's status from its end date and creates a
@@ -9727,11 +9715,123 @@ app.delete('/api/targets/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// ── GEMINI AI STRATEGIC INSIGHTS (2026-11, Phase 1 — backend only, no UI yet) ───────────────────
+// Staff/Admin only (requireStaffAccess, same gate as Reports/Monitoring/Targets-viewing — no new
+// role, no weakened permission). Auth. Personnel and potential_partner get no access here, the same
+// way they already have none of the routes above. Real-data generation stays blocked by
+// aiInsightService's own institutional-approval gate regardless of this route's RBAC passing —
+// RBAC answers "who may ask," the gate answers "whether asking may reach Gemini at all."
+const aiInsightsLimiter = makeRateLimiter('Too many AI insight requests. Please wait and try again.');
+
+app.post('/api/ai-insights', aiInsightsLimiter, requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    const targets = await db.collection('targets').find({}).sort({ year: -1, month: -1 }).toArray();
+    const targetsWithProgress = await withTargetProgress(db, targets);
+    const result = await aiInsightService.getAiInsights(db, req.session.user, {
+      generate: req.body.generate, forceRefresh: req.body.forceRefresh, targetsWithProgress
+    });
+    const outcome = result.aiBlocked ? 'blocked' : (result.error ? 'error' : (result.ai ? 'success' : 'cache_miss'));
+    await logActivity(db, req.session.user, 'AI_INSIGHT_REQUEST', `AI strategic insights requested (${result.cacheStatus || 'n/a'})`, {
+      category: 'AI_INSIGHT', status: outcome,
+      details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
+    });
+    res.json(result);
+  } catch (err) {
+    if (err && err.status === 400) return res.status(400).json({ error: err.message });
+    console.error('❌ AI insights error:', err);
+    res.status(500).json({ error: 'Unable to load AI insights right now. Please try again.' });
+  }
+});
+
+app.post('/api/ai-insights/executive-briefing', aiInsightsLimiter, requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    const targets = await db.collection('targets').find({}).sort({ year: -1, month: -1 }).toArray();
+    const targetsWithProgress = await withTargetProgress(db, targets);
+    const result = await aiInsightService.getAiInsights(db, req.session.user, {
+      scope: 'briefing', generate: req.body.generate, forceRefresh: req.body.forceRefresh, targetsWithProgress
+    });
+    const outcome = result.aiBlocked ? 'blocked' : (result.error ? 'error' : (result.ai ? 'success' : 'cache_miss'));
+    await logActivity(db, req.session.user, 'AI_BRIEFING_REQUEST', `Executive briefing requested (${result.cacheStatus || 'n/a'})`, {
+      category: 'AI_INSIGHT', status: outcome,
+      details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
+    });
+    res.json(result);
+  } catch (err) {
+    if (err && err.status === 400) return res.status(400).json({ error: err.message });
+    console.error('❌ Executive briefing error:', err);
+    res.status(500).json({ error: 'Unable to generate the executive briefing right now. Please try again.' });
+  }
+});
+
+// ── NATURAL-LANGUAGE ANALYTICS ASSISTANT (2026-11, Phase 3) ─────────────────────────────────────
+// Same RBAC/rate-limit gate as the two routes above. Gemini only ever sees (1) the question text,
+// to classify into one of analyticsIntentService's fixed intent ids, and (2) a server-built,
+// allowlist-constructed indicator catalog, to interpret — it never receives DB access, never
+// chooses a collection/field/filter, and never generates a query or executable code. The actual
+// data for each intent comes from the SAME existing, unmodified functions every other report/
+// target route already uses (computeCustomReportData, withTargetProgress, strategicAnalyticsService)
+// — this dispatcher calls them, it does not reimplement them.
+app.post('/api/ai-insights/ask', aiInsightsLimiter, requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    const result = await analyticsIntentService.askQuestion(db, req.session.user, req.body.question, {
+      executeIntent: async (db, intent, user) => {
+        switch (intent) {
+          case 'opportunity_ranking': {
+            const targets = await db.collection('targets').find({}).sort({ year: -1, month: -1 }).toArray();
+            const targetsWithProgress = await withTargetProgress(db, targets);
+            return (await strategicAnalyticsService.computeSnapshot(db, { targetsWithProgress })).ranking;
+          }
+          case 'target_progress': {
+            const targets = await db.collection('targets').find({}).sort({ year: -1, month: -1 }).toArray();
+            const targetsWithProgress = await withTargetProgress(db, targets);
+            return strategicAnalyticsService.computeTargetGapSummary(targetsWithProgress);
+          }
+          case 'region_breakdown':
+            return computeCustomReportData(db, { groupBy: 'region' }, user);
+          case 'category_breakdown':
+            return computeCustomReportData(db, { groupBy: 'cat' }, user);
+          case 'institutional_summary':
+            return computeCustomReportData(db, {}, user);
+          default: {
+            const e = new Error('Unsupported intent'); e.status = 400; throw e;
+          }
+        }
+      }
+    });
+    const outcome = result.aiBlocked ? 'blocked' : result.unsupported ? 'unsupported' : result.error ? 'error' : (result.answer ? 'success' : 'cache_miss');
+    // The free-text question itself is never logged — only the classified intent (a fixed enum
+    // value) and cache/outcome metadata, matching the no-raw-content audit convention already
+    // established for the other two AI routes above.
+    await logActivity(db, req.session.user, 'AI_ASK_REQUEST', `AI analytics question asked (intent: ${result.intent || 'none'}, ${outcome})`, {
+      category: 'AI_INSIGHT', status: outcome,
+      details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus, intent: result.intent }
+    });
+    res.json(result);
+  } catch (err) {
+    if (err && err.status === 400) return res.status(400).json({ error: err.message });
+    console.error('❌ AI ask error:', err);
+    res.status(500).json({ error: 'Unable to process that question right now. Please try again.' });
+  }
+});
+
 async function computeDashboardStats(db) {
   const [allPartnerships, allRequests] = await Promise.all([
     db.collection('partnerships').find({}).toArray(),
     db.collection('requests').find({}).toArray()
   ]);
+
+  // Recompute each partnership's status live from its end date — the same pattern already used
+  // by /api/partnerships/stats, computeCustomReportData, and the comparison-report builder. The
+  // stored `status` field is only refreshed by the hourly lifecycle job and can be stale by up to
+  // an hour (see the comment on activePartnerships below); without this, the stat cards and DSS
+  // insights below could disagree with every other status-dependent view in the app.
+  allPartnerships.forEach(p => {
+    const calcStatus = computeStatusFromEnd(p.end);
+    if (calcStatus) p.status = calcStatus;
+  });
 
   // ── Stat counters ─────────────────────────────────────────────────────────
   const dashActive = allPartnerships.filter(p => p.status === 'Active').length;
