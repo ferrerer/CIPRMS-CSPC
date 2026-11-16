@@ -65,7 +65,14 @@ async function findPossibleDuplicates(db, extraction, meta = {}) {
   }
   if (orClauses.length === 0) return { found: false, matches: [] };
 
-  const candidates = await db.collection('documents').find({ $or: orClauses }).limit(30).toArray();
+  // LAU Internal Review Uploads (2026-11) — excluded from duplicate-detection candidates. Without this, a
+  // requester uploading any unrelated document through the normal OCR flow, for the SAME institution an LAU
+  // reviewer already left an internal review on, would get that review document back in `matches` (with its
+  // real title/fileLink — see the mapped shape below) purely because the institution name matched. It is
+  // also simply the wrong category to ever flag as a duplicate of an MOA/MOU/Accreditation upload.
+  const candidates = await db.collection('documents')
+    .find({ $or: orClauses, requestType: { $ne: 'partnership-lau-review' } })
+    .limit(30).toArray();
   const type = extraction ? shortDocType(extraction.documentType) : null;
   const rawText = extraction ? extraction.rawText : null;
 

@@ -934,6 +934,45 @@
           <div id="pr-draft-closed-note" class="alert alert-secondary fs-13 mb-0" style="display:none;">
             <i class="ri-lock-line me-1"></i>This request has already been decided — no further documents can be added.
           </div>
+
+          <!-- LAU Internal Review (2026-11) — hidden entirely (default) for every role except LAU and
+               Administrator/Staff, toggled in openDraftModal(). The requester never reaches this markup at
+               all: its own Monitoring page is a separate template (auth. personnel/personnel_requests.ejs,
+               potential_partner/partner_requests.ejs) that never includes this section, and the server
+               strips the underlying lauReviews field from every response it receives regardless. -->
+          <div id="pr-lau-review-wrap" class="border-top pt-3 mt-3" style="display:none;">
+            <h6 class="fs-14 fw-bold text-dark mb-2"><i class="ri-shield-check-line me-1 text-primary"></i>LAU Internal Review</h6>
+            <div id="pr-lau-review-list" class="mb-3"></div>
+            <div id="pr-lau-review-form" style="display:none;">
+              <div class="mb-3">
+                <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-file">Revised Document (Optional)</label>
+                <input type="file" class="form-control" id="pr-lau-file" accept=".pdf,.jpg,.jpeg,.png">
+              </div>
+              <div class="mb-3">
+                <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-note">Notes (Optional)</label>
+                <textarea class="form-control" id="pr-lau-note" rows="2" placeholder="Add your internal review notes..."></textarea>
+              </div>
+              <div class="mb-3">
+                <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-status">Status (Optional)</label>
+                <select class="form-select" id="pr-lau-status">
+                  <option value="">— Select —</option>
+                  <option value="Approve">Approve</option>
+                  <option value="Approve with Revision">Approve with Revision</option>
+                  <option value="Not Approve">Not Approve</option>
+                </select>
+              </div>
+              <button type="button" class="btn btn-primary px-3 fs-13" id="pr-lau-submit-btn" onclick="submitLauReview()">
+                <i class="ri-send-plane-line me-1"></i>Submit Internal Review
+              </button>
+              <p class="text-muted fs-12 mt-2 mb-0">A revised document, notes, a status, or any combination — at least one is required. Visible only to Administrator, CIRL Staff, and you — never to the requester.</p>
+            </div>
+            <!-- Lock Partnership Request Uploads After Approval (2026-11) — mirrors pr-draft-closed-note's
+                 wording/visibility rule (closed = Approved/Rejected/Withdrawn), shown in place of the form
+                 above rather than inside it. Existing reviews above remain visible either way. -->
+            <div id="pr-lau-review-closed-note" class="alert alert-secondary fs-13 mb-0" style="display:none;">
+              <i class="ri-lock-line me-1"></i>This request has already been decided — no further internal reviews can be submitted.
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
@@ -1720,7 +1759,12 @@
       if (String(currentPRId) !== String(requestId) || !document.getElementById('pr-gdocs-box')) return; // another request was opened meanwhile
       if (!res.ok) { box.innerHTML = `<p class="text-danger fs-12 mb-0">Could not load Google Docs drafts: ${escapeHtml(res.error || 'error')}</p>`; return; }
       const { connected, docs } = res.data;
-      const createButtons = connected
+      // Lock Partnership Request Uploads After Approval (2026-11) — a new MOA/MOU draft is content tied
+      // to the request, same lock as the draft-upload/LAU-review forms (server-side: isRequestUploadLocked
+      // on POST .../google-docs). Existing drafts (docs.map(gdocItemHtml) below) stay visible either way.
+      const r = prData.find(x => String(x.id) === String(requestId));
+      const closed = !!r && ['Approved', 'Rejected', 'Withdrawn'].includes(r.status);
+      const createButtons = (connected && !closed)
         ? `<div class="d-flex gap-1">
              <button type="button" class="btn btn-sm btn-soft-primary" onclick="createGoogleDoc(${requestId}, 'MOA', this)"><i class="ri-add-line me-1"></i>MOA draft</button>
              <button type="button" class="btn btn-sm btn-soft-primary" onclick="createGoogleDoc(${requestId}, 'MOU', this)"><i class="ri-add-line me-1"></i>MOU draft</button>
@@ -1730,9 +1774,11 @@
         <div class="d-flex align-items-center justify-content-between gap-2 mb-2 flex-wrap">
           <div>
             <p class="detail-label mb-1">Agreement Draft (Google Docs)</p>
-            <p class="text-muted fs-12 mb-0">${connected
-              ? 'Write the MOA/MOU together in Google Docs. Staff edit, the partner comments, deans of the unit view.'
-              : 'Google Docs is not connected. An Administrator can connect it in Settings → Integrations.'}</p>
+            <p class="text-muted fs-12 mb-0">${closed
+              ? 'This request has already been decided — no new draft can be started.'
+              : connected
+                ? 'Write the MOA/MOU together in Google Docs. Staff edit, the partner comments, deans of the unit view.'
+                : 'Google Docs is not connected. An Administrator can connect it in Settings → Integrations.'}</p>
           </div>
           ${createButtons}
         </div>
@@ -2005,6 +2051,43 @@
         : '<p class="text-muted fs-13 mb-0">No draft documents yet.</p>';
     }
 
+    /* ─── LAU INTERNAL REVIEW (2026-11) ───
+       A separate, read-only list from the draft timeline above — r.lauReviews only ever contains what the
+       server decided THIS viewer (Administrator/Staff: every entry; LAU: only their own) is allowed to see;
+       the requester's own response never has the field at all, so this never renders for that role. */
+    var LAU_STATUS_BADGE = { 'Approve': 'success', 'Approve with Revision': 'warning', 'Not Approve': 'danger' };
+    function lauReviewItemHtml(item) {
+      const when = item.submittedAt
+        ? new Date(item.submittedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : '—';
+      const badgeColor = LAU_STATUS_BADGE[item.status] || 'secondary';
+      const statusBadge = item.status ? `<span class="badge bg-${badgeColor}-subtle text-${badgeColor} fs-10 ms-1">${escapeHtml(item.status)}</span>` : '';
+      const safeLink = item.fileLink ? sanitizeUrl(item.fileLink) : null;
+      const sizeStr = fmtFileSize(item.fileSize);
+      const fileRow = item.fileLink
+        ? `<div class="fs-13 fw-medium mt-1">${escapeHtml(item.originalFilename || 'Document')}${sizeStr ? ` <span class="text-muted fs-12">(${sizeStr})</span>` : ''}</div>
+           <div class="mt-2">${safeLink ? `<a href="${safeLink}" download="${escapeHtml(item.originalFilename || 'document')}" class="btn btn-sm btn-soft-success"><i class="ri-download-2-line me-1"></i>Download</a>` : '<span class="text-muted fs-12">Link unavailable</span>'}</div>`
+        : '';
+      return `<div class="d-flex gap-3 mb-3 draft-item">
+        <div class="flex-shrink-0"><span class="avatar-title bg-primary-subtle text-primary rounded-circle" style="width:36px;height:36px;"><i class="ri-shield-check-line"></i></span></div>
+        <div class="flex-grow-1 border rounded p-3 draft-card">
+          <div class="d-flex justify-content-between flex-wrap gap-1">
+            <div><span class="fw-semibold fs-13">${escapeHtml(item.submittedBy || 'LAU')}</span>${statusBadge}</div>
+            <span class="text-muted fs-12">${when}</span>
+          </div>
+          ${item.note ? `<div class="fs-13 text-muted mt-1 fst-italic">"${escapeHtml(item.note)}"</div>` : ''}
+          ${fileRow}
+        </div>
+      </div>`;
+    }
+    function renderLauReviewList(r) {
+      const items = r.lauReviews || [];
+      const wrap = document.getElementById('pr-lau-review-list');
+      wrap.innerHTML = items.length
+        ? items.map(lauReviewItemHtml).join('')
+        : '<p class="text-muted fs-13 mb-0">No internal reviews yet.</p>';
+    }
+
     /* ═══════════════════════════════════════════════════════
        DOCUMENT REQUEST DRAFT / DOCUMENT COLLABORATION TIMELINE
        Mirrors the Partnership Request timeline above, sharing every helper
@@ -2183,6 +2266,22 @@
       document.getElementById('pr-draft-file').value = '';
       if (window.prDraftDropzone) window.prDraftDropzone.removeFile();
       document.getElementById('pr-draft-note').value = '';
+
+      // LAU Internal Review (2026-11) — the read-only list shows for LAU and Administrator/Staff (IS_ADMIN
+      // already means Administrator-or-Staff, see its declaration above); the submit form shows for LAU
+      // only. Neither ever shows for any other role — r itself has no lauReviews field at all for those
+      // roles' own API responses, so renderLauReviewList has nothing to render even if this were skipped.
+      document.getElementById('pr-lau-review-wrap').style.display = (IS_LAU || IS_ADMIN) ? '' : 'none';
+      // Lock Partnership Request Uploads After Approval (2026-11) — the submit form is now ALSO gated by
+      // `closed` (same Approved/Rejected/Withdrawn check as the draft-upload form above); the read-only
+      // review list above it stays visible either way, since viewing/downloading past reviews is kept.
+      document.getElementById('pr-lau-review-form').style.display = (IS_LAU && !closed) ? '' : 'none';
+      document.getElementById('pr-lau-review-closed-note').style.display = (IS_LAU && closed) ? '' : 'none';
+      renderLauReviewList(r);
+      document.getElementById('pr-lau-file').value = '';
+      document.getElementById('pr-lau-note').value = '';
+      document.getElementById('pr-lau-status').value = '';
+
       setBreadcrumb(['Requests', 'Partnership Request', prRequestLabel(r), 'Draft Collaboration']);
       swapToModal('pr-draft-modal', 'pr-modal');
     }
@@ -2216,6 +2315,48 @@
         if (window.prDraftDropzone) window.prDraftDropzone.removeFile();
         noteInput.value = '';
         showToast('<i class="ri-checkbox-circle-line me-1"></i>New draft version uploaded.', '#0ab39c');
+      } catch (e) {
+        showToast('<i class="ri-error-warning-line me-1"></i>' + e.message, '#f06548');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalBtnHtml;
+      }
+    }
+
+    // LAU Internal Review (2026-11) — POST /api/requests/:id/lau-review returns only the new review entry
+    // itself (not the whole updated request, unlike uploadDraftDocument above), since it never changes
+    // anything else on the request — pushed locally into prData's cached copy so the list re-renders
+    // without a full refetch.
+    async function submitLauReview() {
+      const fileInput = document.getElementById('pr-lau-file');
+      const noteInput = document.getElementById('pr-lau-note');
+      const statusSelect = document.getElementById('pr-lau-status');
+      const file = fileInput.files[0];
+      const note = noteInput.value.trim();
+      const status = statusSelect.value;
+      if (!currentPRId) return;
+      if (!file && !note && !status) return showToast('<i class="ri-error-warning-line me-1"></i>Add a revised document, notes, a status, or any combination.', '#f06548');
+      const btn = document.getElementById('pr-lau-submit-btn');
+      const originalBtnHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Submitting…';
+      const formData = new FormData();
+      if (file) formData.append('document', file);
+      formData.append('note', note);
+      formData.append('status', status);
+      try {
+        const res = await CIPRMS.api('/api/requests/' + currentPRId + '/lau-review', { method: 'POST', body: formData, quiet: true });
+        if (!res.ok) throw new Error(res.error || 'Submit failed.');
+        const r = prData.find(x => String(x.id) === currentPRId);
+        if (r) {
+          if (!r.lauReviews) r.lauReviews = [];
+          r.lauReviews.push(res.data.review);
+          renderLauReviewList(r);
+        }
+        fileInput.value = '';
+        noteInput.value = '';
+        statusSelect.value = '';
+        showToast('<i class="ri-checkbox-circle-line me-1"></i>Internal review submitted.', '#0ab39c');
       } catch (e) {
         showToast('<i class="ri-error-warning-line me-1"></i>' + e.message, '#f06548');
       } finally {

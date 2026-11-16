@@ -117,8 +117,14 @@ async function searchDocumentRequests(db, q, pattern, limit) {
 }
 
 async function searchDocuments(db, q, pattern, limit) {
+  // LAU Internal Review Uploads (2026-11) — excluded from this search even though it is Admin/Staff-only
+  // (GET /api/search is requireStaffAccess): this index is for the Document Library's own MOA/MOU/
+  // Accreditation content, and an LAU review surfacing here mixed in with ordinary documents is exactly
+  // the kind of "found through library search" exposure this feature's leak audit flagged — Admin/Staff
+  // already see every LAU review in its proper place, the request's own draft modal.
+  const notLauReview = { requestType: { $ne: 'partnership-lau-review' } };
   const shortFields = ['title', 'originalFilename', 'type', 'institution', 'partner', 'issuingBody', 'country', 'nature', 'unit'];
-  const byMetadata = await db.collection('documents').find(fieldsRegexFilter(shortFields, pattern)).limit(limit).toArray();
+  const byMetadata = await db.collection('documents').find({ ...fieldsRegexFilter(shortFields, pattern), ...notLauReview }).limit(limit).toArray();
 
   // Full-text content search — uses the text index created once in db.js (see the 2026-09-22 comment there) to avoid
   // a full collection scan of every stored ocrText on every keystroke. Wrapped in its own try/catch: if the index
@@ -135,7 +141,7 @@ async function searchDocuments(db, q, pattern, limit) {
   let byContent = [];
   try {
     byContent = await db.collection('documents')
-      .find({ $text: { $search: q } })
+      .find({ $text: { $search: q }, ...notLauReview })
       .limit(limit * 4)
       .toArray();
   } catch (_) { /* no text index yet — metadata search still covers this collection */ }

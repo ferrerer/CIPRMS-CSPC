@@ -666,18 +666,36 @@ function requireStaffAccess(req, res, next) {
 /**
  * Requires Administrator OR LAU role (2026-10) — LAU is a read-only Partnership Request monitoring role.
  * Mirrors requirePersonnel/requireStaffAccess's dual-role convention: Administrator can always reach a
- * role-specific page too. LAU has no write authority anywhere in the app — it is deliberately never added
- * to REQUEST_REVIEWER_ROLES, requireStaffAccess, requireRequester, or requireUploader (which also gate
- * Document Request review, draft/request creation, and document-library/OCR writes respectively). The two
- * narrow, read-only exceptions that admit it are REQUEST_VIEW_ALL_ROLES (full Partnership Request
- * visibility, see GET /api/requests below) and requireFileAccess (its own supporting-document attachments,
- * see GET /uploads/documents/:filename below) — both additive and read-only, not broadening either shared
- * gate itself.
+ * role-specific page too. LAU has no write authority over the Partnership Request workflow itself — it is
+ * deliberately never added to REQUEST_REVIEWER_ROLES, requireStaffAccess, requireRequester, or
+ * requireUploader (which also gate Document Request review, draft/request creation, and document-
+ * library/OCR writes respectively). The two narrow, read-only exceptions that admit it are
+ * REQUEST_VIEW_ALL_ROLES (full Partnership Request visibility, see GET /api/requests below) and
+ * requireFileAccess (its own supporting-document attachments, see GET /uploads/documents/:filename below)
+ * — both additive and read-only, not broadening either shared gate itself.
+ *
+ * LAU Internal Review Uploads (2026-11) is the one deliberate exception to "no write authority": LAU may
+ * submit its own internal review (a revised document / notes / status, never the requester's own request
+ * fields) via requireLauOnly below — a separate, narrower guard, not a relaxation of requireLau itself.
  */
 function requireLau(req, res, next) {
   const user = req.session && req.session.user;
   if (!user) return denyAccess(req, res, 401, '/');
   if (user.role === 'Administrator' || user.role === 'LAU') return next();
+  return denyAccess(req, res, 403, homeForRole(user.role));
+}
+
+/**
+ * Requires LAU specifically (NOT Administrator — unlike every other requireX guard's dual-role
+ * convention). LAU Internal Review Uploads (2026-11) is scoped to the LAU role alone per the feature
+ * request: Administrator/Staff review what LAU submits, they do not submit it themselves through this
+ * route. Administrator already has every other avenue to act on a Partnership Request (PATCH
+ * /api/requests/:id, POST /api/requests/:id/documents) — this route is deliberately not a third one.
+ */
+function requireLauOnly(req, res, next) {
+  const user = req.session && req.session.user;
+  if (!user) return denyAccess(req, res, 401, '/');
+  if (user.role === 'LAU') return next();
   return denyAccess(req, res, 403, homeForRole(user.role));
 }
 
@@ -1392,6 +1410,30 @@ const REQUEST_REVIEWER_ROLES = ['Administrator', 'Staff'];
 // see its own declaration-site comment above and every other usage of REQUEST_REVIEWER_ROLES in this file).
 // Adding LAU to REQUEST_REVIEWER_ROLES directly would have silently granted it all of that too.
 const REQUEST_VIEW_ALL_ROLES = [...REQUEST_REVIEWER_ROLES, 'LAU'];
+
+// LAU Internal Review Uploads (2026-11) — the LAU-only status dropdown. Independent of the Partnership
+// Request's own workflow status (Draft/Pending/Under Review/Approved/Rejected/Withdrawn, validated
+// elsewhere): an internal annotation only, never written into `requests.status` and never shown to the
+// request's own submitter. See scopeLauReviewsForViewer below for the visibility rule itself.
+const LAU_REVIEW_STATUSES = ['Approve', 'Approve with Revision', 'Not Approve'];
+
+/**
+ * lauReviews must never reach the request's own submitter — server-side, not just hidden in the UI.
+ * Administrator, Staff, AND LAU (2026-11 decision: every LAU user sees every LAU review, not just their
+ * own — matches REQUEST_VIEW_ALL_ROLES's existing org-wide visibility convention for the request itself)
+ * see the full array unchanged; every other role — the requester above all — never receives the field at
+ * all. Applied to every response that sends a full `requests` document back to the client; a document
+ * with no `lauReviews` field yet (never reviewed) is returned unchanged.
+ */
+function scopeLauReviewsForViewer(doc, user) {
+  if (!doc || !('lauReviews' in doc)) return doc;
+  const role = user && user.role;
+  const copy = { ...doc };
+  if (role === 'Administrator' || role === 'Staff' || role === 'LAU') return copy;
+  delete copy.lauReviews;
+  return copy;
+}
+
 app.get('/api/requests', requireAuth, async (req, res) => {
   try {
     const db = getDb();
@@ -1406,7 +1448,7 @@ app.get('/api/requests', requireAuth, async (req, res) => {
     // action (approve/reject/edit), which would reorder the list by "last
     // touched" instead of "newly submitted" every time a request is reviewed.
     const requests = await db.collection('requests').find(filter).sort({ id: -1 }).toArray();
-    res.json(requests);
+    res.json(requests.map(r => scopeLauReviewsForViewer(r, req.session.user)));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Unable to load requests right now. Please try again.' });
@@ -1686,7 +1728,7 @@ app.patch('/api/requests/:id/edit', requireRequester, denyCollegeStaffPartnershi
     if (fixedUnit) patch.unit = fixedUnit;
     await db.collection('requests').updateOne({ id }, { $set: patch });
     const updated = await db.collection('requests').findOne({ id });
-    res.json({ success: true, request: updated });
+    res.json({ success: true, request: scopeLauReviewsForViewer(updated, req.session.user) });
   } catch (err) {
     console.error('❌ Request update error:', err);
     res.status(500).json({ error: 'Unable to update the request right now. Please try again.' });
@@ -1757,7 +1799,7 @@ app.post('/api/requests/:id/submit', requireRequester, denyCollegeStaffPartnersh
       });
     }
 
-    res.json({ success: true, request: updated });
+    res.json({ success: true, request: scopeLauReviewsForViewer(updated, req.session.user) });
   } catch (err) {
     console.error('❌ Request update error:', err);
     res.status(500).json({ error: 'Unable to update the request right now. Please try again.' });
@@ -1797,7 +1839,7 @@ app.get('/api/requests/mine', requireAuth, async (req, res) => {
       .find({ submittedByEmail: email })
       .sort({ id: -1 })
       .toArray();
-    res.json(requests);
+    res.json(requests.map(r => scopeLauReviewsForViewer(r, req.session.user)));
   } catch (err) {
     console.error('❌ Requests list error:', err);
     res.status(500).json({ error: 'Unable to load your requests right now. Please try again.' });
@@ -1812,6 +1854,24 @@ app.get('/api/requests/mine', requireAuth, async (req, res) => {
 // twice, rejected after already being approved, or approved after being
 // withdrawn, each re-run re-executing every side effect.
 const UNDECIDED_REQUEST_STATUSES = ['Pending', 'Under Review'];
+
+// Lock Partnership Request Uploads After Approval (2026-11) — the single, shared definition of "this
+// request is closed to new uploads/attachments," reused by every route that adds content to a
+// Partnership Request (POST .../documents, POST .../lau-review, POST .../google-docs) instead of each
+// one repeating its own status list. Deliberately the COMPLEMENT of UNDECIDED_REQUEST_STATUSES above
+// rather than its own independent list — a request is either still undecided (open to uploads) or it
+// isn't (locked); 'Draft' is excluded on purpose (a draft the owner hasn't even submitted yet is a
+// different, pre-review case each route already handles on its own terms, not a "closed" one here).
+// Checked against the DATABASE record passed in, never anything the client sends. Approval review
+// (2026-11): once a request is Approved, converting it to the Partnership Registry never changes this
+// status field again (it stays 'Approved' — confirmed by reading POST /api/partnerships' conversion
+// path), so there is no separate "Converted" state this list needs to additionally cover. Withdrawn is
+// included even though no live route can set it anymore (POST /api/requests/:id/withdraw is disabled) —
+// a request withdrawn before that change still carries the status today and must stay locked.
+const LOCKED_REQUEST_STATUSES = ['Approved', 'Rejected', 'Withdrawn'];
+function isRequestUploadLocked(request) {
+  return !!request && LOCKED_REQUEST_STATUSES.includes(request.status);
+}
 
 // Update partnership request status (approve / reject) — Administrator and
 // Staff share this exact review authority as of 2026-08-27 (full parity).
@@ -1900,7 +1960,11 @@ app.patch('/api/requests/:id', requireStaffAccess, announce('request'), async (r
       await notifyUsers(db, [updated.submittedByEmail], { module: 'request', tag: label, icon, color, title, desc, link });
     }
 
-    res.json({ success: true, request: updated });
+    // This route is requireStaffAccess-gated — only Administrator/Staff ever receive this response, and
+    // both already have full lauReviews visibility — scopeLauReviewsForViewer is a no-op for them here.
+    // Applied anyway for consistency with every other full-request response in this file, so this route
+    // never becomes an exception if its RBAC guard ever changes.
+    res.json({ success: true, request: scopeLauReviewsForViewer(updated, req.session.user) });
   } catch (err) {
     console.error('❌ Request decision error:', err);
     res.status(500).json({ error: 'Unable to process the request right now. Please try again.' });
@@ -1964,7 +2028,9 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
         if (req.file) fs.unlink(req.file.path, () => { });
         return res.status(403).json({ error: 'You are not authorized to upload documents to this request.' });
       }
-      if (['Approved', 'Rejected', 'Withdrawn'].includes(target.status)) {
+      // isRequestUploadLocked (shared with POST .../lau-review and POST .../google-docs below) —
+      // response unchanged from before centralizing this check.
+      if (isRequestUploadLocked(target)) {
         if (req.file) fs.unlink(req.file.path, () => { });
         return res.status(400).json({ error: `This request has already been ${target.status.toLowerCase()} — no further documents can be added.` });
       }
@@ -2057,13 +2123,126 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
         }, role => prLinkForRole(role, id));
       }
 
-      res.json({ success: true, documentId, fileLink, request: updated });
+      // scopeLauReviewsForViewer (2026-11, LAU Internal Review leak audit): this route's isOwner branch
+      // means the request's own submitter is a real caller here, not just reviewers — `updated` must never
+      // reach them with lauReviews still attached.
+      res.json({ success: true, documentId, fileLink, request: scopeLauReviewsForViewer(updated, req.session.user) });
     } catch (e) {
       // 2026-09-06 security hardening (Finding #6, follow-up sweep): a
       // failure here is most often a filesystem/disk error on the just-
       // written upload — never echo that raw path/message to the client.
       console.error('❌ Partnership request draft upload error:', e);
       res.status(500).json({ error: 'Unable to save the uploaded document right now. Please try again.' });
+    }
+  });
+});
+
+// LAU Internal Review Uploads (2026-11) — LAU may submit, on any Partnership Request it can already view
+// (REQUEST_VIEW_ALL_ROLES), its own internal review: a revised document, notes, a status from
+// LAU_REVIEW_STATUSES, or any combination — at least one of the three is required. This is deliberately a
+// SEPARATE array (`lauReviews`) from `supportingDocuments` above, never mixed into it: supportingDocuments
+// is part of the requester-visible draft-collaboration timeline (the requester is notified, sees every
+// entry, and can download every file on it), while lauReviews must never reach the requester at all —
+// scopeLauReviewsForViewer (declared above, near REQUEST_VIEW_ALL_ROLES) strips or scopes it on every
+// response. No notification to the requester either — nothing here is information the requester is
+// entitled to.
+//
+// Lock Partnership Request Uploads After Approval (2026-11 follow-up): THIS WAS DELIBERATELY UNBLOCKED
+// by status when first built (an internal review was considered a separate annotation, not part of the
+// Approve/Reject decision workflow) — now reversed. Once a request is Approved or Rejected, LAU can no
+// longer submit a new review either, same as every other upload route on this request (isRequestUploadLocked,
+// declared near UNDECIDED_REQUEST_STATUSES above).
+app.post('/api/requests/:id/lau-review', requireLauOnly, (req, res) => {
+  uploadDoc.single('document')(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 10MB.' : err.message;
+      return res.status(400).json({ error: message });
+    }
+    if (err) {
+      if (!err.clientSafe) console.error('❌ LAU review upload error:', err);
+      return res.status(400).json({ error: err.clientSafe ? err.message : 'Upload failed. Please try again.' });
+    }
+    const note = (req.body.note || '').trim().slice(0, 1000);
+    const status = (req.body.status || '').trim();
+    if (status && !LAU_REVIEW_STATUSES.includes(status)) {
+      if (req.file) fs.unlink(req.file.path, () => { });
+      return res.status(400).json({ error: 'Status must be one of: ' + LAU_REVIEW_STATUSES.join(', ') + '.' });
+    }
+    if (!req.file && !note && !status) {
+      return res.status(400).json({ error: 'Provide a revised document, notes, a status, or any combination — at least one is required.' });
+    }
+    if (req.file && !verifyMagicBytes(req.file)) {
+      fs.unlink(req.file.path, () => { });
+      return res.status(400).json({ error: 'Unsupported file type. Only PDF, JPG, JPEG, and PNG are accepted.' });
+    }
+    const id = parseInt(req.params.id);
+    const actor = req.session.user;
+    try {
+      const db = getDb();
+      const target = await db.collection('requests').findOne({ id });
+      if (!target) {
+        if (req.file) fs.unlink(req.file.path, () => { });
+        return res.status(404).json({ error: 'Request not found.' });
+      }
+      if (isRequestUploadLocked(target)) {
+        if (req.file) fs.unlink(req.file.path, () => { });
+        return res.status(409).json({ error: 'This request has been ' + target.status.toLowerCase() + '. Uploads are no longer allowed.' });
+      }
+
+      // requestType: 'partnership-lau-review' (not the plain 'partnership' POST /api/requests/:id/documents
+      // above uses) is deliberate: isOwnerOfLinkedRequest's generic fallback branch would otherwise match
+      // ANY requestType it doesn't special-case against `requests.submittedByEmail`, which would hand the
+      // requester direct-URL access to this file via GET /uploads/documents/:filename — see the dedicated
+      // branch added to isOwnerOfLinkedRequest for the other half of this.
+      let documentId = null, fileLink = null;
+      if (req.file) {
+        ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
+          documentType: 'LAU Internal Review',
+          institution: target.institution,
+          partner: target.institution,
+          title: `LAU Internal Review – ${target.institution} (Request #${id})`
+        }, {
+          uploadedBy: actor.name,
+          uploadedByEmail: actor.email,
+          requestId: id,
+          requestType: 'partnership-lau-review'
+        }));
+      }
+
+      const reviewRecord = {
+        documentId, fileLink,
+        originalFilename: req.file ? req.file.originalname : null,
+        fileType: req.file ? req.file.mimetype : null,
+        fileSize: req.file ? req.file.size : 0,
+        note: note || null,
+        status: status || null,
+        submittedAt: new Date().toISOString(),
+        submittedBy: actor.name,
+        submittedByEmail: actor.email
+      };
+      await db.collection('requests').updateOne({ id }, { $push: { lauReviews: reviewRecord } });
+      await logActivity(db, actor, 'EDIT',
+        `LAU internal review submitted for partnership request: ${target.institution}${status ? ' — ' + status : ''}`);
+
+      // Admin/Staff notification (2026-11 decision) — deliberately content-free: no note text, status
+      // value, or filename, even though Administrator/Staff are already allowed to see all of that in the
+      // request's own draft modal. This only ever says a review was submitted, never what it says — kept
+      // that way so the notification itself can never become a second place review content has to be
+      // scoped for some other recipient.
+      const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
+      await notifyReviewers(db, reviewers, {
+        module: 'request',
+        tag: 'LAU Internal Review',
+        icon: 'ri-shield-check-line',
+        color: 'primary',
+        title: `LAU internal review submitted: ${target.institution}`,
+        desc: `${actor.name} submitted an internal review for ${target.institution} (Request #${id}). Open the request to view it.`
+      }, role => prLinkForRole(role, id));
+
+      res.json({ success: true, review: reviewRecord });
+    } catch (e) {
+      console.error('❌ LAU internal review save error:', e);
+      res.status(500).json({ error: 'Unable to save the internal review right now. Please try again.' });
     }
   });
 });
@@ -3229,9 +3408,18 @@ app.get('/api/documents', requireUploader, async (req, res) => {
     // original own-uploads-only behavior; Auth. Personnel/potential_partner's own file-access stays
     // restricted to their own uploads (SELF_UPLOAD_ONLY_ROLES), so they never get this broader scope.
     const wantsAll = req.query.scope === 'all' && REQUEST_REVIEWER_ROLES.includes(req.session.user.role);
-    const roleFilter = (!wantsAll && OWN_SCOPE_ROLES.includes(req.session.user.role))
-      ? { uploadedByEmail: req.session.user.email }
-      : {};
+    // LAU Internal Review Uploads (2026-11) — excluded from every Document Library listing/search, not just
+    // scoped by uploader. Without this, the scope=all "Select Existing Documents" picker (Document Request
+    // fulfillment) would offer a reviewer an LAU review file as if it were an ordinary reusable attachment —
+    // one mistaken click would link it into a DIFFERENT request's supportingDocuments, where that request's
+    // own requester WOULD see it. The requester's own own-uploads-only filter already excludes it by
+    // uploader email alone, but this closes the gap for the one path (scope=all) that isn't scoped that way.
+    const roleFilter = Object.assign(
+      (!wantsAll && OWN_SCOPE_ROLES.includes(req.session.user.role))
+        ? { uploadedByEmail: req.session.user.email }
+        : {},
+      { requestType: { $ne: 'partnership-lau-review' } }
+    );
 
     // Server-side pagination (2026-11 panel recommendation) — strictly OPT-IN via the `page` query param.
     // Every existing caller that omits it (the Document Library page's own stats/nature-pill computation,
@@ -9007,6 +9195,11 @@ app.post('/api/requests/:id/google-docs', requireStaffAccess, announce('request'
     const request = await db.collection('requests').findOne({ id });
     if (!request) return res.status(404).json({ error: 'Request not found.' });
     if (request.status === 'Draft') return res.status(400).json({ error: 'This request has not been submitted yet.' });
+    // Lock Partnership Request Uploads After Approval (2026-11) — a new MOA/MOU Google Doc draft is
+    // content tied to the request, same as supportingDocuments/lauReviews; once decided, no new one.
+    if (isRequestUploadLocked(request)) {
+      return res.status(409).json({ error: 'This request has been ' + request.status.toLowerCase() + '. Uploads are no longer allowed.' });
+    }
 
     const recipients = await agreementDocRecipients(db, request);
     let created;
@@ -9437,6 +9630,12 @@ async function isOwnerOfLinkedRequest(db, doc, email) {
     const target = await db.collection('collegedeanrequests').findOne({ id: doc.requestId });
     return !!(target && isAssignedDean(target, email));
   }
+  // LAU Internal Review Uploads (2026-11): a document archived under this tag (POST
+  // /api/requests/:id/lau-review) must NEVER be reachable by the request's own submitter, unlike every
+  // other requestType above/below — explicitly false here rather than falling through to the generic
+  // 'partnership' branch, which matches on submittedByEmail alone and would otherwise hand the requester
+  // direct-URL access to it via GET /uploads/documents/:filename.
+  if (doc.requestType === 'partnership-lau-review') return false;
   const target = await db.collection('requests').findOne({ id: doc.requestId });
   return !!(target && target.submittedByEmail === email);
 }
