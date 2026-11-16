@@ -1324,41 +1324,6 @@ app.post('/api/activate', requireAuth, async (req, res) => {
 });
 
 // ── API ENDPOINTS FOR DYNAMIC DATA ───────────────────────────────────────────
-app.get('/api/dashboard/stats', requireAuth, async (req, res) => {
-  try {
-    const db = getDb();
-    const partnerships = await db.collection('partnerships').find({}).toArray();
-    const requests = await db.collection('requests').find({}).toArray();
-
-    const active = partnerships.filter(p => p.status === 'active').length;
-    const expiring = partnerships.filter(p => p.status === 'expiring').length;
-    const expired = partnerships.filter(p => p.status === 'expired').length;
-
-    const pendingReqs = requests.filter(r => r.status === 'pending').length;
-    const approvedReqs = requests.filter(r => r.status === 'approved').length;
-    const rejectedReqs = requests.filter(r => r.status === 'rejected').length;
-
-    const uniqueCountries = new Set(partnerships.map(p => p.country)).size;
-    const uniqueInstitutions = new Set(partnerships.map(p => p.institution)).size;
-
-    res.json({
-      totalPartnerships: partnerships.length,
-      activePartnerships: active,
-      expiringPartnerships: expiring,
-      expiredPartnerships: expired,
-      totalRequests: requests.length,
-      pendingRequests: pendingReqs,
-      approvedRequests: approvedReqs,
-      rejectedRequests: rejectedReqs,
-      countries: uniqueCountries,
-      institutions: uniqueInstitutions
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Unable to load the dashboard right now. Please try again.' });
-  }
-});
-
 // Partnership registry feed. Administrator and Staff (their Registry / Monitoring / DSS pages) and
 // Auth. Personnel receive the full registry; a potential_partner receives ONLY the rows tied to its own
 // approved requests (the same set as /mine below) — decided by the session role on the server, with no
