@@ -14,7 +14,14 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 // This spec file is loaded by the Playwright test-runner process itself, which — unlike the webServer
 // child process (node cirl.js, which calls this on its own at the top of cirl.js) — never loads .env on
-// its own; db.js reads process.env.MONGO_URI directly without doing so itself either.
+// its own; db.js reads process.env.MONGO_URI directly without doing so itself either. The require('dotenv')
+// call below WAS loading .env's real production MONGO_URI into this process with nothing to stop it
+// (db.js's test-mode safety check never triggers here: NODE_ENV isn't 'test' and JEST_WORKER_ID isn't set
+// in a Playwright test worker) — this file's own connectDB() was silently connecting to production while
+// the webServer it drove used the local test DB. Setting MONGO_URI to the safe local URI FIRST closes
+// that, since dotenv never overrides an already-set var (2026-11 data-safety fix).
+const { resolveTestDatabaseUri } = require(path.join(__dirname, '..', '..', 'services', 'testDatabaseGuard'));
+process.env.MONGO_URI = resolveTestDatabaseUri(process.env);
 require('dotenv').config();
 const { connectDB, closeDB, getDb } = require(path.join(__dirname, '..', '..', 'db'));
 const { createTestUser, cleanupAll, TEST_TAG } = require(path.join(__dirname, '..', 'helpers'));

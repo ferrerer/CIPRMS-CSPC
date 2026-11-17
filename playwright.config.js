@@ -29,7 +29,11 @@ module.exports = defineConfig({
     command: 'node cirl.js',
     url: `http://localhost:${PORT}`,
     reuseExistingServer: false,
-    timeout: 30000,
+    // 60s, not 30s (2026-11): connectDB() in db.js runs ~40+ sequential createIndex/duplicate-check round
+    // trips before the DB-readiness gate opens — measured at ~20-22s end to end against this machine's
+    // Docker Desktop Mongo container, which left the old 30s timeout flaky (timed out outright on several
+    // consecutive runs while investigating an unrelated bug report).
+    timeout: 60000,
     env: {
       PORT: String(PORT),
       NODE_ENV: 'test',

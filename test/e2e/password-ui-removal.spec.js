@@ -6,6 +6,11 @@
 // a real rendered page (layout, tab switching, modal visibility) rather than raw HTML text.
 const { test, expect } = require('@playwright/test');
 const path = require('path');
+// Must run before dotenv/db.js (2026-11 data-safety fix) — see partner-activities-real.spec.js's own
+// comment on this exact pattern for why: without it, this file's direct connectDB() call was silently
+// connecting to production instead of the local test DB the webServer child process actually uses.
+const { resolveTestDatabaseUri } = require(path.join(__dirname, '..', '..', 'services', 'testDatabaseGuard'));
+process.env.MONGO_URI = resolveTestDatabaseUri(process.env);
 require('dotenv').config();
 const { connectDB, closeDB, getDb } = require(path.join(__dirname, '..', '..', 'db'));
 const { createTestUser, cleanupAll, uniqueEmail, TEST_TAG } = require(path.join(__dirname, '..', 'helpers'));
