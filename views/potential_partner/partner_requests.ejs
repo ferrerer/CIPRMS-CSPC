@@ -433,6 +433,17 @@
         document.getElementById('f-start').value = r.startDate || '';
         document.getElementById('f-end').value = r.endDate || '';
         document.getElementById('f-notes').value = r.notes || '';
+        // 2026-11 bug fix: show that a draft already has a document attached — resetForm() just cleared
+        // ocrExtractedResult, so without this the partner would have no indication one exists (though
+        // re-saving without touching the OCR section still keeps it; collectFormData() only ever sends an
+        // attachmentLink when a NEW extraction just produced one — see its own comment).
+        if (r.attachmentLink) {
+            var box = document.getElementById('ocr-result-box');
+            box.innerHTML = '<span class="badge bg-success-subtle text-success"><i class="ri-checkbox-circle-line me-1"></i>Document already attached to this draft</span> ' +
+                '<a class="btn btn-sm btn-light ms-2" href="' + escapeHtml(r.attachmentLink) + '" target="_blank" rel="noopener">View</a>' +
+                '<div id="ocr-idp-panel" class="mt-3" style="display:none"></div>';
+            box.style.display = '';
+        }
     }
 
     function collectFormData() {
@@ -522,7 +533,7 @@
             if (!data.success) { ocrFail(data.error || 'Job not found.'); return; }
             document.getElementById('ocr-progress-bar').style.width = (data.progress || 0) + '%';
             if (data.status === 'error') { ocrFail(data.error || 'OCR failed.'); return; }
-            if (data.status === 'done') { ocrSucceed(data.result); return; }
+            if (data.status === 'done') { ocrSucceed(jobId, data.result); return; }
             setTimeout(function () { pollOcrStatus(jobId); }, 700);
         }).catch(function () { ocrFail('Lost connection while checking OCR progress.'); });
     }
@@ -534,26 +545,42 @@
         box.style.display = '';
     }
 
-    function ocrSucceed(result) {
+    // 2026-11 bug fix: this used to stop here — ocrExtractedResult.fileLink was never actually set (nothing
+    // ever called POST /api/ocr/confirm, the one step that archives the file), so attachmentLink in
+    // collectFormData() below was always undefined and the uploaded file was silently lost: not in Drafts,
+    // never sent to Admin/Staff, never archived to the Document Library. Fixed the same way the Admin/Staff
+    // "Request Partnership" modal already does it — call the existing /api/ocr/confirm endpoint (no new
+    // logic, no duplicated archiving code) and keep its fileLink/documentId on ocrExtractedResult.
+    function ocrSucceed(jobId, result) {
         ocrExtractedResult = result;
-        document.getElementById('ocr-progress-wrap').style.display = 'none';
-        document.getElementById('ocr-result-box').style.display = '';
-        if (window.IDP) {
-            IDP.renderResult('ocr-idp-panel', result, {
-                onCancelDuplicate: function (documentId) {
-                    if (!documentId) return;
-                    fetch('/api/documents/' + documentId + '/organize', {
-                        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true })
-                    }).then(function () { showToast('Upload archived — removed from the active Document Library.'); });
-                },
-                onViewDuplicate: function (fileLink) { window.open(fileLink, '_blank'); }
-            });
-        }
-        // 2026-07-29: auto-fill immediately — no manual "Apply" click required.
-        // applyOcrToForm() only ever sets a field when OCR actually found a
-        // value for it, shows its own confirmation toast, and remains safe to
-        // re-run from the "Re-apply suggested values" button afterward.
         applyOcrToForm();
+        document.getElementById('ocr-stage-text').textContent = 'Saving to Document Library…';
+        CIPRMS.api('/api/ocr/confirm', {
+            method: 'POST', quiet: true,
+            json: { jobId: jobId, documentType: document.getElementById('f-type').value || undefined }
+        }).then(function (res) {
+            document.getElementById('ocr-progress-wrap').style.display = 'none';
+            document.getElementById('ocr-result-box').style.display = '';
+            if (res.ok && res.data) {
+                ocrExtractedResult.fileLink = res.data.fileLink;
+                ocrExtractedResult.documentId = res.data.documentId;
+            } else {
+                // Archiving failed (e.g. a disk error) — autofill still applied, but there is no file to
+                // attach. Tell the user plainly instead of silently submitting with no attachment.
+                showToast(res.error || 'The document was extracted but could not be saved to the Document Library.');
+            }
+            if (window.IDP) {
+                IDP.renderResult('ocr-idp-panel', result, {
+                    onCancelDuplicate: function (documentId) {
+                        if (!documentId) return;
+                        fetch('/api/documents/' + documentId + '/organize', {
+                            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true })
+                        }).then(function () { showToast('Upload archived — removed from the active Document Library.'); });
+                    },
+                    onViewDuplicate: function (fileLink) { window.open(fileLink, '_blank'); }
+                });
+            }
+        });
     }
 
     function ocrIsoDate(str) {

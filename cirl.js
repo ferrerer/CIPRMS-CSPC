@@ -583,6 +583,24 @@ function requireRequester(req, res, next) {
 }
 
 /**
+ * POST /api/requests ONLY (2026-11 institution-initiated flow): everything requireRequester allows,
+ * PLUS Staff — but ONLY for an actual institution-initiated submission (initiatedBy: 'institution' in the
+ * body), so Staff's general "no longer submits Partnership Requests" restriction (2026-08-27) stays intact
+ * for a normal self-submission; only this one new addressed-to-a-partner shape is let through. Administrator
+ * already had POST /api/requests access via requireRequester, regardless of shape — unaffected either way.
+ * Deliberately NOT used on /edit, /submit, /withdraw, delete, or document-requests — Admin/Staff's
+ * authority here is "start it only"; review/approval already runs through requireStaffAccess elsewhere,
+ * and the partner never approves anything.
+ */
+function requireRequesterOrInstitutionInitiator(req, res, next) {
+  const user = req.session && req.session.user;
+  if (!user) return denyAccess(req, res, 401, '/');
+  if (['Administrator', 'Auth. Personnel', 'potential_partner'].includes(user.role)) return next();
+  if (user.role === 'Staff' && req.body && req.body.initiatedBy === 'institution') return next();
+  return denyAccess(req, res, 403, homeForRole(user.role));
+}
+
+/**
  * Chained AFTER requireRequester on the Partnership Request routes (/api/requests: create, edit a draft,
  * submit a draft, delete a draft, withdraw). requireRequester also admits College Dean (backend role
  * "Auth. Personnel") because the Document Request routes share it — but College Dean no longer has a
@@ -1528,12 +1546,19 @@ app.post('/api/partnerships/:id/renew-request', requireAuth, announce('request')
 // used by the potential_partner Partnership Request module so an applicant
 // can start a request and finish it later (see the /edit and /submit routes
 // below for the rest of the draft lifecycle).
-app.post('/api/requests', requireRequester, denyCollegeStaffPartnershipRequests, announce('request'), async (req, res) => {
+app.post('/api/requests', requireRequesterOrInstitutionInitiator, denyCollegeStaffPartnershipRequests, announce('request'), async (req, res) => {
   const {
     institution, country, type, nature, notes, requestedBy, isDraft,
     category, region, unit, startDate, endDate, attachmentLink,
-    isRenewal, renewalPartnershipId, isSubmission
+    isRenewal, renewalPartnershipId, isSubmission, initiatedBy, targetPartnerId
   } = req.body;
+
+  // Admin/Staff-initiated request (2026-11): Admin or Staff starts a Partnership Request addressed to a
+  // chosen partner. From here on it is stored and flows exactly like a partner-submitted request — never
+  // a draft, never a submission/college-report — the target partner becomes its owner (requestedBy/
+  // submittedByEmail), so every existing ownership/visibility/upload-lock check (all keyed off
+  // submittedByEmail) treats it exactly as if the partner had started it themselves.
+  const institutionInitiated = initiatedBy === 'institution' && !!req.session.user && ['Administrator', 'Staff'].includes(req.session.user.role);
 
   // "Submission Of MOA/MOU" (Partner only): the partner sends CIRL their MOA/MOU file/notes. It is filed as a Partnership
   // Request (so reviewers handle it under Partnership Requests/Submission, not Document Requests) but is not a request
@@ -1544,10 +1569,13 @@ app.post('/api/requests', requireRequester, denyCollegeStaffPartnershipRequests,
   // CIRL reviews it in the same queue, and "approving" it records it in the Registry (same conversion as any request).
   // The approved copy itself is uploaded right after, through POST /api/requests/:id/documents.
   const collegeReport = req.body.isCollegeReport === true && !!req.session.user && req.session.user.role === 'Auth. Personnel';
-  const draft = isDraft === true && !submission && !collegeReport;
+  const draft = isDraft === true && !submission && !collegeReport && !institutionInitiated;
   // Drafts are allowed to be incomplete — only a real submission requires the core fields.
   if (submission && !(institution || '').trim()) {
     return res.status(400).json({ error: 'Institution is required.' });
+  }
+  if (institutionInitiated && !targetPartnerId) {
+    return res.status(400).json({ error: 'A target partner is required.' });
   }
   if (collegeReport) {
     const start = new Date(startDate), end = new Date(endDate);
@@ -1567,6 +1595,18 @@ app.post('/api/requests', requireRequester, denyCollegeStaffPartnershipRequests,
   }
   try {
     const db = getDb();
+
+    let targetPartner = null;
+    if (institutionInitiated) {
+      // Same "active" convention used everywhere else in this file (status:{$ne:'Inactive'}) — a user
+      // doc with no status field at all (legacy accounts) counts as active, only an explicit 'Inactive'
+      // excludes it. role must be exactly potential_partner — rejects the acting Admin/Staff themselves,
+      // any Admin/Staff/LAU account, and any nonexistent id, all with the same 400.
+      targetPartner = await db.collection('users').findOne({
+        id: Number(targetPartnerId), role: 'potential_partner', status: { $ne: 'Inactive' }
+      });
+      if (!targetPartner) return res.status(400).json({ error: 'Target partner not found.' });
+    }
 
     // Prevent duplicate active requests for the same institution (drafts and MOA/MOU submissions don't count — a
     // partner may send several files, and a pending submission must not block a real partnership request).
@@ -1596,19 +1636,20 @@ app.post('/api/requests', requireRequester, denyCollegeStaffPartnershipRequests,
       nature: submission ? 'MOA/MOU Submission' : (nature || '').trim(),
       category: category || '',
       region: region || '',
-      unit: collegeReport ? reportUnit : (partnerRequestUnit(req.session.user, { isSubmission: submission, isRenewal }) || unit || ''),
+      unit: collegeReport ? reportUnit : institutionInitiated ? PARTNER_REQUEST_UNIT : (partnerRequestUnit(req.session.user, { isSubmission: submission, isRenewal }) || unit || ''),
       startDate: startDate || '',
       endDate: endDate || '',
       attachmentLink: attachmentLink || '',
       notes: notes || '',
-      requestedBy: requestedBy || (req.session.user ? req.session.user.name : 'Unknown'),
-      submittedByEmail: req.session.user ? req.session.user.email : '',
+      requestedBy: institutionInitiated ? targetPartner.name : (requestedBy || (req.session.user ? req.session.user.name : 'Unknown')),
+      submittedByEmail: institutionInitiated ? targetPartner.email : (req.session.user ? req.session.user.email : ''),
       status: draft ? 'Draft' : 'Pending',
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       updatedAt: new Date().toISOString(),
       ...(submission ? { isSubmission: true } : {}),
       ...(collegeReport ? { isCollegeReport: true } : {}),
-      ...(isRenewal && !collegeReport ? { isRenewal: true, renewalPartnershipId: renewalPartnershipId } : {})
+      ...(isRenewal && !collegeReport ? { isRenewal: true, renewalPartnershipId: renewalPartnershipId } : {}),
+      ...(institutionInitiated ? { initiatedBy: 'institution', initiatorId: req.session.user.id, initiatorName: req.session.user.name, targetPartnerId: targetPartner.id } : {})
     }));
 
     if (!draft) {
@@ -1618,7 +1659,9 @@ app.post('/api/requests', requireRequester, denyCollegeStaffPartnershipRequests,
           ? `MOA/MOU submission sent: ${entry.institution} by ${entry.requestedBy}`
           : collegeReport
             ? `College partnership reported: ${entry.institution} (${type}) by ${entry.requestedBy}${entry.unit ? ' — ' + entry.unit : ''}`
-            : `Partnership request submitted: ${institution} (${type}) by ${entry.requestedBy}`);
+            : institutionInitiated
+              ? `Partnership request submitted: ${institution} (${type}) — initiated by ${req.session.user.name} on behalf of ${entry.requestedBy}`
+              : `Partnership request submitted: ${institution} (${type}) by ${entry.requestedBy}`);
 
       // Administrator and Staff — both review Partnership/Renewal Requests
       // (PATCH /api/requests/:id is requireStaffAccess-gated as of the
@@ -1627,8 +1670,12 @@ app.post('/api/requests', requireRequester, denyCollegeStaffPartnershipRequests,
       // including other Auth. Personnel and potential_partner accounts they
       // have no relationship to — not "their own" notifications, and not
       // actionable by them. The submitter doesn't notify themselves.
+      // Institution-initiated: the actor (Admin/Staff) is also a reviewer, but the submitter doesn't
+      // notify themselves (same principle as every other submission path here) — exclude them.
+      const reviewerFilter = { role: { $in: REQUEST_REVIEWER_ROLES } };
+      if (institutionInitiated) reviewerFilter.id = { $ne: req.session.user.id };
       const reviewers = await db.collection('users')
-        .find({ role: { $in: REQUEST_REVIEWER_ROLES } })
+        .find(reviewerFilter)
         .toArray();
       await notifyReviewers(db, reviewers, collegeReport
         ? {
@@ -1645,35 +1692,47 @@ app.post('/api/requests', requireRequester, denyCollegeStaffPartnershipRequests,
           icon: isRenewal ? 'ri-refresh-line' : 'ri-building-4-line',
           color: isRenewal ? 'info' : 'primary',
           title: submission ? `New MOA/MOU submission: ${entry.institution}`
-            : isRenewal ? `Renewal initiated: ${entry.institution}` : `New request submitted: ${entry.institution}`,
+            : isRenewal ? `Renewal initiated: ${entry.institution}`
+              : institutionInitiated ? `New request initiated: ${entry.institution}`
+                : `New request submitted: ${entry.institution}`,
           desc: submission
             ? `${entry.requestedBy} sent a MOA/MOU submission for ${entry.institution}.`
             : isRenewal
               ? `${entry.requestedBy} initiated a renewal request for ${entry.institution}.`
-              : `${entry.requestedBy} submitted a new partnership request for ${entry.institution}.`
+              : institutionInitiated
+                ? `${req.session.user.name} initiated a partnership request on behalf of ${entry.requestedBy} for ${entry.institution}.`
+                : `${entry.requestedBy} submitted a new partnership request for ${entry.institution}.`
         }, role => prLinkForRole(role, entry.id));
 
-      emailSubmissionReceipt(req.session.user, collegeReport
+      // Institution-initiated: the receipt goes to the target partner (the request's owner of record),
+      // never to the Admin/Staff actor who merely started it.
+      const receiptRecipient = institutionInitiated ? targetPartner : req.session.user;
+      emailSubmissionReceipt(receiptRecipient, collegeReport
         ? {
           tag: 'College Partnership Report',
           title: `Partnership report received: ${entry.institution}`,
           desc: `CSPC-CIRL received your copy of the approved ${entry.type} with ${entry.institution} (reference ${ref}). You will be notified by e-mail once CIRL records it in the Partnership Registry.`,
-          link: prLinkForRole(req.session.user.role, entry.id)
+          link: prLinkForRole(receiptRecipient.role, entry.id)
         }
         : {
           tag: submission ? 'MOA/MOU Submission' : isRenewal ? 'Renewal Request' : 'Partnership Request',
           title: submission ? `MOA/MOU submission received: ${entry.institution}` : `Request received: ${entry.institution}`,
           desc: submission
             ? `Your MOA/MOU submission for ${entry.institution} was sent to CSPC-CIRL (reference ${ref}). You will be notified by e-mail as it is reviewed.`
-            : `Your ${isRenewal ? 'renewal' : 'partnership'} request for ${entry.institution}${entry.type ? ' (' + entry.type + ')' : ''} was submitted to CSPC-CIRL (reference ${ref}). You will be notified by e-mail as it is reviewed.`,
-          link: prLinkForRole(req.session.user.role, entry.id)
+            : institutionInitiated
+              ? `CSPC-CIRL started a partnership request on your behalf for ${entry.institution}${entry.type ? ' (' + entry.type + ')' : ''} (reference ${ref}). You will be notified by e-mail as it is reviewed.`
+              : `Your ${isRenewal ? 'renewal' : 'partnership'} request for ${entry.institution}${entry.type ? ' (' + entry.type + ')' : ''} was submitted to CSPC-CIRL (reference ${ref}). You will be notified by e-mail as it is reviewed.`,
+          link: prLinkForRole(receiptRecipient.role, entry.id)
         });
 
       // Give the submitter their own copy in the Document Library — skipped
       // when an OCR attachment already exists, since that upload was already
       // archived there (avoids a duplicate entry for one submission). A MOA/MOU
       // submission and a College Partnership Report archive the file attached to them instead of a request record.
-      if (!submission && !collegeReport && ['Auth. Personnel', 'potential_partner'].includes(req.session.user.role) && !entry.attachmentLink) {
+      // An institution-initiated request archives it under the target partner's own attribution
+      // (entry.requestedBy/entry.submittedByEmail already resolve to the partner), same as if they'd
+      // submitted it themselves.
+      if (!submission && !collegeReport && (['Auth. Personnel', 'potential_partner'].includes(req.session.user.role) || institutionInitiated) && !entry.attachmentLink) {
         await archiveRequestRecordToLibrary(db, {
           requestType: 'partnership', requestId: entry.id, institution: entry.institution,
           type: entry.type, submittedBy: entry.requestedBy, submittedByEmail: entry.submittedByEmail
@@ -6886,6 +6945,25 @@ app.get('/api/users', requireStaffAccess, async (req, res) => {
   }
 });
 
+// Minimal partner picker for the "Request Partnership" modal (2026-11 Admin/Staff-initiated flow) — the
+// general GET /api/users above returns every field on every account (email, unit, login history, status,
+// etc., everything but password) to any Staff caller, which is far more than a target-partner selector
+// needs. This returns only {id, name} for active potential_partner accounts, so the selector's own network
+// response can't leak the rest of the user directory. Does not change GET /api/users itself.
+app.get('/api/users/partner-options', requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    const docs = await db.collection('users')
+      .find({ role: 'potential_partner', status: { $ne: 'Inactive' } }, { projection: { id: 1, name: 1 } })
+      .sort({ name: 1 })
+      .toArray();
+    res.json(docs.map(d => ({ id: d.id, name: d.name || '' })));
+  } catch (err) {
+    console.error('❌ Partner options list error:', err);
+    res.status(500).json({ error: 'Unable to load partners right now. Please try again.' });
+  }
+});
+
 const VALID_USER_ROLES = ['Administrator', 'Auth. Personnel', 'Staff', 'potential_partner', 'LAU'];
 const VALID_USER_STATUSES = ['Active', 'Inactive'];
 
@@ -10583,10 +10661,11 @@ app.get('/staff/lifecycle', requireStaffAccess, (req, res) => {
 // Requests — the same Administrator review page (partnership_requests.ejs
 // role-gates its own Approve/Reject/Review actions to Administrator only).
 // Staff sees a read-only "View" mode of their own submitted requests — as of
-// 2026-08-27, Staff can no longer submit new Partnership or Document
-// Requests at all (the "+ New Partnership Request" button and the
-// staff_request_access.ejs form were removed; see requireRequester below,
-// which already excludes Staff from every request-mutating route).
+// 2026-08-27, Staff can no longer submit a Partnership or Document Request as themselves (the old
+// "+ New Partnership Request" button and the staff_request_access.ejs form were removed; see
+// requireRequester, which still excludes Staff from every request-mutating route). The one exception
+// (2026-11) is starting a Partnership Request addressed to a chosen partner — see
+// requireRequesterOrInstitutionInitiator and the "Request Partnership" button/modal below.
 app.get('/staff/requests', requireStaffAccess, (req, res) => {
   res.render('administrator/partnership_requests', {
     activePage: 'access-requests',

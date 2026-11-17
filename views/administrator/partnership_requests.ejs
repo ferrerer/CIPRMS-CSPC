@@ -84,7 +84,32 @@
       gap: .75rem;
       margin-bottom: 1.5rem;
       flex-wrap: wrap;
+      align-items: flex-start;
     }
+
+    /* "Request Partnership" (2026-11, moved into the search/filter row 2026-11) sits next to the
+       "N of N requests" count, shown only while the Partnership Requests tab is active (toggled in
+       switchSection()); .filter-row already wraps on narrow viewports (see its own rule above). */
+    #pr-initiate-btn {
+      flex: 0 0 auto;
+    }
+
+    /* Target Partner searchable combobox (2026-11) — same visual pattern as the Country combobox used
+       elsewhere in the app (reports.ejs's #cr-country / attachCountrySearch), but driving a hidden
+       targetPartnerId instead of snapping free text to a fixed option list. */
+    .pri-partner-wrap { position: relative; }
+    .pri-partner-dropdown {
+      position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 1056;
+      background: #fff; border: 1px solid #dfe3ea; border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(20,25,45,.14); max-height: 220px; overflow-y: auto; padding: 6px;
+      display: none;
+    }
+    .pri-partner-option { padding: 8px 10px; border-radius: 6px; font-size: .85rem; color: #313a46; cursor: pointer; }
+    .pri-partner-option:hover, .pri-partner-option.is-active { background: #f0f2fb; color: #405189; }
+    .pri-partner-empty { padding: 10px; font-size: .8rem; color: #878a99; text-align: center; }
+    [data-bs-theme="dark"] .pri-partner-dropdown { background: #2a2f3c; border-color: #3a4053; box-shadow: 0 10px 28px rgba(0,0,0,.4); }
+    [data-bs-theme="dark"] .pri-partner-option { color: #d3d5db; }
+    [data-bs-theme="dark"] .pri-partner-option:hover, [data-bs-theme="dark"] .pri-partner-option.is-active { background: #363c4c; color: #a9bcf5; }
 
     .section-tab {
       flex: 1 1 200px;
@@ -494,25 +519,25 @@
        with a little more padding, and the body scrolls INSIDE the modal (capped to the viewport height) instead of
        the whole page scrolling behind it. Sizing/spacing only — the markup, classes and behaviour are unchanged. */
     @media (min-width: 992px) {
-      #pr-modal .modal-dialog, #pr-draft-modal .modal-dialog, #dr-modal .modal-dialog, #dr-draft-modal .modal-dialog, #cdr-create-modal .modal-dialog, #cdr-detail-modal .modal-dialog { --vz-modal-width: 960px; }
+      #pr-modal .modal-dialog, #pr-draft-modal .modal-dialog, #dr-modal .modal-dialog, #dr-draft-modal .modal-dialog, #cdr-create-modal .modal-dialog, #cdr-detail-modal .modal-dialog, #pr-initiate-modal .modal-dialog { --vz-modal-width: 960px; }
     }
     @media (min-width: 1400px) {
-      #pr-modal .modal-dialog, #pr-draft-modal .modal-dialog, #dr-modal .modal-dialog, #dr-draft-modal .modal-dialog, #cdr-create-modal .modal-dialog, #cdr-detail-modal .modal-dialog { --vz-modal-width: 1040px; }
+      #pr-modal .modal-dialog, #pr-draft-modal .modal-dialog, #dr-modal .modal-dialog, #dr-draft-modal .modal-dialog, #cdr-create-modal .modal-dialog, #cdr-detail-modal .modal-dialog, #pr-initiate-modal .modal-dialog { --vz-modal-width: 1040px; }
     }
-    #pr-modal .modal-content, #pr-draft-modal .modal-content, #dr-modal .modal-content, #dr-draft-modal .modal-content, #cdr-create-modal .modal-content, #cdr-detail-modal .modal-content { max-height: calc(100vh - 2rem); }
-    #pr-modal .modal-body, #pr-draft-modal .modal-body, #dr-modal .modal-body, #dr-draft-modal .modal-body, #cdr-create-modal .modal-body, #cdr-detail-modal .modal-body {
+    #pr-modal .modal-content, #pr-draft-modal .modal-content, #dr-modal .modal-content, #dr-draft-modal .modal-content, #cdr-create-modal .modal-content, #cdr-detail-modal .modal-content, #pr-initiate-modal .modal-content { max-height: calc(100vh - 2rem); }
+    #pr-modal .modal-body, #pr-draft-modal .modal-body, #dr-modal .modal-body, #dr-draft-modal .modal-body, #cdr-create-modal .modal-body, #cdr-detail-modal .modal-body, #pr-initiate-modal .modal-body {
       padding: 1.5rem 1.75rem; overflow-y: auto; overflow-wrap: anywhere; min-width: 0;
     }
-    #pr-modal .modal-footer, #pr-draft-modal .modal-footer, #dr-modal .modal-footer, #dr-draft-modal .modal-footer, #cdr-create-modal .modal-footer, #cdr-detail-modal .modal-footer {
+    #pr-modal .modal-footer, #pr-draft-modal .modal-footer, #dr-modal .modal-footer, #dr-draft-modal .modal-footer, #cdr-create-modal .modal-footer, #cdr-detail-modal .modal-footer, #pr-initiate-modal .modal-footer {
       flex-wrap: wrap; gap: .5rem; padding: 1rem 1.75rem;
     }
     /* The header title can carry a long, unbroken institution name. As a flex child it would not shrink below that
        name's width, stretching the header past the screen and pushing the close (X) button out of view. */
-    #pr-modal .modal-title, #pr-draft-modal .modal-title, #dr-modal .modal-title, #dr-draft-modal .modal-title, #cdr-create-modal .modal-title, #cdr-detail-modal .modal-title { min-width: 0; overflow-wrap: anywhere; }
-    #pr-modal .btn-close, #pr-draft-modal .btn-close, #dr-modal .btn-close, #dr-draft-modal .btn-close, #cdr-create-modal .btn-close, #cdr-detail-modal .btn-close { flex-shrink: 0; }
+    #pr-modal .modal-title, #pr-draft-modal .modal-title, #dr-modal .modal-title, #dr-draft-modal .modal-title, #cdr-create-modal .modal-title, #cdr-detail-modal .modal-title, #pr-initiate-modal .modal-title { min-width: 0; overflow-wrap: anywhere; }
+    #pr-modal .btn-close, #pr-draft-modal .btn-close, #dr-modal .btn-close, #dr-draft-modal .btn-close, #cdr-create-modal .btn-close, #cdr-detail-modal .btn-close, #pr-initiate-modal .btn-close { flex-shrink: 0; }
     @media (max-width: 575.98px) {
-      #pr-modal .modal-body, #pr-draft-modal .modal-body, #dr-modal .modal-body, #dr-draft-modal .modal-body, #cdr-create-modal .modal-body, #cdr-detail-modal .modal-body { padding: 1rem; }
-      #pr-modal .modal-footer, #pr-draft-modal .modal-footer, #dr-modal .modal-footer, #dr-draft-modal .modal-footer, #cdr-create-modal .modal-footer, #cdr-detail-modal .modal-footer { padding: .75rem 1rem; }
+      #pr-modal .modal-body, #pr-draft-modal .modal-body, #dr-modal .modal-body, #dr-draft-modal .modal-body, #cdr-create-modal .modal-body, #cdr-detail-modal .modal-body, #pr-initiate-modal .modal-body { padding: 1rem; }
+      #pr-modal .modal-footer, #pr-draft-modal .modal-footer, #dr-modal .modal-footer, #dr-draft-modal .modal-footer, #cdr-create-modal .modal-footer, #cdr-detail-modal .modal-footer, #pr-initiate-modal .modal-footer { padding: .75rem 1rem; }
       /* Document Request details laid its fields out as fixed half-width columns even on a phone: one per row there. */
       #dr-modal .modal-body .row > .col-6 { flex: 0 0 100%; max-width: 100%; }
     }
@@ -584,16 +609,6 @@
                       </ol>
                     </div>
                   </div>
-                </div>
-              </div>
-
-              <!-- Hero Banner -->
-              <div class="pr-hero">
-                <div class="pr-hero-icon">  <i class="ri-shield-user-line"></i></i></div>
-                <div>
-                  <h4>Request Management Center</h4>
-                  <p>View, review, and manage Partnership Requests (MOU/MOA) and Document Requests
-                    in one unified workspace.</p>
                 </div>
               </div>
 
@@ -725,19 +740,17 @@
                             <input class="form-control form-control-sm" id="pr-search" oninput="prCurrentPage=1; renderPR()">
                             <i class="ri-search-line search-icon"></i>
                           </div>
-                          <select class="form-select form-select-sm" id="pr-status" style="width:145px;"
-                            onchange="prCurrentPage=1; renderPR()">
-                            <option value="">All Status</option>
-                            <option>Pending</option>
-                            <option>Under Review</option>
-                            <option>Approved</option>
-                            <option>Rejected</option>
-                            <option>Withdrawn</option>
-                          </select>
                           <span class="text-muted fs-12 ms-auto" id="pr-count"></span>
+                          <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
+                          <button type="button" class="btn btn-sm btn-primary" id="pr-initiate-btn" onclick="openPRInitiateModal()">
+                            <i class="ri-add-line me-1"></i>Request Partnership
+                          </button>
+                          <% } %>
                         </div>
 
-                        <!-- Status quick-filter pills -->
+                        <!-- Status quick-filter pills (2026-11: only the #pr-status dropdown was removed —
+                             these pills stay, and are now the sole status-filter UI; renderPR() reads
+                             _prStatusFilter directly) -->
                         <div class="d-flex gap-2 flex-wrap mb-3" id="pr-filter-tabs">
                           <button class="btn btn-sm btn-soft-primary active"
                             onclick="setPRStatusFilter('',this)">All</button>
@@ -747,10 +760,6 @@
                             onclick="setPRStatusFilter('Under Review',this)">Under Review</button>
                           <button class="btn btn-sm btn-soft-success"
                             onclick="setPRStatusFilter('Approved',this)">Approved</button>
-                          <button class="btn btn-sm btn-soft-danger"
-                            onclick="setPRStatusFilter('Rejected',this)">Rejected</button>
-                          <button class="btn btn-sm btn-soft-secondary"
-                            onclick="setPRStatusFilter('Withdrawn',this)">Withdrawn</button>
                         </div>
 
                         <div class="table-responsive">
@@ -1115,6 +1124,119 @@
        request they review, so this picker shows that same full set rather than only this reviewer's own
        uploads), with a search box and checkable rows. "Done" just closes this modal; the actual link
        happens when "Upload Version" is clicked back on dr-draft-modal. -->
+  <!-- Request Partnership (2026-11) — Admin/Staff starts a Partnership Request addressed to a chosen
+       partner. Same fields as the Partner's own "New Partnership Request" form (views/potential_partner/
+       partner_requests.ejs); the request flows through the exact same Admin/Staff review/approval
+       workflow from here on, and the target partner sees/edits it in their own Requests view just as if
+       they had started it themselves. Gated the same as the button that opens it (Admin/Staff only). -->
+  <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
+  <div class="modal fade" id="pr-initiate-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+      <div class="modal-content">
+        <div class="modal-header bg-light p-3">
+          <h5 class="modal-title"><i class="ri-building-4-line me-2 text-primary"></i>Request Partnership</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <!-- OCR auto-fill from a supporting document (2026-11) — same component, flow and limits as the
+               Partner's own "New Partnership Request" form (views/potential_partner/partner_requests.ejs):
+               CIPRMS.initDropzone, POST /api/ocr/extract + GET /api/ocr/status/:jobId, verifyMagicBytes,
+               10MB, PDF/JPG/JPEG/PNG only, and the IDP widget's duplicate-detection panel. Optional. -->
+          <div class="card border border-primary-subtle mb-4">
+            <div class="card-body">
+              <h6 class="mb-2"><i class="ri-scan-2-line text-primary me-1"></i>Auto-fill from Document (OCR) — Optional</h6>
+              <p class="text-muted fs-13 mb-3">Upload a draft MOA/MOU or Accreditation document (PDF, JPG, or PNG — max 10MB). The system extracts text and suggests values below, and the file itself becomes this request's supporting document attachment.</p>
+              <div id="pri-ocr-dropzone-wrap" class="mb-3">
+                <input type="file" class="form-control" id="pri-ocr-file-input" accept=".pdf,.jpg,.jpeg,.png">
+              </div>
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button type="button" class="btn btn-primary text-nowrap" onclick="priStartOcrExtraction()"><i class="ri-magic-line me-1"></i>Extract & Attach</button>
+              </div>
+              <div id="pri-ocr-progress-wrap" class="mt-3" style="display:none">
+                <div class="d-flex justify-content-between fs-12 text-muted mb-1"><span id="pri-ocr-stage-text">Uploading…</span><span id="pri-ocr-percent-text">0%</span></div>
+                <div class="progress" style="height:6px"><div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" id="pri-ocr-progress-bar" style="width:0%"></div></div>
+              </div>
+              <div id="pri-ocr-result-box" class="mt-3" style="display:none">
+                <span class="badge bg-success-subtle text-success"><i class="ri-checkbox-circle-line me-1"></i>Document attached — form auto-filled below</span>
+                <button type="button" class="btn btn-sm btn-light ms-2" onclick="priApplyOcrToForm()">Re-apply suggested values</button>
+                <div id="pri-ocr-idp-panel" class="mt-3" style="display:none"></div>
+              </div>
+              <div id="pri-ocr-error-box" class="alert alert-danger mt-3 mb-0 py-2 fs-13" style="display:none"></div>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="pri-partner-search">Target Partner <span class="text-danger">*</span></label>
+            <div class="pri-partner-wrap">
+              <input type="text" class="form-control" id="pri-partner-search" autocomplete="off" role="combobox"
+                aria-expanded="false" aria-haspopup="listbox" aria-controls="pri-partner-dropdown" placeholder="Type to search partners…">
+              <input type="hidden" id="pri-partner-id" value="">
+              <div class="pri-partner-dropdown" id="pri-partner-dropdown" role="listbox"></div>
+            </div>
+            <div class="form-text">The request is submitted on this partner's behalf — they'll see it in their own Requests/Monitoring pages and can add supporting documents until it's approved. Pick a partner from the list — typing a name alone doesn't select one.</div>
+          </div>
+          <div class="row">
+            <div class="col-lg-6 mb-3">
+              <label class="form-label" for="pri-inst">Institution Name <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="pri-inst">
+            </div>
+            <div class="col-lg-6 mb-3">
+              <label class="form-label" for="pri-country">Country <span class="text-danger">*</span></label>
+              <input type="text" class="form-control" id="pri-country">
+            </div>
+            <div class="col-lg-4 mb-3">
+              <label class="form-label" for="pri-type">Agreement Type <span class="text-danger">*</span></label>
+              <select class="form-select" id="pri-type">
+                <option value="">Select…</option>
+                <option>MOA</option><option>MOU</option>
+              </select>
+              <div class="form-text text-warning fs-12" id="pri-type-warn" style="display:none"></div>
+            </div>
+            <div class="col-lg-4 mb-3">
+              <label class="form-label" for="pri-nature">Nature of Partnership <span class="text-danger">*</span></label>
+              <select class="form-select" id="pri-nature">
+                <option value="">Select…</option>
+                <option>Research</option><option>Student Exchange</option><option>Joint Program</option>
+                <option>Faculty Development</option><option>Technology Transfer</option><option>Community Outreach</option><option>Other</option>
+              </select>
+            </div>
+            <div class="col-lg-4 mb-3">
+              <label class="form-label" for="pri-cat">Category</label>
+              <select class="form-select" id="pri-cat">
+                <option value="">Select…</option>
+                <option value="International">International</option>
+                <option value="Local">Local</option>
+              </select>
+            </div>
+            <div class="col-lg-4 mb-3">
+              <label class="form-label" for="pri-region">Region</label>
+              <select class="form-select" id="pri-region">
+                <option value="">Select…</option>
+                <option>Asia</option><option>Africa</option><option>North America</option><option>South America</option><option>Antarctica</option><option>Europe</option><option>Oceania</option>
+              </select>
+            </div>
+            <div class="col-lg-4 mb-3">
+              <label class="form-label" for="pri-start">Proposed Start Date</label>
+              <input type="date" class="form-control" id="pri-start">
+            </div>
+            <div class="col-lg-4 mb-3">
+              <label class="form-label" for="pri-end">Proposed End Date</label>
+              <input type="date" class="form-control" id="pri-end">
+            </div>
+            <div class="col-12 mb-3">
+              <label class="form-label" for="pri-notes">Additional Details</label>
+              <textarea class="form-control" id="pri-notes" rows="3"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-success" id="pri-submit-btn" onclick="submitPRInitiate(this)"><i class="ri-send-plane-line me-1"></i>Submit Request</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <% } %>
+
   <div class="modal fade" id="dr-select-existing-modal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
       <div class="modal-content">
@@ -1410,6 +1532,8 @@
       document.getElementById('tab-pr').classList.toggle('active', sec === 'pr');
       if (document.getElementById('tab-dr')) document.getElementById('tab-dr').classList.toggle('active', sec === 'dr');
       if (document.getElementById('tab-cdr')) document.getElementById('tab-cdr').classList.toggle('active', sec === 'cdr');
+      // "Request Partnership" only makes sense while viewing Partnership Requests.
+      if (document.getElementById('pr-initiate-btn')) document.getElementById('pr-initiate-btn').style.display = sec === 'pr' ? '' : 'none';
     }
 
     
@@ -1490,16 +1614,308 @@
     /* ═══════════════════════════════════════════════════════
        PARTNERSHIP REQUESTS
     ═══════════════════════════════════════════════════════ */
-    var _prStatusFilter = '';
     var flashPR = new Set(), flashDR = new Set();   // rows a live update just changed
+    var _prStatusFilter = '';
+
+    // Submitted By badge (2026-11 fix): only an actual Partner user gets the "Partner" badge. An
+    // institution-initiated request always shows "Admin/Staff", regardless of role. Otherwise the
+    // submitter's real role (via USERS_BY_EMAIL, populated by cdrLoadDeans()) is shown using the existing
+    // ROLE_LABEL display names — e.g. "College Dean" for Auth. Personnel — instead of assuming "Partner".
+    // If the role can't be resolved yet (map not loaded, or the viewer is LAU, who never loads it), this
+    // falls back to "Partner", the same default this badge always used before the fix.
+    function submittedByBadge(r) {
+      if (r.initiatedBy === 'institution') {
+        return ' <span class="badge bg-secondary-subtle text-secondary" title="Started by Admin/Staff on behalf of this partner">Admin/Staff</span>';
+      }
+      const role = USERS_BY_EMAIL[r.submittedByEmail];
+      if (role && role !== 'potential_partner') {
+        const label = ROLE_LABEL[role] || role;
+        return ` <span class="badge bg-info-subtle text-info" title="Submitted by ${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+      }
+      return ' <span class="badge bg-light text-muted" title="Submitted directly by the partner">Partner</span>';
+    }
 
     function setPRStatusFilter(val, btn) {
       _prStatusFilter = val;
       document.querySelectorAll('#pr-filter-tabs .btn').forEach(b => b.classList.remove('active'));
       if (btn) btn.classList.add('active');
-      document.getElementById('pr-status').value = val;
       prCurrentPage = 1;
       renderPR();
+    }
+
+    /* ─── Request Partnership (2026-11): Admin/Staff starts a request on a partner's behalf ─── */
+    var priPartners = [];           // {id, name} list for the current modal open, loaded once per open
+    var priPartnerActiveIndex = -1; // keyboard-highlighted row in the open dropdown
+
+    function openPRInitiateModal() {
+      document.getElementById('pri-partner-search').value = '';
+      document.getElementById('pri-partner-id').value = '';
+      priPartners = [];
+      closePriPartnerDropdown();
+      ['pri-inst', 'pri-country', 'pri-notes'].forEach(id => { document.getElementById(id).value = ''; });
+      ['pri-type', 'pri-nature', 'pri-cat', 'pri-region'].forEach(id => { document.getElementById(id).value = ''; });
+      document.getElementById('pri-start').value = '';
+      document.getElementById('pri-end').value = '';
+      priOcrExtractedResult = null;
+      document.getElementById('pri-ocr-file-input').value = '';
+      if (window._priOcrDropzone && typeof window._priOcrDropzone.reset === 'function') window._priOcrDropzone.reset();
+      document.getElementById('pri-ocr-progress-wrap').style.display = 'none';
+      document.getElementById('pri-ocr-result-box').style.display = 'none';
+      document.getElementById('pri-ocr-error-box').style.display = 'none';
+      document.getElementById('pri-ocr-idp-panel').style.display = 'none';
+      document.getElementById('pri-type-warn').style.display = 'none';
+      modalInstance('pr-initiate-modal').show();
+      // A dedicated minimal endpoint (id + name only) — not the general GET /api/users, which returns
+      // every field on every account and would leak the whole user directory to the browser just to
+      // populate this one search box.
+      CIPRMS.api('/api/users/partner-options', { quiet: true }).then(res => {
+        priPartners = res.ok && Array.isArray(res.data) ? res.data : [];
+      });
+    }
+
+    function closePriPartnerDropdown() {
+      const dropdown = document.getElementById('pri-partner-dropdown');
+      dropdown.style.display = 'none';
+      dropdown.innerHTML = '';
+      priPartnerActiveIndex = -1;
+      document.getElementById('pri-partner-search').setAttribute('aria-expanded', 'false');
+    }
+
+    // Typing never selects a partner by itself — any edit to the text clears the hidden id, so a stale
+    // selection can never be silently submitted alongside different text.
+    function priPartnerUnselect() {
+      document.getElementById('pri-partner-id').value = '';
+    }
+
+    function priPartnerSelect(p) {
+      document.getElementById('pri-partner-search').value = p.name || ('Partner #' + p.id);
+      document.getElementById('pri-partner-id').value = p.id;
+      closePriPartnerDropdown();
+    }
+
+    function priPartnerOpenDropdown() {
+      const input = document.getElementById('pri-partner-search');
+      const dropdown = document.getElementById('pri-partner-dropdown');
+      const q = input.value.trim().toLowerCase();
+      const matches = q ? priPartners.filter(p => (p.name || '').toLowerCase().indexOf(q) !== -1) : priPartners;
+      priPartnerActiveIndex = -1;
+      dropdown.innerHTML = matches.length
+        ? matches.map((p, i) => `<div class="pri-partner-option" data-idx="${i}" data-id="${p.id}">${escapeHtml(p.name || ('Partner #' + p.id))}</div>`).join('')
+        : '<div class="pri-partner-empty">No partners found.</div>';
+      dropdown.style.display = 'block';
+      input.setAttribute('aria-expanded', 'true');
+      dropdown.querySelectorAll('.pri-partner-option').forEach(opt => {
+        opt.addEventListener('mousedown', e => {
+          e.preventDefault();
+          const p = matches[Number(opt.getAttribute('data-idx'))];
+          if (p) priPartnerSelect(p);
+        });
+      });
+      return matches;
+    }
+
+    function priPartnerHighlight(matches, idx) {
+      const dropdown = document.getElementById('pri-partner-dropdown');
+      const opts = dropdown.querySelectorAll('.pri-partner-option');
+      if (!opts.length) return;
+      priPartnerActiveIndex = ((idx % opts.length) + opts.length) % opts.length;
+      opts.forEach(o => o.classList.remove('is-active'));
+      const active = opts[priPartnerActiveIndex];
+      active.classList.add('is-active');
+      active.scrollIntoView({ block: 'nearest' });
+    }
+
+    function attachPartnerSearch() {
+      const input = document.getElementById('pri-partner-search');
+      const dropdown = document.getElementById('pri-partner-dropdown');
+      if (!input || !dropdown) return; // modal isn't rendered for this role (e.g. LAU) — nothing to wire up
+      let lastMatches = [];
+      input.addEventListener('focus', () => { lastMatches = priPartnerOpenDropdown(); });
+      input.addEventListener('click', () => { lastMatches = priPartnerOpenDropdown(); });
+      input.addEventListener('input', () => {
+        priPartnerUnselect();
+        lastMatches = priPartnerOpenDropdown();
+      });
+      input.addEventListener('keydown', e => {
+        if (dropdown.style.display !== 'block') return;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          priPartnerHighlight(lastMatches, priPartnerActiveIndex + 1);
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          priPartnerHighlight(lastMatches, priPartnerActiveIndex - 1);
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (priPartnerActiveIndex >= 0 && lastMatches[priPartnerActiveIndex]) priPartnerSelect(lastMatches[priPartnerActiveIndex]);
+        } else if (e.key === 'Escape') {
+          e.stopPropagation();
+          closePriPartnerDropdown();
+        }
+      });
+      input.addEventListener('blur', () => {
+        // A short delay lets a mousedown on an option fire (and select) before the blur-triggered close.
+        setTimeout(closePriPartnerDropdown, 120);
+      });
+      document.addEventListener('click', e => {
+        if (e.target !== input && !dropdown.contains(e.target)) closePriPartnerDropdown();
+      });
+    }
+    attachPartnerSearch();
+
+    /* ─── OCR auto-fill (2026-11) — reuses the same /api/ocr endpoints and IDP widget as the Partner's own
+       "New Partnership Request" form (partner_requests.ejs's startOcrExtraction/pollOcrStatus/ocrSucceed/
+       applyOcrToForm). Target Partner is never autofilled — it must always be picked from the list. */
+    var priOcrExtractedResult = null;
+
+    // Same date-only, local-timezone parsing as the Partner form's ocrIsoDate() — a plain Date-string
+    // extracted value like "March 3, 2026" must not roll back a day in UTC+ timezones via toISOString().
+    function ocrIsoDate(str) {
+      if (!str) return '';
+      const d = new Date(str);
+      if (isNaN(d.getTime())) return '';
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return d.getFullYear() + '-' + mm + '-' + dd;
+    }
+
+    function priStartOcrExtraction() {
+      const file = document.getElementById('pri-ocr-file-input').files[0];
+      if (!file) { showToast('Choose a file first.'); return; }
+
+      document.getElementById('pri-ocr-error-box').style.display = 'none';
+      document.getElementById('pri-ocr-result-box').style.display = 'none';
+      document.getElementById('pri-ocr-progress-wrap').style.display = '';
+      document.getElementById('pri-ocr-progress-bar').style.width = '0%';
+
+      const formData = new FormData();
+      formData.append('document', file);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/ocr/extract');
+      xhr.upload.addEventListener('progress', e => {
+        if (!e.lengthComputable) return;
+        const pct = Math.round((e.loaded / e.total) * 100);
+        document.getElementById('pri-ocr-progress-bar').style.width = pct + '%';
+      });
+      xhr.onload = () => {
+        let data;
+        try { data = JSON.parse(xhr.responseText); } catch (e) { data = null; }
+        if (xhr.status !== 202 || !data || !data.success) { priOcrFail((data && data.error) || 'Failed to start OCR.'); return; }
+        document.getElementById('pri-ocr-stage-text').textContent = 'OCR Processing…';
+        priPollOcrStatus(data.jobId);
+      };
+      xhr.onerror = () => { priOcrFail('Network error while uploading.'); };
+      xhr.send(formData);
+    }
+
+    function priPollOcrStatus(jobId) {
+      fetch('/api/ocr/status/' + jobId).then(r => r.json()).then(data => {
+        if (!data.success) { priOcrFail(data.error || 'Job not found.'); return; }
+        document.getElementById('pri-ocr-progress-bar').style.width = (data.progress || 0) + '%';
+        if (data.status === 'error') { priOcrFail(data.error || 'OCR failed.'); return; }
+        if (data.status === 'done') { priOcrSucceed(jobId, data.result); return; }
+        setTimeout(() => priPollOcrStatus(jobId), 700);
+      }).catch(() => { priOcrFail('Lost connection while checking OCR progress.'); });
+    }
+
+    function priOcrFail(message) {
+      document.getElementById('pri-ocr-progress-wrap').style.display = 'none';
+      const box = document.getElementById('pri-ocr-error-box');
+      box.textContent = message;
+      box.style.display = '';
+    }
+
+    function priOcrSucceed(jobId, result) {
+      priOcrExtractedResult = result;
+      priApplyOcrToForm();
+      document.getElementById('pri-ocr-stage-text').textContent = 'Saving to Document Library…';
+      // POST /api/ocr/confirm (same endpoint the Document Library's own OCR upload already uses) — this is
+      // what actually archives the file and runs duplicate detection; documentType agrees with whatever
+      // priApplyOcrToForm() just set, same as the "Add New Partnership" form's own confirm call does.
+      CIPRMS.api('/api/ocr/confirm', {
+        method: 'POST', quiet: true,
+        json: { jobId, documentType: document.getElementById('pri-type').value || undefined }
+      }).then(res => {
+        document.getElementById('pri-ocr-progress-wrap').style.display = 'none';
+        document.getElementById('pri-ocr-result-box').style.display = '';
+        if (res.ok && res.data) {
+          priOcrExtractedResult.fileLink = res.data.fileLink;
+          priOcrExtractedResult.documentId = res.data.documentId;
+        }
+        if (window.IDP) {
+          IDP.renderResult('pri-ocr-idp-panel', result, {
+            onCancelDuplicate: documentId => {
+              if (!documentId) return;
+              fetch('/api/documents/' + documentId + '/organize', {
+                method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true })
+              }).then(() => showToast('Upload archived — removed from the active Document Library.'));
+            },
+            onViewDuplicate: fileLink => { window.open(fileLink, '_blank'); }
+          });
+        }
+      });
+    }
+
+    // Same rule as the Partner form's applyOcrToForm(): a field is only set when OCR actually found a
+    // value for it — never cleared to blank — and it is safe to re-run from "Re-apply suggested values".
+    // Like the Partner form, this does not protect a field the user already typed into from being
+    // overwritten by a later (re-)apply; Target Partner is never touched here at all.
+    function priApplyOcrToForm() {
+      if (!priOcrExtractedResult) return;
+      const r = priOcrExtractedResult;
+      function set(id, value) {
+        if (value === null || value === undefined || value === '') return;
+        const el = document.getElementById(id);
+        if (el) el.value = value;
+      }
+      if (r.institution) set('pri-inst', r.partner || r.institution);
+      set('pri-country', r.country);
+      set('pri-cat', r.category);
+      set('pri-region', r.region);
+      if (r.nature) set('pri-nature', r.nature);
+
+      const typeWarn = document.getElementById('pri-type-warn');
+      const mappedType = window.IDP ? IDP.mapDocumentType(r.documentType, ['MOA', 'MOU']) : null;
+      if (mappedType) {
+        set('pri-type', mappedType);
+        if (typeWarn) typeWarn.style.display = 'none';
+      } else if (r.documentType && typeWarn) {
+        typeWarn.textContent = 'Detected "' + r.documentType + '" — please select the closest Agreement Type manually.';
+        typeWarn.style.display = '';
+      }
+      set('pri-start', ocrIsoDate(r.startDate));
+      set('pri-end', ocrIsoDate(r.endDate));
+    }
+
+    function submitPRInitiate(btn) {
+      const partnerId = document.getElementById('pri-partner-id').value;
+      if (!partnerId) { showToast('Choose a target partner from the list.'); return; }
+      const payload = {
+        initiatedBy: 'institution',
+        targetPartnerId: partnerId ? Number(partnerId) : '',
+        isDraft: false,
+        institution: document.getElementById('pri-inst').value.trim(),
+        country: document.getElementById('pri-country').value.trim(),
+        type: document.getElementById('pri-type').value,
+        nature: document.getElementById('pri-nature').value,
+        category: document.getElementById('pri-cat').value,
+        region: document.getElementById('pri-region').value,
+        startDate: document.getElementById('pri-start').value,
+        endDate: document.getElementById('pri-end').value,
+        notes: document.getElementById('pri-notes').value.trim(),
+        attachmentLink: (priOcrExtractedResult && priOcrExtractedResult.fileLink) || undefined
+      };
+      if (!payload.institution || !payload.country || !payload.type || !payload.nature) {
+        showToast('Institution, country, agreement type, and nature are required.');
+        return;
+      }
+      return CIPRMS.busy(btn, () => CIPRMS.api('/api/requests', { method: 'POST', json: payload, quiet: true }).then(res => {
+        if (res.ok) {
+          showToast('Request submitted on behalf of the partner.');
+          modalInstance('pr-initiate-modal').hide();
+          return loadPR();
+        }
+        showToast(res.error || 'Failed to submit request.');
+      }), 'Submitting…');
     }
 
     // Drafts are still being edited by the submitter and were never actually submitted — they don't belong in the admin
@@ -1513,7 +1929,6 @@
 
     function renderPR() {
       const s = (document.getElementById('pr-search').value || '').toLowerCase();
-      const st = document.getElementById('pr-status').value;
 
       prFiltered = prData.filter(r => {
         const id = String(r.id || '');
@@ -1522,7 +1937,7 @@
         const country = String(r.country || '');
         const hay = [id, by, inst, country].join(' ').toLowerCase();
         return (!s || hay.includes(s))
-          && (!st || r.status === st);
+          && (!_prStatusFilter || r.status === _prStatusFilter);
       });
 
       const tbody = document.getElementById('pr-tbody');
@@ -1567,7 +1982,7 @@
         return `<tr data-rid="${uid}"${flashPR.has(uid) ? ' class="rt-flash"' : ''}>
           <td class="text-muted fw-semibold fs-13">${i + 1}</td>
           <td><span class="fw-semibold text-primary fs-13">#REQ-${String(r.id).padStart(3, '0')}</span></td>
-          <td class="fw-medium fs-13">${by}</td>
+          <td class="fw-medium fs-13">${by}${submittedByBadge(r)}</td>
           <td><span class="fw-semibold fs-13">${inst}</span></td>
           <td class="text-muted fs-13">${country}</td>
           <td><span class="badge badge-type bg-primary-subtle text-primary border border-primary-subtle">${type}</span>${r.isRenewal ? ' <span class="badge bg-info-subtle text-info">Renewal</span>' : ''}${r.isCollegeReport ? ' <span class="badge bg-success-subtle text-success" title="A college sent CIRL a copy of an MOA/MOU it already signed">College Report</span>' : ''}</td>
@@ -2805,6 +3220,10 @@
       };
     }
 
+    // USERS_BY_EMAIL (2026-11, Submitted By badge fix): populated as a side effect of this same /api/users
+    // fetch — every email's role, for the Partnership Requests table's role badge (see renderPR()). Avoids
+    // a second identical request just to build this lookup.
+    var USERS_BY_EMAIL = {};
     function cdrLoadDeans() {
       // /api/users is requireStaffAccess-gated server-side — LAU would get a 403, and LAU never sees this
       // tab anyway (IS_LAU, same reasoning as loadDR() above).
@@ -2814,6 +3233,8 @@
         .then(function (users) {
           CDR_DEANS = (users || []).filter(function (u) { return u.role === 'Auth. Personnel'; })
             .map(function (u) { return { id: u.id, name: u.name, email: u.email, unit: u.unit || '' }; });
+          USERS_BY_EMAIL = {};
+          (users || []).forEach(function (u) { if (u.email) USERS_BY_EMAIL[u.email] = u.role; });
           if (!CDR_DEAN_COMBO && document.getElementById('cdr-c-dean-combo')) CDR_DEAN_COMBO = createDeanCombo();
         })
         .catch(function () { showToast('Could not load College Dean accounts.', '#f44336'); });
@@ -3066,8 +3487,11 @@
       }
     }
 
-    // Status pre-filter from the URL, e.g. the dashboard's Expansion Opportunity
-    // card links to /partnership-requests?status=Pending. Only known statuses apply.
+    // Status pre-filter from the URL, e.g. the dashboard's Expansion Opportunity card links to
+    // /partnership-requests?status=Pending. The status filter UI (dropdown + quick-filter pills) was
+    // removed (2026-11) — this now just lands on the unfiltered list, same as any other visit here.
+    // Status pre-filter from the URL, e.g. the dashboard's Expansion Opportunity card links to
+    // /partnership-requests?status=Pending. Only known statuses apply.
     function applyStatusFromQuery() {
       const status = new URLSearchParams(window.location.search).get('status');
       if (!status) return;
@@ -3143,6 +3567,17 @@
           title: 'Upload Document',
           desc: 'PDF, JPG, JPEG, or PNG · Max 10MB'
         });
+        if (document.getElementById('pri-ocr-dropzone-wrap')) {
+          window._priOcrDropzone = CIPRMS.initDropzone({
+            container: '#pri-ocr-dropzone-wrap',
+            input: '#pri-ocr-file-input',
+            accept: '.pdf,.jpg,.jpeg,.png',
+            maxSize: 10 * 1024 * 1024,
+            compact: true,
+            title: 'Upload Supporting Document',
+            desc: 'PDF, JPG, JPEG, or PNG · Max 10MB'
+          });
+        }
       }
       if (window.CIPRMS && CIPRMS.live) {
         const events = IS_LAU
@@ -3163,6 +3598,7 @@
   <script src="/velzon/assets/js/plugins.js"></script>
   <script src="/js/ciprms-uploader.js"></script>
   <script src="/js/ciprms-pagination.js"></script>
+  <script src="/velzon/assets/js/pages/idp-ocr-widget.js"></script>
   <script src="/velzon/assets/js/app.js"></script>
 </body>
 

@@ -191,11 +191,48 @@
         </div>
 
         <!-- Draft Collaboration Modal -->
+        <!-- Request Details (2026-11, split from pr-draft-modal) — read-only summary; its own "View Draft"
+             button drills into pr-draft-modal (a separate modal, swapped in — see the hidden.bs.modal
+             wiring below), never stacked on top of this one. -->
+        <div class="modal fade" id="pr-details-modal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="pr-details-modal-title"><i class="ri-file-list-3-line me-2 text-primary"></i>Request Details</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="pr-details-summary" class="row g-2 fs-13 mb-0">
+                            <div class="col-6"><span class="text-muted">Institution</span><div class="fw-semibold" id="pr-det-inst"></div></div>
+                            <div class="col-6"><span class="text-muted">Country</span><div class="fw-semibold" id="pr-det-country"></div></div>
+                            <div class="col-4"><span class="text-muted">Agreement Type</span><div id="pr-det-type"></div></div>
+                            <div class="col-4"><span class="text-muted">Nature</span><div id="pr-det-nature"></div></div>
+                            <div class="col-4"><span class="text-muted">Category</span><div id="pr-det-category"></div></div>
+                            <div class="col-4"><span class="text-muted">Status</span><div id="pr-det-status"></div></div>
+                            <div class="col-4"><span class="text-muted">Proposed Start</span><div id="pr-det-start"></div></div>
+                            <div class="col-4"><span class="text-muted">Proposed End</span><div id="pr-det-end"></div></div>
+                            <div class="col-12"><span class="text-muted">Notes</span><div id="pr-det-notes"></div></div>
+                            <div class="col-12"><span class="text-muted">Started by</span><div id="pr-det-initiator"></div></div>
+                        </div>
+                        <div id="pr-details-no-draft-note" class="form-text mt-2" style="display:none;">No draft or document has been attached to this request yet.</div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+                        <button type="button" class="btn btn-soft-info" id="pr-details-view-draft-btn" onclick="openDraftModal(currentDraftPRId)">
+                            <i class="ri-file-list-3-line me-1"></i>View Draft
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Draft modal (2026-11, narrowed to just the draft/document timeline + upload — the read-only
+             summary that used to live here moved to pr-details-modal above). -->
         <div class="modal fade" id="pr-draft-modal" tabindex="-1" aria-hidden="true">
             <div class="modal-dialog modal-dialog-centered modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title" id="pr-draft-modal-title"><i class="ri-file-list-3-line me-2 text-primary"></i>Draft Collaboration</h5>
+                        <h5 class="modal-title" id="pr-draft-modal-title"><i class="ri-file-list-3-line me-2 text-primary"></i>Draft & Documents</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
@@ -219,6 +256,7 @@
                         </div>
                     </div>
                     <div class="modal-footer">
+                        <button type="button" class="btn btn-light" onclick="backToDetailsModal()"><i class="ri-arrow-left-line me-1"></i>Back to Details</button>
                         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
                     </div>
                 </div>
@@ -413,13 +451,18 @@
             if (returnEl) bootstrap.Modal.getOrCreateInstance(returnEl).show();
         }
     });
-    // A real close of pr-draft-modal (not a swap-hide for the preview above, which sets
-    // draftPreviewReturnTo to this same id right before hiding it) drops the breadcrumb.
-    document.getElementById('pr-draft-modal').addEventListener('hidden.bs.modal', function () {
-        if (draftPreviewReturnTo === 'pr-draft-modal') return;
+    // pr-draft-modal's own hidden.bs.modal listener (real close vs. Back-to-Details vs. swap-to-preview)
+    // is registered further down, right next to openDraftModal()/backToDetailsModal(), which it depends on.
+    document.getElementById('renewal-request-modal').addEventListener('hidden.bs.modal', resetBreadcrumb);
+    // Set (and self-cleared) only by openDraftModal(), right before it hides pr-details-modal to swap into
+    // pr-draft-modal — distinct from draftModalReturnTo below, which is pr-draft-modal's OWN "go back"
+    // signal. Keeping these separate avoids a stale flag from one swap direction leaking into the other
+    // (e.g. closing the Draft modal with its real Close button must never silently reopen Details).
+    var detailsToDraftSwap = false;
+    document.getElementById('pr-details-modal').addEventListener('hidden.bs.modal', function () {
+        if (detailsToDraftSwap) { detailsToDraftSwap = false; return; }
         resetBreadcrumb();
     });
-    document.getElementById('renewal-request-modal').addEventListener('hidden.bs.modal', resetBreadcrumb);
 
     function openDraftPreviewModal(prefix, idx) {
         var item = (DRAFT_TIMELINE_ITEMS[prefix] || [])[idx];
@@ -513,20 +556,83 @@
     }
 
     var currentDraftPRId = null;
-    function openDraftModal(id) {
+
+    // Does this request have anything for "View Draft" to show? Same test buildDraftTimelineItems() itself
+    // would otherwise report as empty — kept separate so the Details modal can decide this without first
+    // rendering the timeline into a (currently hidden) pr-draft-modal.
+    function requestHasDraftContent(r) {
+        return !!(r.attachmentLink || (Array.isArray(r.supportingDocuments) && r.supportingDocuments.length));
+    }
+
+    function populateDetailsSummary(r) {
+        document.getElementById('pr-details-modal-title').innerHTML = '<i class="ri-file-list-3-line me-2 text-primary"></i>Request Details — #' + r.id;
+        document.getElementById('pr-det-inst').textContent = r.institution || '—';
+        document.getElementById('pr-det-country').textContent = r.country || '—';
+        document.getElementById('pr-det-type').textContent = r.type || '—';
+        document.getElementById('pr-det-nature').textContent = r.nature || '—';
+        document.getElementById('pr-det-category').textContent = r.category || '—';
+        document.getElementById('pr-det-status').innerHTML = '<span class="badge ' + statusBadgeClass(r.status) + '">' + escapeHtml(r.status || '—') + '</span>';
+        document.getElementById('pr-det-start').textContent = r.startDate || '—';
+        document.getElementById('pr-det-end').textContent = r.endDate || '—';
+        document.getElementById('pr-det-notes').textContent = r.notes || '—';
+        // initiatedBy:'institution' (2026-11) — Admin/Staff started this request on the partner's behalf;
+        // every other request was submitted by the partner themselves.
+        document.getElementById('pr-det-initiator').textContent = r.initiatedBy === 'institution'
+            ? 'CSPC-CIRL (started on your behalf)' : 'You';
+        var hasDraft = requestHasDraftContent(r);
+        var viewDraftBtn = document.getElementById('pr-details-view-draft-btn');
+        viewDraftBtn.disabled = !hasDraft;
+        document.getElementById('pr-details-no-draft-note').style.display = hasDraft ? 'none' : '';
+    }
+
+    function openDetailsModal(id) {
         var r = myRequests.find(function (x) { return x.id === id; });
         if (!r) return;
         currentDraftPRId = id;
-        document.getElementById('pr-draft-modal-title').innerHTML = '<i class="ri-file-list-3-line me-2 text-primary"></i>Draft Collaboration — #' + r.id;
+        populateDetailsSummary(r);
+        setBreadcrumb(['Monitoring', r.isSubmission ? 'MOA/MOU Submission' : 'Partnership Request', prRequestLabel(r), 'Details']);
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('pr-details-modal')).show();
+    }
+
+    // Bootstrap 5 doesn't reliably support two modals open at once (the second one's backdrop can render
+    // behind the first, eating clicks, and can leave the page scroll-locked after close), so Details and
+    // Draft are SWAPPED rather than stacked — same pattern already used for pr-draft-modal <-> the Draft
+    // Preview modal below. Only the explicit "Back to Details" button sets draftModalReturnTo before
+    // hiding pr-draft-modal; closing it any other way (X, footer Close, Esc) ends the flow entirely.
+    var draftModalReturnTo = null;
+    document.getElementById('pr-draft-modal').addEventListener('hidden.bs.modal', function () {
+        if (draftPreviewReturnTo === 'pr-draft-modal') return; // swapping to the preview, not a real close
+        if (draftModalReturnTo) {
+            draftModalReturnTo = null;
+            openDetailsModal(currentDraftPRId);
+            return;
+        }
+        resetBreadcrumb();
+    });
+
+    function openDraftModal(id) {
+        var r = myRequests.find(function (x) { return x.id === id; });
+        if (!r || !requestHasDraftContent(r)) return;
+        currentDraftPRId = id;
+        document.getElementById('pr-draft-modal-title').innerHTML = '<i class="ri-file-list-3-line me-2 text-primary"></i>Draft & Documents — #' + r.id;
         renderDraftTimeline(r);
         var closed = ['Approved', 'Rejected', 'Withdrawn'].indexOf(r.status) !== -1;
         document.getElementById('pr-draft-upload-wrap').style.display = closed ? 'none' : '';
         document.getElementById('pr-draft-closed-note').style.display = closed ? '' : 'none';
         document.getElementById('pr-draft-file').value = '';
         document.getElementById('pr-draft-note').value = '';
-        setBreadcrumb(['Monitoring', r.isSubmission ? 'MOA/MOU Submission' : 'Partnership Request', prRequestLabel(r), 'Draft Collaboration']);
+        setBreadcrumb(['Monitoring', r.isSubmission ? 'MOA/MOU Submission' : 'Partnership Request', prRequestLabel(r), 'Draft']);
+
+        var detailsEl = document.getElementById('pr-details-modal');
+        var detailsInstance = detailsEl && bootstrap.Modal.getInstance(detailsEl);
+        if (detailsInstance) { detailsToDraftSwap = true; detailsInstance.hide(); }
         bootstrap.Modal.getOrCreateInstance(document.getElementById('pr-draft-modal')).show();
         loadPartnerGoogleDocs(id);
+    }
+
+    function backToDetailsModal() {
+        draftModalReturnTo = 'pr-details-modal';
+        bootstrap.Modal.getInstance(document.getElementById('pr-draft-modal')).hide();
     }
 
     // MOA/MOU drafts CIRL started in Google Docs for this request (2026-09-26). The partner was already given
@@ -644,10 +750,12 @@
         var pageItems = prs.slice(startIdx, startIdx + prItemsPerPage);
         if (pagEl) pagEl.innerHTML = buildPaginationHtml(prCurrentPage, totalPages, 'goToPRPage');
         body.innerHTML = pageItems.map(function (r) {
-            // Withdraw was removed from Monitoring: a submitted request can only be viewed here.
-            var actions = r.status === 'Draft'
-                ? '<a href="/partner/requests" class="btn btn-sm btn-soft-primary" title="Continue this draft"><i class="ri-edit-line me-1"></i>Continue</a>'
-                : '<button class="btn btn-sm btn-soft-info" onclick="openDraftModal(' + r.id + ')" title="View Draft"><i class="ri-file-list-3-line me-1"></i>Draft</button>';
+            // Withdraw was removed from Monitoring: a submitted request can only be viewed here. Every row
+            // gets a read-only "View" action (2026-11); Drafts additionally keep "Continue" to go on editing.
+            var actions = (r.status === 'Draft'
+                ? '<a href="/partner/requests" class="btn btn-sm btn-soft-primary" title="Continue this draft"><i class="ri-edit-line me-1"></i>Continue</a> '
+                : '') +
+                '<button class="btn btn-sm btn-soft-info" onclick="openDetailsModal(' + r.id + ')" title="View details"><i class="ri-eye-line me-1"></i>View</button>';
             return '<tr data-pr-id="' + r.id + '"' + (flashPRIds.has(r.id) ? ' class="rt-flash"' : '') + '>' +
                 '<td>' + (escapeHtml(r.institution) || '<span class="text-muted">(untitled draft)</span>') + '</td>' +
                 '<td>' + (r.isRenewal ? 'Renewal' : 'Partnership') + '</td>' +
@@ -696,7 +804,7 @@
         var allRows = [];
         current.forEach(function (r) {
             var files = (r.attachmentLink ? 1 : 0) + (r.supportingDocuments || []).length;
-            var actions = '<button class="btn btn-sm btn-soft-info" onclick="openDraftModal(' + r.id + ')" title="View files"><i class="ri-file-list-3-line me-1"></i>View</button>';
+            var actions = '<button class="btn btn-sm btn-soft-info" onclick="openDetailsModal(' + r.id + ')" title="View files"><i class="ri-file-list-3-line me-1"></i>View</button>';
             allRows.push('<tr data-pr-id="' + r.id + '"' + (flashPRIds.has(r.id) ? ' class="rt-flash"' : '') + '>' +
                 '<td>' + escapeHtml(r.institution || '—') + '</td>' +
                 '<td style="max-width:260px;">' + moaNotesCell(r.notes) + '</td>' +
@@ -769,6 +877,7 @@
             renderMoaTable();
             flashPRIds = new Set();
             refreshOpenDraft();
+            refreshOpenDetails();
 
             var progBox = document.getElementById('approval-progress-body');
             var total = real.length;
@@ -789,7 +898,7 @@
         });
     }
 
-    // a draft-collaboration modal that is open on a request whose data just changed shows the new timeline / state
+    // A Details or Draft modal that is open on a request whose data just changed shows the new state.
     function refreshOpenDraft() {
         var el = document.getElementById('pr-draft-modal');
         if (!el || !el.classList.contains('show') || !currentDraftPRId) return;
@@ -799,6 +908,14 @@
         var closed = ['Approved', 'Rejected', 'Withdrawn'].indexOf(r.status) !== -1;
         document.getElementById('pr-draft-upload-wrap').style.display = closed ? 'none' : '';
         document.getElementById('pr-draft-closed-note').style.display = closed ? '' : 'none';
+    }
+
+    function refreshOpenDetails() {
+        var el = document.getElementById('pr-details-modal');
+        if (!el || !el.classList.contains('show') || !currentDraftPRId) return;
+        var r = myRequests.find(function (x) { return x.id === currentDraftPRId; });
+        if (!r) return;
+        populateDetailsSummary(r);
     }
 
     // Deep-link support so a notification ("Partnership Request Approved", etc.) can jump
