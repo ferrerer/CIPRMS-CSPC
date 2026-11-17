@@ -70,6 +70,32 @@
         border-color: #3a4053;
         color: #6c757d;
       }
+
+      /* ── .ai-stat-tile (2026-11) — AI Strategic Insights panel moved here from the Admin/Staff
+         dashboards; statTilesHtml() below still renders this exact markup, so the same styling
+         (copied verbatim from admin_dashboard.ejs, which still needs it for Executive Briefing) is
+         needed here too. ── */
+      .ai-stat-tile {
+        border: 1px solid var(--vz-border-color, #e9ebec);
+        border-radius: .5rem;
+        padding: .6rem .85rem;
+        background: var(--vz-secondary-bg, #fff);
+        flex: 1 1 110px;
+      }
+      .ai-stat-tile .ai-stat-value { font-size: 1.15rem; font-weight: 600; line-height: 1.2; }
+      .ai-stat-tile .ai-stat-label { font-size: .68rem; text-transform: uppercase; color: var(--vz-secondary-color, #878a99); letter-spacing: .02em; }
+      [data-bs-theme="dark"] .ai-stat-tile { background: #262d3d; border-color: rgba(255,255,255,.1); }
+
+      /* ── .ai-scroll-box (2026-11) — fixed height + inner scroll for the Verified Institutional
+         Figures / AI-Generated Interpretation / Ask-a-Question answer boxes, so the card itself
+         never grows with the content (findings/claims can page internally instead). Only the box
+         scrolls, never the page; card headers and the Generate/Regenerate/Ask buttons live outside
+         this box and are always visible. Same class on every box so both cards scroll identically,
+         in light and dark mode alike (color/background are untouched — this only adds sizing). ── */
+      .ai-scroll-box {
+        max-height: 420px;
+        overflow-y: auto;
+      }
     </style>
 </head>
 
@@ -717,76 +743,187 @@
                             </div><!-- end content-audit -->
 
                             <!-- â”€â”€ STRATEGIC INSIGHTS (DSS) TAB â”€â”€ -->
+                            <!-- AI-insights panel / Ask-a-Question panel (2026-11 — moved here from the Admin/Staff
+                                 dashboards; the old recommendations list and health-score widget, which used
+                                 to occupy these two cards, were removed — see the move's own report for why). -->
                             <div id="content-insights" style="display:none;">
-                                <div class="row">
-                                    <div class="col-xl-8">
-                                        <div class="card">
-                                            <div class="card-header border-0 align-items-center d-flex">
-                                                <h4 class="card-title mb-0 flex-grow-1"><i
-                                                        class="ri-lightbulb-flash-line text-warning me-1"></i>
-                                                    Partnership Recommendations</h4>
+                                <div class="row g-3">
+                                    <div class="col-xl-12">
+                                        <div class="card" id="ai-insights-card">
+                                            <div class="card-header border-0 align-items-center d-flex flex-wrap gap-2">
+                                                <div class="flex-grow-1">
+                                                    <h4 class="card-title mb-0"><i
+                                                            class="ri-robot-2-line me-2 text-primary"></i>AI Strategic
+                                                        Insights</h4>
+                                                    <p class="fs-12 text-muted mb-0 mt-1">
+                                                        <i class="ri-time-line align-middle me-1"></i><span
+                                                            id="ai-insights-last-generated">Not yet generated</span>
+                                                    </p>
+                                                </div>
+                                                <div class="flex-shrink-0 d-flex gap-2">
+                                                    <button type="button" class="btn btn-sm btn-soft-primary d-none"
+                                                        id="ai-generate-btn">
+                                                        <i class="ri-magic-line align-middle me-1"></i>Generate
+                                                        Insights</button>
+                                                    <button type="button" class="btn btn-sm btn-soft-secondary d-none"
+                                                        id="ai-regenerate-btn">
+                                                        <i class="ri-refresh-line align-middle me-1"></i>Regenerate</button>
+                                                </div>
                                             </div>
                                             <div class="card-body">
-                                                <div class="alert alert-info border-0 mb-4">
-                                                    <span id="dss-alert"><strong><i
-                                                                class="ri-information-line me-1"></i> Decision Support
-                                                            System (DSS) Active:</strong> Loading data…</span>
+                                                <p class="text-muted fs-13 mb-3">
+                                                    Gemini interprets the institutional indicators already computed
+                                                    below — partnership coverage, international reach, expiring
+                                                    concentrations and target gaps. It never calculates or replaces
+                                                    these figures; it only explains and prioritizes what the system
+                                                    has already verified.
+                                                </p>
+
+                                                <!-- Verified Figures are always shown once any response has landed —
+                                                     deterministic figures must stay visible even when AI generation
+                                                     is blocked/empty/erroring. -->
+                                                <div class="row g-3">
+                                                    <div class="col-lg-6">
+                                                        <div class="border rounded p-3 h-100 ai-scroll-box">
+                                                            <h6 class="text-uppercase fs-12 text-muted mb-2">
+                                                                <i
+                                                                    class="ri-shield-check-line align-middle me-1 text-success"></i>Verified
+                                                                Institutional Figures</h6>
+                                                            <div id="ai-verified-figures" class="text-muted fs-13">
+                                                                <span
+                                                                    class="spinner-border spinner-border-sm me-2"></span>Loading…
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-lg-6">
+                                                        <div class="border rounded p-3 h-100 ai-scroll-box"
+                                                            style="background: var(--vz-light, #f3f3f9);">
+                                                            <h6 class="text-uppercase fs-12 text-muted mb-2">
+                                                                <i
+                                                                    class="ri-sparkling-2-line align-middle me-1 text-primary"></i>AI-Generated
+                                                                Interpretation</h6>
+                                                            <div id="ai-state-checking" class="d-none text-muted fs-14">
+                                                                <span
+                                                                    class="spinner-border spinner-border-sm me-2"></span>Checking
+                                                                for available insights…</div>
+                                                            <div id="ai-state-blocked"
+                                                                class="d-none alert alert-secondary mb-0">
+                                                                <i
+                                                                    class="ri-shield-keyhole-line align-middle me-1"></i>
+                                                                <span id="ai-blocked-message"></span>
+                                                            </div>
+                                                            <div id="ai-state-empty" class="d-none text-muted fs-14">
+                                                                No AI insights have been generated yet. Click "Generate
+                                                                Insights" to interpret the figures on the left.</div>
+                                                            <div id="ai-state-generating"
+                                                                class="d-none text-muted fs-14">
+                                                                <span
+                                                                    class="spinner-border spinner-border-sm me-2"></span>Generating
+                                                                insights…</div>
+                                                            <div id="ai-state-error"
+                                                                class="d-none alert alert-danger mb-0">
+                                                                <span id="ai-error-message"></span>
+                                                                <button type="button"
+                                                                    class="btn btn-sm btn-outline-danger ms-2"
+                                                                    id="ai-retry-btn">Retry</button>
+                                                            </div>
+                                                            <div id="ai-state-ready" class="d-none">
+                                                                <div id="ai-interpretation-list"></div>
+                                                                <p class="text-muted fs-12 mt-2 mb-0" id="ai-cache-note">
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </div>
                                                 </div>
 
-                                                <h6 class="fw-semibold text-uppercase fs-12 mb-3">Strategic Portfolio
-                                                    Gaps</h6>
-                                                <div class="d-flex bg-light rounded p-3 mb-4 border">
-                                                    <div class="flex-shrink-0 text-primary fs-3">
-                                                        <i class="ri-global-line"></i>
-                                                    </div>
-                                                    <div class="flex-grow-1 ms-3">
-                                                        <h6 class="mb-1">Europe & Oceania Representation</h6>
-                                                        <p class="text-muted mb-0 fs-13" id="region-gap-text">Analyzing
-                                                            regional distribution…</p>
-                                                    </div>
-                                                </div>
-
-                                                <h6 class="fw-semibold text-uppercase fs-12 mb-3">Nearest Expiring
-                                                    Partnership</h6>
-                                                <div
-                                                    class="d-flex bg-warning-subtle rounded p-3 mb-4 border border-warning">
-                                                    <div class="flex-shrink-0 text-warning fs-3">
-                                                        <i class="ri-star-line"></i>
-                                                    </div>
-                                                    <div class="flex-grow-1 ms-3" id="dss-expiring-block">
-                                                        <p class="text-muted mb-0 fs-13">Loading…</p>
-                                                    </div>
-                                                </div>
-
-                                                <h6 class="fw-semibold text-uppercase fs-12 mb-3">Longest-Overdue
-                                                    Expired Agreement</h6>
-                                                <div class="d-flex bg-danger-subtle rounded p-3 border border-danger">
-                                                    <div class="flex-shrink-0 text-danger fs-3">
-                                                        <i class="ri-alert-line"></i>
-                                                    </div>
-                                                    <div class="flex-grow-1 ms-3" id="dss-expired-block">
-                                                        <p class="text-muted mb-0 fs-13">Loading…</p>
-                                                    </div>
+                                                <!-- Recommendations — structured, action-bearing claims only
+                                                     (opportunity / suggested_action claim types). Kept separate from
+                                                     the findings above so the "what / why / evidence / action" shape
+                                                     stands on its own, per the panel spec. -->
+                                                <div id="ai-recommendations-wrap" class="d-none mt-3">
+                                                    <hr class="my-3">
+                                                    <h6 class="fs-13 text-uppercase text-muted mb-2">
+                                                        <i
+                                                            class="ri-lightbulb-flash-line align-middle me-1 text-warning"></i>Recommendations
+                                                    </h6>
+                                                    <p class="text-muted fs-11 mb-2">AI-generated suggestions for
+                                                        administrator review — not official institutional decisions.
+                                                    </p>
+                                                    <div id="ai-recommendation-list"></div>
+                                                    <nav class="mt-2" id="ai-recommendation-pagination"
+                                                        aria-label="Recommendations pages"></nav>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
 
-                                    <div class="col-xl-4">
-                                        <div class="card card-animate">
-                                            <div class="card-body text-center">
-                                                <div class="avatar-lg mx-auto mb-3">
-                                                    <div
-                                                        class="avatar-title bg-success-subtle text-success rounded-circle fs-1">
-                                                        <i class="ri-line-chart-line"></i>
+                                    <div class="col-xl-12">
+                                        <div class="card" id="ai-ask-card">
+                                            <div class="card-header border-0 align-items-center d-flex">
+                                                <h4 class="card-title mb-0 flex-grow-1"><i
+                                                        class="ri-question-answer-line align-middle me-1 text-primary"></i>Ask
+                                                    a Question</h4>
+                                            </div>
+                                            <div class="card-body">
+                                                <p class="text-muted fs-12 mb-2">
+                                                    Ask about institutional partnership analytics in plain language
+                                                    (e.g. "Which institutional units have the largest partnership
+                                                    gaps?"). Gemini only classifies your question into a supported
+                                                    topic and interprets the figures CIPRMS already computes — it
+                                                    never queries the database directly.
+                                                </p>
+                                                <div class="input-group mb-2">
+                                                    <input type="text" class="form-control" id="ai-ask-input"
+                                                        maxlength="300"
+                                                        placeholder="e.g. How are our monthly targets progressing?">
+                                                    <button type="button" class="btn btn-primary" id="ai-ask-submit-btn">
+                                                        <i class="ri-send-plane-2-line align-middle"></i> Ask</button>
+                                                </div>
+                                                <div id="ai-ask-state-blocked" class="d-none alert alert-secondary mb-0">
+                                                    <i class="ri-shield-keyhole-line align-middle me-1"></i>
+                                                    <span id="ai-ask-blocked-message"></span>
+                                                </div>
+                                                <div id="ai-ask-state-asking" class="d-none text-muted fs-14">
+                                                    <span class="spinner-border spinner-border-sm me-2"></span>Thinking…
+                                                </div>
+                                                <div id="ai-ask-state-unsupported"
+                                                    class="d-none alert alert-warning mb-0">
+                                                    <span id="ai-ask-unsupported-message"></span>
+                                                </div>
+                                                <div id="ai-ask-state-error" class="d-none alert alert-danger mb-0">
+                                                    <span id="ai-ask-error-message"></span>
+                                                    <button type="button" class="btn btn-sm btn-outline-danger ms-2"
+                                                        id="ai-ask-retry-btn">Retry</button>
+                                                </div>
+                                                <div id="ai-ask-state-answered" class="d-none">
+                                                    <div class="row g-3">
+                                                        <div class="col-lg-6">
+                                                            <div class="border rounded p-3 h-100 ai-scroll-box">
+                                                                <h6 class="text-uppercase fs-12 text-muted mb-2">
+                                                                    <i
+                                                                        class="ri-shield-check-line align-middle me-1 text-success"></i>Verified
+                                                                    Institutional Figures</h6>
+                                                                <div id="ai-ask-verified-figures"></div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-lg-6">
+                                                            <div class="border rounded p-3 h-100 ai-scroll-box"
+                                                                style="background: var(--vz-light, #f3f3f9);">
+                                                                <h6 class="text-uppercase fs-12 text-muted mb-2">
+                                                                    <i
+                                                                        class="ri-sparkling-2-line align-middle me-1 text-primary"></i>AI-Generated
+                                                                    Interpretation</h6>
+                                                                <div id="ai-ask-answer-list"></div>
+                                                                <nav class="mt-2" id="ai-ask-pagination"
+                                                                    aria-label="Answer pages"></nav>
+                                                                <p class="text-muted fs-11 mt-2 mb-0"><span
+                                                                        id="ai-ask-generated-note"></span>AI-generated
+                                                                    — requires human review before institutional use.
+                                                                </p>
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <h5 class="fs-16 mb-1">Partnership Health Score</h5>
-                                                <p class="text-muted mb-4">Based on activity, diversity, and renewal
-                                                    rates.</p>
-                                                <h2 id="health-score" class="display-5 fw-bold text-success mb-2">—<span
-                                                        class="fs-14 text-muted">/100</span></h2>
-                                                <p class="text-muted">Based on active vs expired ratios</p>
                                             </div>
                                         </div>
                                     </div>
@@ -826,7 +963,6 @@
             }
             // Lazy-load data when tab becomes visible
             if (tab === 'audit') loadAuditGrid();
-            if (tab === 'insights') loadDssInsights();
         }
 
         const actionBadge = {
@@ -1465,80 +1601,369 @@
             });
         }
 
-        // ── Load DSS Insights from MongoDB ───────────────────────────────────────────
-        function loadDssInsights() {
-            fetch('/api/partnerships/stats')
-                .then(r => r.json())
-                .then(function (s) {
-                    // Update DSS alert text
-                    var dssAlert = document.getElementById('dss-alert');
-                    if (dssAlert) dssAlert.innerHTML = '<strong><i class="ri-information-line me-1"></i> Decision Support System (DSS) Active:</strong> Analyzing <strong>' + s.active + '</strong> active and <strong>' + s.expired + '</strong> expired partnerships. <strong>' + s.expiring + '</strong> expiring soon.';
+        /* ═══════════════════════════════════════════════════════════════
+           AI-insights panel & Ask-a-Question panel (2026-11 — moved here from the Admin/Staff
+           dashboards; the old recommendations list and health-score widget occupied this tab's
+           two cards before and had no dedicated backend of their own — both were computed client-
+           side from the general-purpose GET /api/partnerships/stats and GET /api/partnerships
+           endpoints, which remain fully in use elsewhere (dashboard, lifecycle monitor, etc.) and are
+           untouched here. Endpoints, prompts, response formats and the gate order are unchanged from
+           the dashboard's own implementation (see services/aiInsightService.js) — only the
+           EJS/client-JS location moved. Defined as plain top-level functions, not inside a private
+           IIFE like the dashboard's copy, so switchTab() above (a pre-existing top-level function on
+           this page) can see them. ═══════════════════════════════════════════════════════════════ */
+        function showState(prefix, states, active) {
+            states.forEach(function (s) {
+                var el = document.getElementById(prefix + '-state-' + s);
+                if (el) el.classList.toggle('d-none', s !== active);
+            });
+        }
+        var INSIGHT_STATES = ['checking', 'blocked', 'empty', 'generating', 'error', 'ready'];
+        var ASK_STATES = ['blocked', 'asking', 'unsupported', 'error', 'answered'];
+        function esc(s) { return escapeHtml(s); }
 
-                    // Update health score based on real data
-                    var score = Math.round(((s.active / (s.total || 1)) * 60) + ((1 - (s.expired / (s.total || 1))) * 40));
-                    var scoreEl = document.getElementById('health-score');
-                    if (scoreEl) { scoreEl.textContent = score; scoreEl.className = score >= 70 ? 'display-5 fw-bold text-success mb-2' : score >= 50 ? 'display-5 fw-bold text-warning mb-2' : 'display-5 fw-bold text-danger mb-2'; }
-
-                    // Top region gap
-                    var regionEl = document.getElementById('region-gap-text');
-                    if (regionEl) {
-                        var regions = Object.entries(s.byRegion || {}).sort((a, b) => a[1] - b[1]);
-                        if (regions.length) { var weakest = regions[0]; regionEl.innerHTML = '<strong>' + weakest[0] + '</strong> has only ' + weakest[1] + ' partnership(s). <strong>Recommendation:</strong> Prioritize establishing MOAs in this region to improve global reach and QS Stars rating.'; }
-                    }
-
-                    // Report card counts
-                    var activeEl = document.getElementById('stat-active-count');
-                    var expiringEl = document.getElementById('stat-expiring-count');
-                    var expiredEl = document.getElementById('stat-expired-count');
-                    if (activeEl) activeEl.textContent = s.active + ' record' + (s.active === 1 ? '' : 's');
-                    if (expiringEl) expiringEl.textContent = s.expiring + ' record' + (s.expiring === 1 ? '' : 's');
-                    if (expiredEl) expiredEl.textContent = s.expired + ' record' + (s.expired === 1 ? '' : 's');
-                })
-                .catch(function (err) { console.error('Failed to load stats:', err); });
-
-            // Nearest-expiring / longest-overdue blocks need the raw list, not just the aggregate stats
-            fetch('/api/partnerships')
-                .then(r => r.json())
-                .then(function (all) {
-                    var withDays = all.map(function (p) {
-                        var d = Math.ceil((new Date(p.end) - new Date()) / 86400000);
-                        return Object.assign({}, p, { days: d });
-                    });
-
-                    var expiringBlock = document.getElementById('dss-expiring-block');
-                    if (expiringBlock) {
-                        var soon = withDays.filter(function (p) { return p.status === 'Expiring Soon'; })
-                            .sort(function (a, b) { return a.days - b.days; });
-                        if (soon.length) {
-                            var p = soon[0];
-                            expiringBlock.innerHTML = '<h6 class="mb-1 text-dark">' + escapeHtml(p.inst) + (p.country ? ' (' + escapeHtml(p.country) + ')' : '') + '</h6>'
-                                + '<p class="text-muted mb-2 fs-13">This ' + escapeHtml(p.type) + ' expires in <strong>' + p.days + ' day' + (p.days === 1 ? '' : 's') + '</strong>.'
-                                + (soon.length > 1 ? ' ' + (soon.length - 1) + ' other agreement' + (soon.length > 2 ? 's are' : ' is') + ' also expiring within 90 days.' : '') + '</p>'
-                                + '<a href="/lifecycle" class="btn btn-sm btn-warning">Review in Lifecycle Monitor</a>';
-                        } else {
-                            expiringBlock.innerHTML = '<p class="text-muted mb-0 fs-13">No partnerships are currently expiring within the next 90 days.</p>';
-                        }
-                    }
-
-                    var expiredBlock = document.getElementById('dss-expired-block');
-                    if (expiredBlock) {
-                        var expired = withDays.filter(function (p) { return p.status === 'Expired'; })
-                            .sort(function (a, b) { return a.days - b.days; });
-                        if (expired.length) {
-                            var e = expired[0];
-                            var overdueDays = Math.abs(e.days);
-                            expiredBlock.innerHTML = '<h6 class="mb-1 text-dark">' + escapeHtml(e.inst) + (e.country ? ' (' + escapeHtml(e.country) + ')' : '') + '</h6>'
-                                + '<p class="text-muted mb-2 fs-13">This ' + escapeHtml(e.type) + ' expired <strong>' + overdueDays + ' day' + (overdueDays === 1 ? '' : 's') + '</strong> ago.'
-                                + (expired.length > 1 ? ' ' + (expired.length - 1) + ' other expired agreement' + (expired.length > 2 ? 's remain' : ' remains') + ' unrenewed.' : '')
-                                + ' <strong>Recommendation:</strong> Renew or archive this record.</p>';
-                        } else {
-                            expiredBlock.innerHTML = '<p class="text-muted mb-0 fs-13">No expired agreements currently require review.</p>';
-                        }
-                    }
-                })
-                .catch(function (err) { console.error('Failed to load partnerships for DSS blocks:', err); });
+        /* ── Generic client-side pagination registry — reuses the same CIPRMSPagination helper
+           (public/js/ciprms-pagination.js, loaded via partials/header) every other paginated screen
+           in CIPRMS already uses. ── */
+        var pageState = {};
+        function resetPage(key) { pageState[key] = 1; }
+        function paginate(key, pageSize, getItems, renderItems, listId, pagId, summaryId) {
+            if (!(key in pageState)) pageState[key] = 1;
+            function render() {
+                var items = getItems() || [];
+                var totalPages = Math.max(1, Math.ceil(items.length / pageSize));
+                if (pageState[key] > totalPages) pageState[key] = totalPages;
+                if (pageState[key] < 1) pageState[key] = 1;
+                var start = (pageState[key] - 1) * pageSize;
+                var listEl = document.getElementById(listId);
+                if (listEl) renderItems(items.slice(start, start + pageSize), listEl);
+                var pagEl = document.getElementById(pagId);
+                if (pagEl) pagEl.innerHTML = window.CIPRMSPagination ? CIPRMSPagination.buildPaginationHtml(pageState[key], totalPages, '__aiNav_' + key) : '';
+                if (summaryId) {
+                    var sEl = document.getElementById(summaryId);
+                    if (sEl) sEl.textContent = window.CIPRMSPagination ? CIPRMSPagination.summaryText(pageState[key], pageSize, items.length) : '';
+                }
+            }
+            window['__aiNav_' + key] = function (p) { pageState[key] = p; render(); };
+            return render;
         }
 
+        /* ── Shared table/claim renderers ── */
+        function flattenUnits(ranking) {
+            var rows = [];
+            (ranking && ranking.rankGroups || []).forEach(function (g) {
+                g.units.forEach(function (u) {
+                    var row = Object.assign({}, u, { __rank: g.rank, __tied: g.tied });
+                    rows.push(row);
+                });
+            });
+            return rows;
+        }
+        function unitSums(rows) {
+            return rows.reduce(function (acc, u) {
+                acc.total += u.total; acc.active += u.active; acc.international += u.international; acc.expiringSoon += u.expiringSoon;
+                return acc;
+            }, { total: 0, active: 0, international: 0, expiringSoon: 0 });
+        }
+        function statTilesHtml(sums) {
+            return '<div class="d-flex flex-wrap gap-2 mb-3">' +
+                '<div class="ai-stat-tile"><div class="ai-stat-value">' + sums.total + '</div><div class="ai-stat-label">Total</div></div>' +
+                '<div class="ai-stat-tile"><div class="ai-stat-value">' + sums.active + '</div><div class="ai-stat-label">Active</div></div>' +
+                '<div class="ai-stat-tile"><div class="ai-stat-value">' + sums.international + '</div><div class="ai-stat-label">International</div></div>' +
+                '<div class="ai-stat-tile"><div class="ai-stat-value">' + sums.expiringSoon + '</div><div class="ai-stat-label">Expiring Soon</div></div>' +
+                '</div>';
+        }
+        function renderUnitTable(rows, container) {
+            if (!rows.length) { container.innerHTML = '<p class="fs-13 text-muted mb-0">No per-unit figures available.</p>'; return; }
+            var html = '<div class="table-responsive"><table class="table table-sm mb-1"><thead><tr>' +
+                '<th>Rank</th><th>Unit</th><th>Score</th><th>Active*</th><th>Total*</th></tr></thead><tbody>';
+            rows.forEach(function (u) {
+                html += '<tr><td>' + u.__rank + (u.__tied ? ' <span class="text-muted fs-11">(tied)</span>' : '') + '</td>' +
+                    '<td>' + esc(u.unit) + (u.weightRedistributed ? ' <span class="badge bg-secondary-subtle text-secondary fs-10">low-confidence</span>' : '') + '</td>' +
+                    '<td>' + u.scorePercent + '%</td><td>' + u.active + '</td><td>' + u.total + '</td></tr>';
+            });
+            html += '</tbody></table></div>' +
+                '<p class="fs-10 text-muted mb-2">* A partnership with more than one responsible unit is counted once in EACH of those units’ rows — these per-unit figures do not sum to the institution-wide totals above.</p>';
+            container.innerHTML = html;
+        }
+        function renderTargetTable(rows, container) {
+            if (!rows.length) { container.innerHTML = '<p class="fs-13 text-muted mb-0">No active targets are currently defined.</p>'; return; }
+            var html = '<div class="table-responsive"><table class="table table-sm mb-2"><thead><tr>' +
+                '<th>Period</th><th>Target</th><th>Current</th><th>Lacking</th><th>%</th><th>Status</th></tr></thead><tbody>';
+            rows.forEach(function (t) {
+                var period = t.type === 'monthly' ? (t.month + '/' + t.year) : String(t.year);
+                html += '<tr><td>' + esc(period) + '</td><td>' + t.targetCount + '</td><td>' + t.current + '</td>' +
+                    '<td>' + t.lacking + '</td><td>' + t.percentage + '%</td><td>' + esc(t.status) + '</td></tr>';
+            });
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
+        }
+        function claimCardHtml(c, showAction) {
+            var html = '<div class="border-start border-3 ' + (showAction && c.suggestedAction ? 'border-warning' : 'border-primary') + ' ps-3 mb-3">';
+            html += '<span class="badge bg-primary-subtle text-primary mb-1">' + esc((c.claimType || '').replace(/_/g, ' ')) + '</span>';
+            html += '<p class="mb-1">' + esc(c.interpretation) + '</p>';
+            if (showAction && c.suggestedAction) {
+                html += '<p class="mb-1 fs-13"><strong>Suggested action:</strong> ' + esc(c.suggestedAction) +
+                    (c.priority ? ' <span class="badge bg-warning-subtle text-warning">' + esc(c.priority) + ' priority</span>' : '') + '</p>';
+                if (c.priorityReason) html += '<p class="mb-1 fs-12 text-muted"><strong>Why it matters:</strong> ' + esc(c.priorityReason) + '</p>';
+            }
+            if (c.evidence && c.evidence.length) {
+                html += '<p class="mb-1 fs-12 text-muted">Evidence: ' + c.evidence.map(function (e) {
+                    return esc(e.label) + ' = ' + esc(String(e.value));
+                }).join('; ') + '</p>';
+            }
+            html += '<p class="mb-0 fs-12 text-muted fst-italic">Limitation: ' + esc(c.limitations) + '</p>';
+            html += '</div>';
+            return html;
+        }
+        function renderClaimList(items, container, emptyMessage, showAction) {
+            if (!items || !items.length) { container.innerHTML = '<p class="fs-13 text-muted mb-0">' + esc(emptyMessage) + '</p>'; return; }
+            container.innerHTML = items.map(function (c) { return claimCardHtml(c, showAction); }).join('');
+        }
+        // "Identified Trends" and "Potential Risks" have no corresponding claimType — Gemini's
+        // schema/prompt deliberately has no way to express either — so those two stay unimplemented
+        // placeholders rather than fabricated content.
+        function bucketClaims(ai) {
+            var claims = (ai && ai.claims) || [];
+            var findings = [], attention = [], opportunities = [], recommendations = [];
+            claims.forEach(function (c) {
+                if (c.claimType === 'target_gap') { attention.push(c); return; }
+                if (c.claimType === 'opportunity') { opportunities.push(c); recommendations.push(c); return; }
+                if (c.claimType === 'suggested_action') { recommendations.push(c); return; }
+                findings.push(c); // current_state, comparison
+            });
+            return { findings: findings, attention: attention, opportunities: opportunities, recommendations: recommendations };
+        }
+
+        function renderVerifiedFigures(container, det, keyPrefix) {
+            if (!det || !det.ranking) { container.innerHTML = ''; return; }
+            var r = det.ranking, tg = det.targetGaps;
+            var unitRows = flattenUnits(r);
+            var html = '';
+            if (r.institutionWideZeroActive && r.note) {
+                html += '<div class="alert alert-warning fs-12 py-2 px-3 mb-2">' + esc(r.note) + '</div>';
+            }
+            html += statTilesHtml(det.institutionTotals || unitSums(unitRows));
+            html += '<p class="fs-11 text-muted mb-2">' + esc(r.scoreLabel || '') + '</p>';
+            html += '<div id="' + keyPrefix + '-unit-table"></div><p class="fs-11 text-muted mt-1 mb-2" id="' + keyPrefix + '-unit-page-summary"></p>' +
+                '<nav id="' + keyPrefix + '-unit-pagination" aria-label="Unit ranking pages"></nav>';
+            if (tg) {
+                html += '<p class="fs-11 text-muted mb-1 mt-2">' + esc(tg.note || '') + '</p>';
+                html += '<div id="' + keyPrefix + '-target-table"></div><p class="fs-11 text-muted mt-1 mb-1" id="' + keyPrefix + '-target-page-summary"></p>' +
+                    '<nav id="' + keyPrefix + '-target-pagination" aria-label="Target gap pages"></nav>';
+            }
+            container.innerHTML = html;
+
+            resetPage(keyPrefix + 'Units'); resetPage(keyPrefix + 'Targets');
+            paginate(keyPrefix + 'Units', 10, function () { return unitRows; }, renderUnitTable,
+                keyPrefix + '-unit-table', keyPrefix + '-unit-pagination', keyPrefix + '-unit-page-summary')();
+            paginate(keyPrefix + 'Targets', 5, function () { return (tg && tg.targets) || []; }, renderTargetTable,
+                keyPrefix + '-target-table', keyPrefix + '-target-pagination', keyPrefix + '-target-page-summary')();
+        }
+
+        // ── AI Strategic Insights card ──────────────────────────────────────────────────────
+        var aiGenerateBtn = document.getElementById('ai-generate-btn');
+        var aiRegenerateBtn = document.getElementById('ai-regenerate-btn');
+        var aiRetryBtn = document.getElementById('ai-retry-btn');
+        var aiLastAction = null;
+
+        function aiButtons(mode) {
+            if (aiGenerateBtn) aiGenerateBtn.classList.toggle('d-none', mode !== 'generate');
+            if (aiRegenerateBtn) aiRegenerateBtn.classList.toggle('d-none', mode !== 'regenerate');
+        }
+
+        function renderInsightInterpretation(buckets) {
+            var container = document.getElementById('ai-interpretation-list');
+            if (!container) return;
+            container.innerHTML =
+                '<div class="mb-3"><h6 class="fs-12 text-uppercase text-muted mb-1">Key Findings</h6>' +
+                '<div id="ai-findings-list"></div><nav class="mt-1" id="ai-findings-pagination" aria-label="Findings pages"></nav></div>' +
+                '<div class="mb-3"><h6 class="fs-12 text-uppercase text-muted mb-1">Areas Requiring Attention</h6>' +
+                '<div id="ai-attention-list"></div><nav class="mt-1" id="ai-attention-pagination" aria-label="Attention pages"></nav></div>' +
+                '<div class="mb-3"><h6 class="fs-12 text-uppercase text-muted mb-1">Partnership Opportunities</h6>' +
+                '<div id="ai-opportunities-list"></div><nav class="mt-1" id="ai-opportunities-pagination" aria-label="Opportunities pages"></nav></div>' +
+                '<div class="mb-1"><h6 class="fs-12 text-uppercase text-muted mb-1">Identified Trends &amp; Potential Risks</h6>' +
+                '<p class="fs-12 text-muted mb-0"><i class="ri-information-line align-middle me-1"></i>Not available in this phase — ' +
+                'CIPRMS’s Gemini integration does not generate trend, growth, forecast, or risk claims, by design, to avoid unsupported predictions.</p></div>';
+
+            paginate('insFindings', 5, function () { return buckets.findings; },
+                function (items, el) { renderClaimList(items, el, 'No key findings were returned.', false); }, 'ai-findings-list', 'ai-findings-pagination')();
+            paginate('insAttention', 5, function () { return buckets.attention; },
+                function (items, el) { renderClaimList(items, el, 'No attention items were returned.', false); }, 'ai-attention-list', 'ai-attention-pagination')();
+            paginate('insOpportunities', 5, function () { return buckets.opportunities; },
+                function (items, el) { renderClaimList(items, el, 'No opportunity findings were returned.', false); }, 'ai-opportunities-list', 'ai-opportunities-pagination')();
+        }
+        function renderInsightRecommendations(buckets) {
+            var wrap = document.getElementById('ai-recommendations-wrap');
+            if (!wrap) return;
+            if (!buckets.recommendations.length) { wrap.classList.add('d-none'); return; }
+            wrap.classList.remove('d-none');
+            paginate('insRecommendations', 5, function () { return buckets.recommendations; },
+                function (items, el) { renderClaimList(items, el, 'No recommendations were returned.', true); }, 'ai-recommendation-list', 'ai-recommendation-pagination')();
+        }
+
+        function applyInsightResult(result) {
+            // Deterministic figures render unconditionally, regardless of AI state — they must
+            // stay visible whether Gemini is blocked, empty, generating, or erroring.
+            if (result.deterministic) {
+                renderVerifiedFigures(document.getElementById('ai-verified-figures'), result.deterministic, 'ai');
+            }
+            if (result.aiBlocked) {
+                document.getElementById('ai-blocked-message').textContent =
+                    result.reason || 'AI Strategic Insights are not currently available.';
+                showState('ai', INSIGHT_STATES, 'blocked'); aiButtons('hidden');
+                var hideWrap = document.getElementById('ai-recommendations-wrap'); if (hideWrap) hideWrap.classList.add('d-none');
+                document.getElementById('ai-insights-last-generated').textContent = 'Not available';
+                return;
+            }
+            if (result.ai) {
+                var buckets = bucketClaims(result.ai);
+                resetPage('insFindings'); resetPage('insAttention'); resetPage('insOpportunities'); resetPage('insRecommendations');
+                renderInsightInterpretation(buckets);
+                renderInsightRecommendations(buckets);
+                var cacheNote = result.cacheStatus === 'hit' ? 'Showing a cached result.' : 'Freshly generated.';
+                if (result.ai.rejectedCount) {
+                    cacheNote += ' ' + result.ai.rejectedCount + ' AI claim(s) failed server-side validation and are not shown.';
+                }
+                document.getElementById('ai-cache-note').textContent = cacheNote;
+                var genNote = result.ai.generatedAt ? new Date(result.ai.generatedAt).toLocaleString() : '';
+                document.getElementById('ai-insights-last-generated').textContent = genNote
+                    ? ('Last generated ' + genNote + (result.cacheStatus === 'hit' ? ' (cached)' : '')) : 'Last generated just now';
+                showState('ai', INSIGHT_STATES, 'ready'); aiButtons('regenerate');
+                return;
+            }
+            showState('ai', INSIGHT_STATES, 'empty'); aiButtons('generate');
+            var wrap2 = document.getElementById('ai-recommendations-wrap'); if (wrap2) wrap2.classList.add('d-none');
+        }
+
+        function aiRequest(body) {
+            return CIPRMS.api('/api/ai-insights', { method: 'POST', json: body || {}, quiet: true }).then(function (r) {
+                if (!r.ok) {
+                    document.getElementById('ai-error-message').textContent = r.error || 'Unable to load AI insights right now.';
+                    showState('ai', INSIGHT_STATES, 'error'); aiButtons('hidden');
+                    return;
+                }
+                applyInsightResult(r.data);
+            });
+        }
+        function aiCheck() { aiLastAction = function () { return aiRequest({}); }; showState('ai', INSIGHT_STATES, 'checking'); aiButtons('hidden'); return aiLastAction(); }
+        function aiGenerate(forceRefresh) {
+            var body = { generate: true, forceRefresh: !!forceRefresh };
+            aiLastAction = function () { return aiRequest(body); };
+            showState('ai', INSIGHT_STATES, 'generating'); aiButtons('hidden');
+            return aiLastAction();
+        }
+        if (aiGenerateBtn) aiGenerateBtn.addEventListener('click', function () { CIPRMS.busy(aiGenerateBtn, function () { return aiGenerate(false); }); });
+        if (aiRegenerateBtn) aiRegenerateBtn.addEventListener('click', function () { CIPRMS.busy(aiRegenerateBtn, function () { return aiGenerate(true); }); });
+        if (aiRetryBtn) aiRetryBtn.addEventListener('click', function () { CIPRMS.busy(aiRetryBtn, function () { return aiLastAction ? aiLastAction() : aiCheck(); }); });
+
+        if (window.CIPRMS && CIPRMS.api) aiCheck(); // the ONLY call fired on page load — cache-check only, never reaches Gemini
+
+        // ── Ask a Question — no call of any kind fires on load; this block is dormant until
+        // Submit/Enter/Retry, satisfying "no automatic generation" strictly. ──
+        var askInput = document.getElementById('ai-ask-input');
+        var askSubmitBtn = document.getElementById('ai-ask-submit-btn');
+        var askRetryBtn = document.getElementById('ai-ask-retry-btn');
+        var askLastQuestion = '';
+
+        function renderAskVerifiedFigures(container, intent, det) {
+            if (!det) { container.innerHTML = '<p class="fs-13 text-muted mb-0">No figures available for this topic.</p>'; return; }
+            if (intent === 'opportunity_ranking') {
+                container.innerHTML = '<div id="ai-ask-unit-table"></div><nav class="mt-1" id="ai-ask-unit-pagination" aria-label="Unit ranking pages"></nav>';
+                var rows = flattenUnits(det);
+                resetPage('askUnits');
+                paginate('askUnits', 10, function () { return rows; }, renderUnitTable, 'ai-ask-unit-table', 'ai-ask-unit-pagination')();
+                return;
+            }
+            if (intent === 'target_progress') {
+                container.innerHTML = '<p class="fs-11 text-muted mb-1">' + esc(det.note || '') + '</p>' +
+                    '<div id="ai-ask-target-table"></div><nav class="mt-1" id="ai-ask-target-pagination" aria-label="Target gap pages"></nav>';
+                resetPage('askTargets');
+                paginate('askTargets', 5, function () { return det.targets || []; }, renderTargetTable, 'ai-ask-target-table', 'ai-ask-target-pagination')();
+                return;
+            }
+            if (intent === 'region_breakdown' || intent === 'category_breakdown') {
+                var dimLabel = intent === 'region_breakdown' ? 'Region' : 'Category';
+                var html = '<div class="table-responsive"><table class="table table-sm mb-0"><thead><tr>' +
+                    '<th>' + dimLabel + '</th><th>Active</th><th>Expiring Soon</th><th>Inactive</th><th>Total</th></tr></thead><tbody>';
+                (det.comparisonData || []).forEach(function (row) {
+                    html += '<tr><td>' + esc(String(row.group)) + '</td><td>' + (row.Active || 0) + '</td>' +
+                        '<td>' + (row['Expiring Soon'] || 0) + '</td><td>' + (row.Inactive || 0) + '</td><td>' + (row.Total || 0) + '</td></tr>';
+                });
+                html += '</tbody></table></div>';
+                container.innerHTML = html;
+                return;
+            }
+            if (intent === 'institutional_summary') {
+                var s = det.summary || {};
+                container.innerHTML = '<table class="table table-sm mb-0"><tbody>' +
+                    '<tr><td>Active</td><td>' + (s.activeCount || 0) + '</td></tr>' +
+                    '<tr><td>Expiring Soon</td><td>' + (s.expiringSoonCount || 0) + '</td></tr>' +
+                    '<tr><td>Expired</td><td>' + (s.expiredCount || 0) + '</td></tr>' +
+                    '<tr><td>Total</td><td>' + (s.totalCount || 0) + '</td></tr></tbody></table>';
+                return;
+            }
+            container.innerHTML = '<p class="fs-13 text-muted mb-0">No figures available for this topic.</p>';
+        }
+
+        function applyAskResult(result) {
+            if (result.aiBlocked) {
+                document.getElementById('ai-ask-blocked-message').textContent =
+                    result.reason || 'This feature is not currently available.';
+                showState('ai-ask', ASK_STATES, 'blocked');
+                return;
+            }
+            if (result.unsupported) {
+                document.getElementById('ai-ask-unsupported-message').textContent = result.reason ||
+                    'This question could not be matched to a supported analytics topic. Try asking about unit opportunities, regions, categories, targets, or an overall summary.';
+                showState('ai-ask', ASK_STATES, 'unsupported');
+                return;
+            }
+            if (result.answer) {
+                renderAskVerifiedFigures(document.getElementById('ai-ask-verified-figures'), result.intent, result.deterministic);
+                resetPage('askAnswer');
+                paginate('askAnswer', 5, function () { return (result.answer && result.answer.claims) || []; },
+                    function (items, el) { renderClaimList(items, el, 'No interpretation claims were returned for this question.', true); },
+                    'ai-ask-answer-list', 'ai-ask-pagination')();
+                document.getElementById('ai-ask-generated-note').textContent = result.answer.generatedAt
+                    ? ('Generated ' + new Date(result.answer.generatedAt).toLocaleString() + '. ') : '';
+                showState('ai-ask', ASK_STATES, 'answered');
+                return;
+            }
+            document.getElementById('ai-ask-error-message').textContent = 'Unable to process that question right now.';
+            showState('ai-ask', ASK_STATES, 'error');
+        }
+
+        function askRequest(question) {
+            askLastQuestion = question;
+            showState('ai-ask', ASK_STATES, 'asking');
+            return CIPRMS.api('/api/ai-insights/ask', { method: 'POST', json: { question: question }, quiet: true }).then(function (r) {
+                if (!r.ok) {
+                    document.getElementById('ai-ask-error-message').textContent = r.error || 'Unable to process that question right now.';
+                    showState('ai-ask', ASK_STATES, 'error');
+                    return;
+                }
+                if (r.data && r.data.error) {
+                    document.getElementById('ai-ask-error-message').textContent = r.data.error;
+                    showState('ai-ask', ASK_STATES, 'error');
+                    return;
+                }
+                applyAskResult(r.data);
+            });
+        }
+        if (askSubmitBtn) askSubmitBtn.addEventListener('click', function () {
+            var q = (askInput && askInput.value || '').trim();
+            if (!q) return;
+            CIPRMS.busy(askSubmitBtn, function () { return askRequest(q); });
+        });
+        if (askInput) askInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); if (askSubmitBtn) askSubmitBtn.click(); }
+        });
+        if (askRetryBtn) askRetryBtn.addEventListener('click', function () {
+            CIPRMS.busy(askRetryBtn, function () { return askLastQuestion ? askRequest(askLastQuestion) : Promise.resolve(); });
+        });
+        // Deliberately no call here — unlike aiCheck() above, nothing for Ask a Question fires
+        // until the user submits a question.
 
         // ── COMPARE REPORTS (accessed from the Preview modal) ──────────────────
         // Multi-configuration comparison: 1 to MAX_CMP_CONFIGS independent report
@@ -1957,8 +2382,6 @@
         // ── END COMPARE REPORTS ─────────────────────────────────────────────────
 
         document.addEventListener('DOMContentLoaded', function () {
-            // Load DSS stats quietly in background (elements are in the hidden insights tab)
-            loadDssInsights();
             attachCountrySearch('cr-country', 'cr-country-dropdown');
         });
 

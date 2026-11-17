@@ -15,21 +15,16 @@ describe('Dashboard: AI Strategic Insights & Executive Briefing section renders 
   test.each([
     ['Administrator', '/dashboard'],
     ['Staff', '/staff/dashboard'],
-  ])('%s: %s includes the AI section markup, all required state containers, and never auto-fires a Gemini call', async (role, path) => {
+  ])('%s: %s includes the Executive Briefing markup/state containers, never auto-fires a Gemini call, and no longer has AI Strategic Insights (moved to Reports & Analytics, 2026-11)', async (role, path) => {
     const agent = request.agent(app);
     await loginAs(agent, await createTestUser({ role }));
     const res = await agent.get(path);
     expect(res.status).toBe(200);
 
-    expect(res.text).toContain('AI Strategic Insights');
     expect(res.text).toContain('Executive Briefing');
-    expect(res.text).toContain('Gemini interprets the institutional indicators already computed');
 
-    // Buttons and every state container the task's checklist calls for.
+    // Executive Briefing stayed on the dashboard — its markup/state containers are unchanged.
     for (const id of [
-      'ai-generate-btn', 'ai-regenerate-btn', 'ai-retry-btn',
-      'ai-state-checking', 'ai-state-blocked', 'ai-state-empty', 'ai-state-generating', 'ai-state-error', 'ai-state-ready',
-      'ai-verified-figures', 'ai-interpretation-list',
       'ai-briefing-generate-btn', 'ai-briefing-retry-btn',
       'ai-briefing-state-checking', 'ai-briefing-state-blocked', 'ai-briefing-state-empty',
       'ai-briefing-state-generating', 'ai-briefing-state-error', 'ai-briefing-state-ready', 'ai-briefing-content',
@@ -40,11 +35,24 @@ describe('Dashboard: AI Strategic Insights & Executive Briefing section renders 
     // Human-review disclosure on the briefing, per spec.
     expect(res.text).toContain('requires human review before institutional use');
 
-    // The page's own script never calls /api/ai-insights with generate:true on load — only in
-    // response to a button click (grep-level check that the literal string pairing a mount-time
-    // call with generate:true never appears; the real behavioral proof is the DOM-shim driver run).
-    expect(res.text).toMatch(/aiCheck\(\);\s*\/\/ the ONLY call fired on page load/);
+    // Still never a mount-time generate:true call for the briefing.
     expect(res.text).toMatch(/briefCheck\(\);\s*\/\/ free cache-check on load/);
+
+    // AI Strategic Insights and Ask a Question moved to Reports & Analytics → Strategic Insights
+    // (DSS) — confirm nothing is left behind: no card, no buttons/state containers, no JS.
+    expect(res.text).not.toContain('AI Strategic Insights');
+    expect(res.text).not.toContain('id="ai-insights-card"');
+    for (const id of [
+      'ai-generate-btn', 'ai-regenerate-btn', 'ai-retry-btn',
+      'ai-state-checking', 'ai-state-blocked', 'ai-state-empty', 'ai-state-generating', 'ai-state-error', 'ai-state-ready',
+      'ai-verified-figures', 'ai-interpretation-list', 'ai-recommendations-wrap',
+      'ai-ask-input', 'ai-ask-submit-btn', 'ai-ask-state-answered',
+    ]) {
+      expect(res.text).not.toContain(`id="${id}"`);
+    }
+    expect(res.text).not.toContain('Ask a Question');
+    expect(res.text).not.toMatch(/function\s+aiCheck\s*\(/);
+    expect(res.text).not.toMatch(/function\s+askRequest\s*\(/);
   });
 
   test('Auth. Personnel and potential_partner cannot reach either dashboard route at all (pre-existing RBAC, unchanged)', async () => {
