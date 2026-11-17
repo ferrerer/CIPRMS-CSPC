@@ -255,6 +255,10 @@
                                     <button type="button" class="btn btn-outline-primary btn-sm active" onclick="filterType('All', this)">All</button>
                                     <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('MOA', this)">MOA</button>
                                     <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('MOU', this)">MOU</button>
+                                    <!-- Partner Activities (2026-11) — the "List of Activities" PDF exported from Monitoring (see
+                                         archivePartnerActivitiesPdf in cirl.js), one per partnership. Its own filter button, same
+                                         pattern as MOA/MOU above, so it is never only reachable via "All". -->
+                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Partner Activities', this)">Partner Activities</button>
                                     <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Other', this)">Other</button>
                                 </div>
                             </div>
@@ -907,7 +911,9 @@
             const isAccred = doc.type === 'Accreditation';
             const icon = doc.type === 'MOA' ? 'ri-file-text-line text-primary' :
                          doc.type === 'MOU' ? 'ri-file-list-3-line text-info' :
-                         isAccred ? 'ri-award-line text-warning' : 'ri-file-paper-2-line text-secondary';
+                         isAccred ? 'ri-award-line text-warning' :
+                         doc.type === 'Partner Activities' ? 'ri-calendar-check-line text-success' :
+                         'ri-file-paper-2-line text-secondary';
             const nature = doc.tags && doc.tags.length > 0 ? doc.tags[0] : 'Research';
             const natureBadge = nature === 'Research' ? 'bg-info-subtle text-info' :
                                nature === 'Student Exchange' ? 'bg-success-subtle text-success' :
@@ -978,7 +984,9 @@
             const isAccred = doc.type === 'Accreditation';
             const icon = doc.type === 'MOA' ? 'ri-file-text-line text-primary' :
                          doc.type === 'MOU' ? 'ri-file-list-3-line text-info' :
-                         isAccred ? 'ri-award-line text-warning' : 'ri-file-paper-2-line text-secondary';
+                         isAccred ? 'ri-award-line text-warning' :
+                         doc.type === 'Partner Activities' ? 'ri-calendar-check-line text-success' :
+                         'ri-file-paper-2-line text-secondary';
             const nature = doc.tags && doc.tags.length > 0 ? doc.tags[0] : 'Research';
             const natureBadge = nature === 'Research' ? 'bg-info-subtle text-info' :
                                nature === 'Student Exchange' ? 'bg-success-subtle text-success' :

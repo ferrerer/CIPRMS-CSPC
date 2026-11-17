@@ -48,6 +48,10 @@ uploads/tmp/*
 uploads/documents/*
 !uploads/documents/.gitkeep
 
+# Scratch output (e.g. test-generated sample PDFs), never committed
+tmp/*
+!tmp/.gitkeep
+
 # Profile picture uploads (runtime user data, not source)
 uploads/avatars/*
 !uploads/avatars/.gitkeep

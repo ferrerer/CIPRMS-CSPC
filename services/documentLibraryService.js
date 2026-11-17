@@ -22,6 +22,10 @@ function shortDocType(documentType) {
   if (/letter of intent|\bloi\b/i.test(documentType)) return 'LOI';
   if (/contract/i.test(documentType)) return 'Contract';
   if (/^jva$/i.test(documentType)) return 'JVA';
+  // Partner Activities (2026-11) — the "List of Activities" PDF archived per partnership (see
+  // archivePartnerActivitiesPdf in cirl.js). Its own type so it is never grouped under 'Other' with
+  // every unrecognized upload.
+  if (/partner activities/i.test(documentType)) return 'Partner Activities';
   return 'Other';
 }
 

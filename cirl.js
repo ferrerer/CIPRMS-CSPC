@@ -1415,6 +1415,373 @@ app.get('/api/partnerships/mine', requireAuth, async (req, res) => {
   }
 });
 
+// List of Activities (2026-11) — Admin/Staff can record and export activities conducted with a partner,
+// from Monitoring's View Details modal. Deliberately its OWN collection (`partnershipactivities`), not an
+// array embedded on the `partnerships` document itself: that collection is read, unprojected, by many
+// other routes (GET /api/partnerships above, reports/dashboards/exports) reachable by Auth. Personnel and
+// potential_partner (requireUploader) — embedding activities there would mean auditing and patching every
+// one of those call sites to strip it back out, for a feature that is explicitly Admin/Staff-only. A
+// separate collection is never returned by any of them, so there is nothing to leak by construction.
+// requireStaffAccess (not requireUploader) — Partner, LAU and every other role get 403, per spec.
+function validateActivityBody(body) {
+  const dateConducted = (body.dateConducted || '').trim();
+  const activityConducted = (body.activityConducted || '').trim();
+  const natureOfActivity = (body.natureOfActivity || '').trim();
+  if (!dateConducted || isNaN(new Date(dateConducted))) return { error: 'A valid date conducted is required.' };
+  if (!activityConducted) return { error: 'Activity conducted is required.' };
+  if (!natureOfActivity) return { error: 'Nature of activity is required.' };
+  return { value: { dateConducted, activityConducted, natureOfActivity, remarks: (body.remarks || '').trim() } };
+}
+
+app.get('/api/partnerships/:id/activities', requireStaffAccess, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const db = getDb();
+    const partnership = await db.collection('partnerships').findOne({ id });
+    if (!partnership) return res.status(404).json({ error: 'Partnership not found.' });
+    const activities = await db.collection('partnershipactivities').find({ partnershipId: id }).sort({ dateConducted: 1 }).toArray();
+    res.json({ activities });
+  } catch (err) {
+    console.error('❌ List activities error:', err);
+    res.status(500).json({ error: 'Unable to load activities right now. Please try again.' });
+  }
+});
+
+app.post('/api/partnerships/:id/activities', requireStaffAccess, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const db = getDb();
+    const partnership = await db.collection('partnerships').findOne({ id });
+    if (!partnership) return res.status(404).json({ error: 'Partnership not found.' });
+    const { error, value } = validateActivityBody(req.body || {});
+    if (error) return res.status(400).json({ error });
+    const actor = req.session.user;
+    const entry = await insertWithNextId(db.collection('partnershipactivities'), (nextId) => ({
+      id: nextId,
+      partnershipId: id,
+      ...value,
+      createdBy: actor.name,
+      createdByEmail: actor.email,
+      createdAt: new Date().toISOString()
+    }));
+    await logActivity(db, actor, 'ADD', `Activity added for ${partnership.inst}: ${entry.activityConducted}`);
+    res.json({ success: true, activity: entry });
+  } catch (err) {
+    console.error('❌ Add activity error:', err);
+    res.status(500).json({ error: 'Unable to save the activity right now. Please try again.' });
+  }
+});
+
+// POST, not GET (2026-11 template-matching revision): this call both archives the PDF to the Document
+// Library AND returns it — a GET is semantically wrong for a request that writes (replaces a Document
+// Library record). Nothing else in the app calls the old GET version, so it was removed rather than kept
+// alongside this one.
+app.post('/api/partnerships/:id/activities/export', requireStaffAccess, async (req, res) => {
+  const id = parseInt(req.params.id);
+  try {
+    const db = getDb();
+    const partnership = await db.collection('partnerships').findOne({ id });
+    if (!partnership) return res.status(404).json({ error: 'Partnership not found.' });
+    const activities = await db.collection('partnershipactivities').find({ partnershipId: id }).sort({ dateConducted: 1 }).toArray();
+    await logActivity(db, req.session.user, 'VIEW', `Exported List of Activities PDF: ${partnership.inst}`);
+    await archivePartnerActivitiesPdf(db, res, partnership, activities, req.session.user);
+  } catch (err) {
+    console.error('❌ List of Activities PDF error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Unable to generate the activities PDF right now. Please try again.' });
+    else if (!res.writableEnded) res.end();
+  }
+});
+
+// Builds the "List of Activities" PDF for one partnership (landscape, letterhead + table header repeated
+// on every page, footer bar on every page — following the uploaded template's layout), writes it to a temp
+// file, archives it to the Document Library (replacing any previous Partner Activities PDF for this same
+// partnership — never duplicates), then streams the archived copy back as the response. Same letterhead
+// pattern (logo/telephone/email/CIRL title/divider) as renderComparisonReportPdf's own, just extended with
+// this template's title/year-range and footer bar.
+async function archivePartnerActivitiesPdf(db, res, partnership, activities, actor) {
+  const tmpPath = path.join(__dirname, 'uploads', 'tmp', `activities-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.pdf`);
+  const doc = new PDFDocument({ margin: 36, size: 'A4', layout: 'landscape', bufferPages: true });
+  const writeStream = fs.createWriteStream(tmpPath);
+  doc.pipe(writeStream);
+
+  const left = doc.page.margins.left;
+  const right = doc.page.width - doc.page.margins.right;
+  const contentWidth = right - left;
+  // Footer (2026-11 template-matching revision): a thin divider bar plus the tagline printed BELOW it —
+  // see the drawing loop near doc.end() below. The real template does not put white text inside a filled
+  // colored box (what this used to draw); it is a hairline rule, same as the one under the CIRL title.
+  const FOOTER_H = 26;
+
+  const cspcLogoPath = path.join(__dirname, 'public', 'images', 'cspc.PNG');
+  const pqaLogoPath = path.join(__dirname, 'public', 'images', 'PQA.JPG');
+  const tuvLogoPath = path.join(__dirname, 'public', 'images', 'TUV.png');
+  const qsLogoPath = path.join(__dirname, 'public', 'images', 'QS.png');
+
+  // Year range: the span of every year this export touches — each logged activity's own year, plus the
+  // partnership's start/end years, so a partnership with no activities logged yet still prints the years
+  // it has actually been active instead of a blank range — collapsed to "min-max" with a plain hyphen
+  // (the template's own printed range is "2021-2025", not an en-dash); a single surviving year prints
+  // alone, with no range at all.
+  const years = activities.map(a => new Date(a.dateConducted).getFullYear()).filter(y => !isNaN(y));
+  if (partnership.start) { const y = new Date(partnership.start).getFullYear(); if (!isNaN(y)) years.push(y); }
+  if (partnership.end) { const y = new Date(partnership.end).getFullYear(); if (!isNaN(y)) years.push(y); }
+  const yearRange = years.length ? (Math.min(...years) === Math.max(...years) ? String(Math.min(...years)) : `${Math.min(...years)}-${Math.max(...years)}`) : '';
+
+  const COL_DEFS = [
+    { key: 'no', label: 'No.', width: 22 },
+    { key: 'inst', label: 'Name of Schools', width: 100 },
+    { key: 'country', label: 'Address/Country', width: 75 },
+    { key: 'start', label: 'Date of Signing', width: 58 },
+    { key: 'end', label: 'Date of Expiration', width: 60 },
+    { key: 'unit', label: 'Parallel Faculty/Colleges and Programs', width: 92, bold: true },
+    { key: 'nature', label: 'Nature of Partnership', width: 78 },
+    { key: 'activityConducted', label: 'Activities Conducted', width: 140 },
+    { key: 'natureOfActivity', label: 'Nature of Activity', width: 85 }
+  ];
+
+  function drawLetterhead() {
+    const top = doc.page.margins.top;
+    doc.y = top;
+    const LOGO_SIZE = 44;
+    try { doc.image(cspcLogoPath, left, top, { width: LOGO_SIZE, height: LOGO_SIZE }); } catch (e) { /* optional */ }
+    const rLS = 26;
+    const rLX = right - (rLS * 3 + 8);
+    try { doc.image(pqaLogoPath, rLX, top + 8, { width: rLS, height: rLS }); } catch (e) { /* optional */ }
+    try { doc.image(tuvLogoPath, rLX + rLS + 4, top + 8, { width: rLS, height: rLS }); } catch (e) { /* optional */ }
+    try { doc.image(qsLogoPath, rLX + (rLS + 4) * 2, top + 8, { width: rLS, height: rLS }); } catch (e) { /* optional */ }
+
+    const cX = left + LOGO_SIZE + 8;
+    const cW = rLX - cX - 8;
+    doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#000').text('CAMARINES SUR POLYTECHNIC COLLEGES', cX, top, { width: cW, align: 'center' });
+    doc.font('Helvetica').fontSize(8).text('Nabua, Camarines Sur', cX, doc.y, { width: cW, align: 'center' });
+    doc.font('Helvetica').fontSize(7).text('Telephone No. (054) 288-4421 to 23 local 206/ Telefax (054) 288-4425', cX, doc.y, { width: cW, align: 'center' });
+    doc.font('Helvetica').fontSize(7).fillColor('#0a58ca').text('cspcinternational@cspc.edu.ph', cX, doc.y, { width: cW, align: 'center' });
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#000').text('CENTER FOR INTERNATIONAL RELATIONS AND LINKAGES', cX, doc.y, { width: cW, align: 'center' });
+    doc.y = Math.max(doc.y, top + LOGO_SIZE) + 4;
+    // Blue-and-yellow divider line.
+    doc.rect(left, doc.y, contentWidth * 0.85, 2.5).fill('#0a58ca');
+    doc.rect(left + contentWidth * 0.85, doc.y, contentWidth * 0.15, 2.5).fill('#f2b705');
+    doc.fillColor('#000');
+    doc.y += 8;
+
+    doc.font('Helvetica-Bold').fontSize(13).text('LIST OF INTERNATIONAL PARTNERS AND ACTIVITIES CONDUCTED', left, doc.y, { width: contentWidth, align: 'center' });
+    if (yearRange) {
+      doc.moveDown(0.2);
+      doc.font('Helvetica-Bold').fontSize(10).text(yearRange, left, doc.y, { width: contentWidth, align: 'center' });
+    }
+    doc.moveDown(0.5);
+  }
+
+  function drawTableHeader() {
+    const chY = doc.y;
+    doc.rect(left, chY, contentWidth, 20).fillAndStroke('#0a58ca', '#0a58ca');
+    doc.font('Helvetica-Bold').fontSize(7).fillColor('#fff');
+    let cx = left;
+    COL_DEFS.forEach(col => {
+      doc.text(col.label, cx + 3, chY + 4, { width: col.width - 6, align: 'center' });
+      cx += col.width;
+    });
+    doc.fillColor('#000');
+    doc.y = chY + 20;
+  }
+
+  function availableBottom() { return doc.page.height - doc.page.margins.bottom - FOOTER_H; }
+
+  function newPage() {
+    doc.addPage();
+    drawLetterhead();
+    drawTableHeader();
+  }
+
+  drawLetterhead();
+  drawTableHeader();
+  // Every page's letterhead + table header renders to the same height, so this is the usable row space
+  // on ANY page (fresh or not) — the threshold that tells "won't fit here, but fits on a fresh page"
+  // (just move it) apart from "doesn't even fit on a fresh page" (needs real splitting), below.
+  const fullPageRowSpace = availableBottom() - doc.y;
+
+  const natureText = (v) => {
+    const arr = Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []);
+    if (arr.length === 0) return '—';
+    if (arr.length === 1) return arr[0];
+    return arr.map((n, i) => `${i + 1}. ${n}`).join('\n');
+  };
+  const unitText = (v) => (Array.isArray(v) ? v.filter(Boolean).join(', ') : (v || '—'));
+  const monthYearLabel = (d) => {
+    const dt = new Date(d);
+    return isNaN(dt) ? (d || '') : dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  // One row per partner (2026-11 template-matching revision), not one row per activity: columns 1-7
+  // (No./Name/Address/Dates/Parallel Faculty/Nature of Partnership) describe the partner and are printed
+  // ONCE; Activities Conducted / Nature of Activity stack one line per logged activity, earliest first,
+  // inside that same row.
+  const fixedValues = {
+    no: '1',
+    inst: partnership.inst || '—',
+    country: partnership.country || '—',
+    start: partnership.start || '—',
+    end: partnership.end || '—',
+    unit: unitText(partnership.unit),
+    nature: natureText(partnership.nature)
+  };
+  const FIXED_KEYS = ['no', 'inst', 'country', 'start', 'end', 'unit', 'nature'];
+  const CELL_PAD = 3;
+  const FONT_SIZE = 7.5;
+
+  const colDef = (key) => COL_DEFS.find(c => c.key === key);
+  const colFont = (key) => (colDef(key).bold ? 'Helvetica-Bold' : 'Helvetica');
+  const blockHeight = (text, key) => doc.font(colFont(key)).fontSize(FONT_SIZE)
+    .heightOfString(text || '—', { width: colDef(key).width - CELL_PAD * 2 });
+
+  // Splits `lines` (each already one intended visual line) into as many as fit within `maxHeight` for
+  // the given column, and the rest — used only when a row is genuinely too tall for one whole page, so
+  // it can continue onto the next with the letterhead and table header both repeated, as the template's
+  // own longest rows do.
+  function splitLinesToFit(lines, key, maxHeight) {
+    doc.font(colFont(key)).fontSize(FONT_SIZE);
+    let fit = [];
+    for (let i = 0; i < lines.length; i++) {
+      const candidate = fit.concat([lines[i]]);
+      const h = doc.heightOfString(candidate.join('\n'), { width: colDef(key).width - CELL_PAD * 2 });
+      if (h > maxHeight && fit.length > 0) return { fit, rest: lines.slice(i) };
+      fit = candidate;
+    }
+    return { fit, rest: [] };
+  }
+
+  function drawChunk(values, rowHeight, shaded) {
+    const rowY = doc.y;
+    doc.rect(left, rowY, contentWidth, rowHeight).fill(shaded ? '#F5F7FA' : '#FFFFFF').stroke('#ddd');
+    let rx = left;
+    COL_DEFS.forEach(col => {
+      if (values[col.key]) {
+        doc.font(colFont(col.key)).fontSize(FONT_SIZE).fillColor('#222')
+          .text(values[col.key], rx + CELL_PAD, rowY + CELL_PAD, { width: col.width - CELL_PAD * 2, align: col.key === 'no' ? 'center' : 'left' });
+      }
+      rx += col.width;
+    });
+    doc.fillColor('#000').strokeColor('#000');
+    doc.y = rowY + rowHeight;
+  }
+
+  const activityPairs = activities.length
+    ? activities.map(a => ({ activity: `${monthYearLabel(a.dateConducted)} – ${a.activityConducted}`, nature: a.natureOfActivity || '—' }))
+    : [{ activity: '—', nature: '—' }];
+
+  let remainingPairs = activityPairs.slice();
+  let firstChunk = true;
+  while (true) {
+    const avail = availableBottom() - doc.y;
+    if (avail < 24) { newPage(); continue; }
+
+    const activityLines = remainingPairs.map(p => p.activity);
+    const natureLines = remainingPairs.map(p => p.nature);
+    const fixedBlockHeight = firstChunk ? Math.max(...FIXED_KEYS.map(k => blockHeight(fixedValues[k], k))) : 0;
+    const rowHeight = Math.max(
+      16, fixedBlockHeight,
+      blockHeight(activityLines.join('\n'), 'activityConducted'),
+      blockHeight(natureLines.join('\n'), 'natureOfActivity')
+    ) + CELL_PAD * 2;
+
+    const values = () => ({
+      no: firstChunk ? fixedValues.no : '', inst: firstChunk ? fixedValues.inst : '',
+      country: firstChunk ? fixedValues.country : '', start: firstChunk ? fixedValues.start : '',
+      end: firstChunk ? fixedValues.end : '', unit: firstChunk ? fixedValues.unit : '',
+      nature: firstChunk ? fixedValues.nature : ''
+    });
+
+    if (rowHeight <= avail) {
+      drawChunk({ ...values(), activityConducted: activityLines.join('\n'), natureOfActivity: natureLines.join('\n') }, rowHeight, false);
+      break;
+    }
+
+    // Doesn't fit in what's left on this page. If a FRESH page would have room, just move there — the
+    // common case, covering every row short enough to ever fit on one page. Only once we're already at
+    // the top of an empty page and it STILL doesn't fit does it need real splitting.
+    if (avail < fullPageRowSpace - 1) { newPage(); continue; }
+
+    const activitySplit = splitLinesToFit(activityLines, 'activityConducted', avail - CELL_PAD * 2);
+    const natureSplit = splitLinesToFit(natureLines, 'natureOfActivity', avail - CELL_PAD * 2);
+    const pairFitCount = Math.max(1, Math.min(activitySplit.fit.length, natureSplit.fit.length));
+    const drawnPairs = remainingPairs.slice(0, pairFitCount);
+    drawChunk({
+      ...values(),
+      activityConducted: drawnPairs.map(p => p.activity).join('\n'),
+      natureOfActivity: drawnPairs.map(p => p.nature).join('\n')
+    }, avail, false);
+    remainingPairs = remainingPairs.slice(pairFitCount);
+    firstChunk = false;
+    if (remainingPairs.length === 0) break;
+    newPage();
+  }
+
+  // Footer (every page): a thin divider bar in the same style/proportions as the one under the CIRL
+  // title, with the italic tagline printed BELOW it in a dark color — matching the template, which does
+  // not put white text inside a filled colored bar.
+  const range = doc.bufferedPageRange();
+  const savedBM = doc.page.margins.bottom;
+  for (let i = range.start; i < range.start + range.count; i++) {
+    doc.switchToPage(i);
+    doc.page.margins.bottom = 0;
+    const barY = doc.page.height - FOOTER_H;
+    doc.rect(left, barY, contentWidth * 0.85, 2.5).fill('#0a58ca');
+    doc.rect(left + contentWidth * 0.85, barY, contentWidth * 0.15, 2.5).fill('#f2b705');
+    doc.font('Helvetica-Oblique').fontSize(8).fillColor('#333')
+      .text('Bridging Excellence, Engaging the World, Transforming Lives.', left, barY + 7, { width: contentWidth, align: 'center' });
+    doc.fillColor('#000');
+    doc.page.margins.bottom = savedBM;
+  }
+  doc.end();
+
+  await new Promise((resolve, reject) => {
+    writeStream.on('finish', resolve);
+    writeStream.on('error', reject);
+  });
+
+  // Replace, never duplicate — UNLESS something else still links to the previous file, in which case
+  // deleting it would leave a dangling reference: a Document Request's "Select Existing Documents" can
+  // link an existing library file by id (supportingDocuments.documentId), and the duplicate-detection
+  // pass can mark ANOTHER document as a possible duplicate OF this one (possibleDuplicateIds). When
+  // either is true, the previous file/record is kept as-is (reported via logActivity below) and this
+  // export's new PDF is archived alongside it — an explicitly sanctioned exception to "never duplicate",
+  // scoped to exactly this case.
+  const previous = await db.collection('documents').findOne({ type: 'Partner Activities', partnershipId: partnership.id });
+  if (previous) {
+    const linkedFromRequest = await db.collection('documentrequests').findOne({ 'supportingDocuments.documentId': previous.id });
+    const linkedFromDuplicate = await db.collection('documents').findOne({ possibleDuplicateIds: previous.id });
+    if (linkedFromRequest || linkedFromDuplicate) {
+      await logActivity(db, actor, 'VIEW', `Kept previous Partner Activities PDF for ${partnership.inst} (document #${previous.id}) — still referenced elsewhere`);
+    } else {
+      await db.collection('documents').deleteOne({ id: previous.id });
+      if (previous.fileLink && previous.fileLink.startsWith('/uploads/documents/')) {
+        const prevPath = path.join(__dirname, 'uploads', 'documents', path.basename(previous.fileLink));
+        fs.unlink(prevPath, () => {});
+      }
+    }
+  }
+
+  const dateLabel = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const friendlyName = `Activities - ${partnership.inst} - ${dateLabel}.pdf`;
+  const { fileLink } = await archiveToDocumentLibrary(tmpPath, friendlyName, {
+    title: friendlyName.replace(/\.pdf$/, ''),
+    documentType: 'Partner Activities',
+    institution: partnership.inst,
+    partner: partnership.inst
+  }, {
+    uploadedBy: actor.name,
+    uploadedByEmail: actor.email,
+    partnershipId: partnership.id
+  });
+
+  const finalPath = path.join(__dirname, 'uploads', 'documents', path.basename(fileLink));
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeFilename(friendlyName.replace(/\.pdf$/, ''))}.pdf"`);
+  res.sendFile(finalPath, (err) => {
+    if (err && !res.headersSent) res.status(404).json({ error: 'Generated PDF could not be found.' });
+  });
+}
+
 // Administrator and Staff (2026-08-27 full-parity revision — Staff now
 // manages every Partnership Request, not just its own) see every submitted
 // request — this is what powers partnership_requests.ejs's org-wide review

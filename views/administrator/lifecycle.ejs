@@ -429,6 +429,74 @@
                 <div class="modal-body" id="view-body"></div>
                 <div class="modal-footer">
                     <div class="hstack gap-2 justify-content-end">
+                        <!-- List of Activities (2026-11) — Administrator only, same gate as the activities API
+                             routes themselves (requireStaffAccess: Administrator/Staff). This page has no Staff
+                             route, and Auth. Personnel (the other role reaching this view) would just get 403
+                             on every one of those routes, so the button is never shown to them. -->
+                        <% if (typeof user !== 'undefined' && user && user.role === 'Administrator') { %>
+                        <button type="button" class="btn btn-outline-primary" onclick="openActivitiesModal(currentViewPartnershipId)"><i class="ri-list-check-2 me-1"></i>List of Activities</button>
+                        <% } %>
+                        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <!-- LIST OF ACTIVITIES MODAL (2026-11) — same markup/ids as administrator/monitoring.ejs's own, so the two
+         pages' shared JS pattern (lifecycle-gridjs.init.js here) stays a straight port of registry-gridjs.
+         init.js's own Activities functions, not a second design.                                            -->
+    <!-- ═══════════════════════════════════════════════════════════════ -->
+    <div class="modal fade zoomIn" id="activitiesModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-light p-3">
+                    <h5 class="modal-title" id="activities-title">List of Activities</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2 mb-3" id="activities-partner-info"></div>
+                    <hr>
+                    <div class="table-responsive mb-3">
+                        <table class="table table-sm table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr><th>Date Conducted</th><th>Activity Conducted</th><th>Nature of Activity</th><th>Remarks</th></tr>
+                            </thead>
+                            <tbody id="activities-tbody"></tbody>
+                        </table>
+                        <div class="text-center text-muted fs-13 py-3" id="activities-empty" style="display:none">No activities recorded yet.</div>
+                    </div>
+                    <div class="border rounded p-3">
+                        <div class="fw-semibold fs-13 mb-2">Add Activity</div>
+                        <div class="row g-2">
+                            <div class="col-md-3">
+                                <label class="form-label fs-12">Date Conducted</label>
+                                <input type="date" class="form-control form-control-sm" id="act-date">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fs-12">Activity Conducted</label>
+                                <input type="text" class="form-control form-control-sm" id="act-activity" placeholder="e.g. Conducted MOU Signing">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fs-12">Nature of Activity</label>
+                                <input type="text" class="form-control form-control-sm" id="act-nature" placeholder="e.g. Signing Ceremony">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fs-12">Remarks (optional)</label>
+                                <input type="text" class="form-control form-control-sm" id="act-remarks">
+                            </div>
+                        </div>
+                        <div class="text-danger fs-12 mt-2" id="activities-add-error" style="display:none"></div>
+                        <div class="text-end mt-2">
+                            <button type="button" class="btn btn-sm btn-primary" id="activities-add-btn" onclick="addActivity()">Add Activity</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <div class="hstack gap-2 justify-content-end">
+                        <button type="button" class="btn btn-light" onclick="backToViewFromActivities()">Back to Details</button>
+                        <button type="button" class="btn btn-success" id="activities-export-btn" onclick="exportActivitiesPdf()"><i class="ri-file-pdf-2-line me-1"></i>Export PDF</button>
                         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
                     </div>
                 </div>

@@ -289,14 +289,44 @@ function renderDssAlerts() {
 
 // Independent modals (no swap/stacking between them) — each drops the breadcrumb back
 // to the page base the moment it's closed for good. Registered once, not per open-call.
-['viewPartnershipModal', 'editPartnershipModal', 'renewPartnershipModal', 'deleteRecordModal'].forEach(function (id) {
+// viewPartnershipModal is NOT in this list (2026-11) — it now swaps with activitiesModal (List of
+// Activities), and resetting the breadcrumb on every hide would also fire during that swap, same bug
+// already found and fixed once in registry-gridjs.init.js's own identical loop.
+['editPartnershipModal', 'renewPartnershipModal', 'deleteRecordModal'].forEach(function (id) {
     var el = document.getElementById(id);
     if (el) el.addEventListener('hidden.bs.modal', function () { if (typeof resetBreadcrumb === 'function') resetBreadcrumb(); });
 });
 
+var currentViewPartnershipId = null;
+var viewToActivitiesSwap = false;
+var activitiesReturnTo = null;
+// Guarded with `if (el)`, same as the forEach loop just above — this script tag loads before the modal
+// markup further down the page (confirmed in views/administrator/lifecycle.ejs), so document.getElementById
+// here would otherwise return null and .addEventListener on it would throw, aborting the REST of this
+// script's own top-level execution (openViewModal/openActivitiesModal/etc. would never get defined at all —
+// exactly the "clicking does nothing" symptom this feature is being added to fix, not introduce).
+(function () {
+    var viewEl = document.getElementById('viewPartnershipModal');
+    if (viewEl) viewEl.addEventListener('hidden.bs.modal', function () {
+        if (viewToActivitiesSwap) { viewToActivitiesSwap = false; return; }
+        if (typeof resetBreadcrumb === 'function') resetBreadcrumb();
+    });
+    var actEl = document.getElementById('activitiesModal');
+    if (actEl) actEl.addEventListener('hidden.bs.modal', function () {
+        if (activitiesReturnTo) {
+            var returnTo = activitiesReturnTo;
+            activitiesReturnTo = null;
+            if (returnTo === 'viewPartnershipModal') openViewModal(currentViewPartnershipId);
+            return;
+        }
+        if (typeof resetBreadcrumb === 'function') resetBreadcrumb();
+    });
+})();
+
 function openViewModal(id) {
     var p = partnerships.find(function(x) { return x.id === id; });
     if (!p) return;
+    currentViewPartnershipId = id;
     if (typeof setBreadcrumb === 'function') setBreadcrumb(BREADCRUMB_BASE.concat([p.inst]));
     document.getElementById('view-title').textContent = p.inst;
     document.getElementById('view-body').innerHTML =
@@ -309,7 +339,120 @@ function openViewModal(id) {
         + '<div class="col-sm-6"><div class="text-muted fs-12 text-uppercase fw-semibold">Expiry Date</div><div class="fw-bold">' + escapeHtml(p.end) + '</div></div>'
         + '<div class="col-sm-12"><div class="text-muted fs-12 text-uppercase fw-semibold">Days Remaining</div><div class="fw-bold">' + (p.status === 'Expired' ? 'None' : p.days + ' days') + '</div></div>'
         + '</div>';
-    new bootstrap.Modal(document.getElementById('viewPartnershipModal')).show();
+    // getOrCreateInstance, not `new bootstrap.Modal(...)` — this is also the modal openActivitiesModal()
+    // swaps back to below; constructing a brand-new instance while the Activities modal's own
+    // hide-transition/backdrop teardown might still be settling corrupts the backdrop count (same bug
+    // already found and fixed once in registry-gridjs.init.js's own openViewModal).
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('viewPartnershipModal')).show();
+}
+
+// ── List of Activities (2026-11) — Administrator only (the button itself is role-gated in the EJS; the
+// activities API routes are requireStaffAccess, so Staff would also work here if this page ever gained a
+// Staff route, but Auth. Personnel never can). Straight port of registry-gridjs.init.js's own functions,
+// adapted to this file's plain-fetch/showToast conventions instead of CIPRMS.api/CIPRMS.busy. ──
+var currentActivities = [];
+function renderActivitiesPartnerInfo(p) {
+    document.getElementById('activities-title').textContent = 'List of Activities — ' + p.inst;
+    document.getElementById('activities-partner-info').innerHTML =
+        '<div class="col-sm-6"><div class="text-muted fs-12">Institution</div><div class="fw-semibold">' + escapeHtml(p.inst) + '</div></div>'
+        + '<div class="col-sm-6"><div class="text-muted fs-12">Type</div><div class="fw-semibold">' + escapeHtml(p.type) + '</div></div>';
+}
+function renderActivitiesTable() {
+    var tbody = document.getElementById('activities-tbody');
+    var sorted = currentActivities.slice().sort(function (a, b) { return new Date(a.dateConducted) - new Date(b.dateConducted); });
+    document.getElementById('activities-empty').style.display = sorted.length ? 'none' : '';
+    tbody.innerHTML = sorted.map(function (a) {
+        return '<tr><td>' + escapeHtml(a.dateConducted) + '</td><td>' + escapeHtml(a.activityConducted) + '</td>'
+            + '<td>' + escapeHtml(a.natureOfActivity) + '</td><td>' + (a.remarks ? escapeHtml(a.remarks) : '—') + '</td></tr>';
+    }).join('');
+}
+function openActivitiesModal(id) {
+    if (!id) return;
+    var p = partnerships.find(function (x) { return x.id === id; });
+    if (!p) return;
+    currentViewPartnershipId = id;
+    renderActivitiesPartnerInfo(p);
+    currentActivities = [];
+    renderActivitiesTable();
+    ['act-date', 'act-activity', 'act-nature', 'act-remarks'].forEach(function (f) { document.getElementById(f).value = ''; });
+    document.getElementById('activities-add-error').style.display = 'none';
+    if (typeof setBreadcrumb === 'function') setBreadcrumb(BREADCRUMB_BASE.concat([p.inst, 'List of Activities']));
+
+    var viewInstance = bootstrap.Modal.getInstance(document.getElementById('viewPartnershipModal'));
+    if (viewInstance) { viewToActivitiesSwap = true; viewInstance.hide(); }
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('activitiesModal')).show();
+
+    fetch('/api/partnerships/' + id + '/activities')
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (Array.isArray(data.activities)) { currentActivities = data.activities; renderActivitiesTable(); }
+        }).catch(function (e) { console.error(e); });
+}
+function backToViewFromActivities() {
+    activitiesReturnTo = 'viewPartnershipModal';
+    bootstrap.Modal.getInstance(document.getElementById('activitiesModal'))?.hide();
+}
+function addActivity() {
+    var errBox = document.getElementById('activities-add-error');
+    errBox.style.display = 'none';
+    var payload = {
+        dateConducted: document.getElementById('act-date').value,
+        activityConducted: document.getElementById('act-activity').value.trim(),
+        natureOfActivity: document.getElementById('act-nature').value.trim(),
+        remarks: document.getElementById('act-remarks').value.trim()
+    };
+    if (!payload.dateConducted || !payload.activityConducted || !payload.natureOfActivity) {
+        errBox.textContent = 'Date, activity conducted, and nature of activity are all required.';
+        errBox.style.display = '';
+        return;
+    }
+    var btn = document.getElementById('activities-add-btn');
+    var html = btn.innerHTML;
+    btn.disabled = true; btn.textContent = 'Adding…';
+    fetch('/api/partnerships/' + currentViewPartnershipId + '/activities', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    }).then(function (r) { return r.json(); }).then(function (data) {
+        btn.disabled = false; btn.innerHTML = html;
+        if (data.success && data.activity) {
+            currentActivities.push(data.activity);
+            renderActivitiesTable();
+            ['act-date', 'act-activity', 'act-nature', 'act-remarks'].forEach(function (f) { document.getElementById(f).value = ''; });
+            showToast('Activity added.');
+        } else {
+            errBox.textContent = (data && data.error) || 'Unable to add the activity right now.';
+            errBox.style.display = '';
+        }
+    }).catch(function (e) {
+        btn.disabled = false; btn.innerHTML = html;
+        console.error(e);
+        errBox.textContent = 'Unable to add the activity right now.';
+        errBox.style.display = '';
+    });
+}
+function exportActivitiesPdf() {
+    if (!currentViewPartnershipId) return;
+    var id = currentViewPartnershipId;
+    var p = partnerships.find(function (x) { return x.id === id; });
+    var filename = 'Activities-' + (p ? p.inst.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') : id) + '.pdf';
+    var btn = document.getElementById('activities-export-btn');
+    var html = btn.innerHTML;
+    btn.disabled = true; btn.textContent = 'Exporting…';
+    fetch('/api/partnerships/' + id + '/activities/export', { method: 'POST' }).then(function (res) {
+        if (!res.ok) {
+            return res.json().catch(function () { return {}; }).then(function (body) {
+                throw new Error(body.error || 'Unable to export the PDF right now.');
+            });
+        }
+        return res.blob();
+    }).then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+    }).catch(function (err) {
+        showToast(err.message || 'Unable to export the PDF right now.');
+    }).then(function () { btn.disabled = false; btn.innerHTML = html; });
 }
 
 var editingId = null;

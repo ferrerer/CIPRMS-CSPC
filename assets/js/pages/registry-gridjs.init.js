@@ -1138,13 +1138,35 @@ function buildGrid() {
 
 // Independent modals (no swap/stacking between them) — each drops the breadcrumb back
 // to the page base the moment it's closed for good. Registered once, not per open-call.
-['viewPartnershipModal', 'editPartnershipModal', 'renewPartnershipModal', 'deleteRecordModal'].forEach(function (id) {
+['editPartnershipModal', 'renewPartnershipModal', 'deleteRecordModal'].forEach(function (id) {
   var el = document.getElementById(id);
   if (el) el.addEventListener('hidden.bs.modal', function () { if (typeof resetBreadcrumb === 'function') resetBreadcrumb(); });
 });
 
+// List of Activities (2026-11) — swapped in from View Details, never stacked (same swap pattern used
+// elsewhere in this app for a details<->drill-down modal pair): viewToActivitiesSwap is set (and
+// self-cleared) only by openActivitiesModal() right before it hides viewPartnershipModal; activitiesReturnTo
+// is set only by backToViewFromActivities() right before it hides activitiesModal. Closing either modal any
+// other way (X, footer Close, Esc) ends the flow and resets the breadcrumb, it never silently swaps back.
+var currentViewPartnershipId = null;
+var viewToActivitiesSwap = false;
+var activitiesReturnTo = null;
+document.getElementById('viewPartnershipModal').addEventListener('hidden.bs.modal', function () {
+  if (viewToActivitiesSwap) { viewToActivitiesSwap = false; return; }
+  if (typeof resetBreadcrumb === 'function') resetBreadcrumb();
+});
+document.getElementById('activitiesModal').addEventListener('hidden.bs.modal', function () {
+  if (activitiesReturnTo) {
+    activitiesReturnTo = null;
+    openViewModal(currentViewPartnershipId);
+    return;
+  }
+  if (typeof resetBreadcrumb === 'function') resetBreadcrumb();
+});
+
 function openViewModal(id) {
   var p = partnerships.find(function(x){return x.id===id;}); if(!p) return;
+  currentViewPartnershipId = id;
   document.getElementById('view-title').textContent = p.inst;
   var safeDocLink = sanitizeUrl(p.docLink);
   var safePartnerEmail = escapeHtml(p.partnerEmail || '');
@@ -1166,7 +1188,123 @@ function openViewModal(id) {
     +'<div class="col-sm-12"><div class="text-muted fs-12">Remarks</div><div>'+(p.remarks?escapeHtml(p.remarks):'—')+'</div></div>'
     +'</div>';
   if (typeof setBreadcrumb === 'function') setBreadcrumb(BREADCRUMB_BASE.concat([p.inst]));
-  new bootstrap.Modal(document.getElementById('viewPartnershipModal')).show();
+  // getOrCreateInstance (2026-11), not `new bootstrap.Modal(...)` — openViewModal() is now also called from
+  // activitiesModal's own hidden.bs.modal handler (the Activities->Details swap-back), while that modal's
+  // own hide transition/backdrop teardown may still be settling; constructing a brand-new instance on the
+  // same element at that exact moment left a second, orphaned .modal-backdrop behind (confirmed live).
+  // getOrCreateInstance reuses the one instance already attached to this element instead.
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('viewPartnershipModal')).show();
+}
+
+/* ─── List of Activities (2026-11) ─── */
+var currentActivities = [];
+
+function renderActivitiesPartnerInfo(p) {
+  document.getElementById('activities-title').textContent = 'List of Activities — ' + p.inst;
+  document.getElementById('activities-partner-info').innerHTML =
+    '<div class="col-sm-6"><div class="text-muted fs-12">Institution</div><div class="fw-semibold">' + escapeHtml(p.inst) + '</div></div>'
+    + '<div class="col-sm-6"><div class="text-muted fs-12">Country</div><div class="fw-semibold">' + escapeHtml(p.country) + '</div></div>'
+    + '<div class="col-sm-4"><div class="text-muted fs-12">Date of Signing</div><div class="fw-semibold">' + escapeHtml(p.start) + '</div></div>'
+    + '<div class="col-sm-4"><div class="text-muted fs-12">Date of Expiration</div><div class="fw-semibold">' + escapeHtml(p.end) + '</div></div>'
+    + '<div class="col-sm-4"><div class="text-muted fs-12">Nature of Partnership</div><div class="fw-semibold">' + escapeHtml(Array.isArray(p.nature) ? p.nature.join(', ') : p.nature) + '</div></div>'
+    + '<div class="col-sm-12"><div class="text-muted fs-12">Parallel Faculty/Colleges and Programs</div><div class="fw-semibold">' + escapeHtml(Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) + '</div></div>';
+}
+
+function renderActivitiesTable() {
+  var tbody = document.getElementById('activities-tbody');
+  var sorted = currentActivities.slice().sort(function (a, b) { return new Date(a.dateConducted) - new Date(b.dateConducted); });
+  document.getElementById('activities-empty').style.display = sorted.length ? 'none' : '';
+  tbody.innerHTML = sorted.map(function (a) {
+    return '<tr><td>' + escapeHtml(a.dateConducted) + '</td><td>' + escapeHtml(a.activityConducted) + '</td>'
+      + '<td>' + escapeHtml(a.natureOfActivity) + '</td><td>' + (a.remarks ? escapeHtml(a.remarks) : '—') + '</td></tr>';
+  }).join('');
+}
+
+function openActivitiesModal(id) {
+  if (!id) return;
+  var p = partnerships.find(function (x) { return x.id === id; }); if (!p) return;
+  currentViewPartnershipId = id;
+  renderActivitiesPartnerInfo(p);
+  currentActivities = [];
+  renderActivitiesTable();
+  ['act-date', 'act-activity', 'act-nature', 'act-remarks'].forEach(function (f) { document.getElementById(f).value = ''; });
+  document.getElementById('activities-add-error').style.display = 'none';
+  if (typeof setBreadcrumb === 'function') setBreadcrumb(BREADCRUMB_BASE.concat([p.inst, 'List of Activities']));
+
+  var viewEl = document.getElementById('viewPartnershipModal');
+  var viewInstance = bootstrap.Modal.getInstance(viewEl);
+  if (viewInstance) { viewToActivitiesSwap = true; viewInstance.hide(); }
+  bootstrap.Modal.getOrCreateInstance(document.getElementById('activitiesModal')).show();
+
+  CIPRMS.api('/api/partnerships/' + id + '/activities', { quiet: true }).then(function (res) {
+    if (res.ok && res.data && Array.isArray(res.data.activities)) {
+      currentActivities = res.data.activities;
+      renderActivitiesTable();
+    }
+  });
+}
+
+function backToViewFromActivities() {
+  activitiesReturnTo = 'viewPartnershipModal';
+  bootstrap.Modal.getInstance(document.getElementById('activitiesModal'))?.hide();
+}
+
+function addActivity() {
+  var errBox = document.getElementById('activities-add-error');
+  errBox.style.display = 'none';
+  var payload = {
+    dateConducted: document.getElementById('act-date').value,
+    activityConducted: document.getElementById('act-activity').value.trim(),
+    natureOfActivity: document.getElementById('act-nature').value.trim(),
+    remarks: document.getElementById('act-remarks').value.trim()
+  };
+  if (!payload.dateConducted || !payload.activityConducted || !payload.natureOfActivity) {
+    errBox.textContent = 'Date, activity conducted, and nature of activity are all required.';
+    errBox.style.display = '';
+    return;
+  }
+  var btn = document.getElementById('activities-add-btn');
+  return CIPRMS.busy(btn, function () {
+    return CIPRMS.api('/api/partnerships/' + currentViewPartnershipId + '/activities', { method: 'POST', json: payload, quiet: true }).then(function (res) {
+      if (res.ok && res.data && res.data.activity) {
+        currentActivities.push(res.data.activity);
+        renderActivitiesTable();
+        ['act-date', 'act-activity', 'act-nature', 'act-remarks'].forEach(function (f) { document.getElementById(f).value = ''; });
+        showToast('Activity added.');
+      } else {
+        errBox.textContent = res.error || 'Unable to add the activity right now.';
+        errBox.style.display = '';
+      }
+    });
+  }, 'Adding…');
+}
+
+function exportActivitiesPdf() {
+  if (!currentViewPartnershipId) return;
+  var id = currentViewPartnershipId;
+  var p = partnerships.find(function (x) { return x.id === id; });
+  var filename = 'Activities-' + (p ? p.inst.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') : id) + '.pdf';
+  var btn = document.getElementById('activities-export-btn');
+  CIPRMS.busy(btn, function () {
+    // POST, not GET: this endpoint also archives the PDF to the Document Library (replacing the previous
+    // export for this partner), so window.open (always a GET) can no longer trigger it.
+    return fetch('/api/partnerships/' + id + '/activities/export', { method: 'POST' }).then(function (res) {
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (body) {
+          throw new Error(body.error || 'Unable to export the PDF right now.');
+        });
+      }
+      return res.blob();
+    }).then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }).catch(function (err) {
+      showToast(err.message || 'Unable to export the PDF right now.');
+    });
+  }, 'Exporting…');
 }
 
 function approveRecord(id) {
