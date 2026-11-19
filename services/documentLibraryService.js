@@ -54,6 +54,10 @@ function computeTextSimilarity(textA, textB) {
 }
 
 // Multi-signal duplicate detection (filename, document type, institution, text similarity, file hash)
+// meta.excludeRequestKey ({requestId, requestType}), when given, drops candidates tagged with that exact
+// pair from consideration (2026-11 duplicate-warning follow-up) — a new version of the SAME request isn't
+// a duplicate of its own previous version; that case already goes through the existing supersede flow
+// (supersedePreviousRequestDocuments) and must never also trigger a duplicate warning.
 async function findPossibleDuplicates(db, extraction, meta = {}) {
   if (!extraction && !meta.fileHash && !meta.originalName) return { found: false, matches: [] };
 
@@ -72,14 +76,18 @@ async function findPossibleDuplicates(db, extraction, meta = {}) {
   }
   if (orClauses.length === 0) return { found: false, matches: [] };
 
-  // LAU Internal Review Uploads (2026-11) — excluded from duplicate-detection candidates. Without this, a
-  // requester uploading any unrelated document through the normal OCR flow, for the SAME institution an LAU
-  // reviewer already left an internal review on, would get that review document back in `matches` (with its
-  // real title/fileLink — see the mapped shape below) purely because the institution name matched. It is
-  // also simply the wrong category to ever flag as a duplicate of an MOA/MOU/Accreditation upload.
-  const candidates = await db.collection('documents')
-    .find({ $or: orClauses, requestType: { $ne: 'partnership-lau-review' } })
-    .limit(30).toArray();
+  // LAU Internal Review Uploads and Partner Activities PDFs (2026-11) — excluded from duplicate-detection
+  // candidates entirely. Without this, a requester uploading any unrelated document through the normal OCR
+  // flow, for the SAME institution an LAU reviewer already left an internal review on (or that already has
+  // a "List of Activities" PDF archived), would get that document back in `matches` — with its real
+  // title/fileLink in the mapped shape below — purely because the institution name matched. Both are also
+  // simply the wrong category to ever flag as a duplicate of an MOA/MOU/Accreditation upload, and LAU
+  // review files must never be revealed to anyone outside LAU via this path either.
+  const filter = { $or: orClauses, requestType: { $ne: 'partnership-lau-review' }, type: { $ne: 'Partner Activities' } };
+  if (meta.excludeRequestKey && meta.excludeRequestKey.requestId != null && meta.excludeRequestKey.requestType) {
+    filter.$nor = [{ requestId: meta.excludeRequestKey.requestId, requestType: meta.excludeRequestKey.requestType }];
+  }
+  const candidates = await db.collection('documents').find(filter).limit(30).toArray();
   const type = extraction ? shortDocType(extraction.documentType) : null;
   const rawText = extraction ? extraction.rawText : null;
 
@@ -150,7 +158,11 @@ async function findPossibleDuplicates(db, extraction, meta = {}) {
 
   return {
     found: topMatches.length > 0,
-    matches: topMatches.map(({ c, reasons, score, matchPercentage }) => ({
+    // Exact (same file hash) vs Possible (everything else — similar text/institution/title): an overall
+    // classification for the whole result, not per-match, matching the two warning levels the upload-
+    // confirmation flow shows (2026-11 duplicate-warning follow-up). null when nothing matched at all.
+    matchLevel: topMatches.length === 0 ? null : topMatches.some((m) => m.exactHash) ? 'exact' : 'possible',
+    matches: topMatches.map(({ c, reasons, score, matchPercentage, exactHash }) => ({
       id: c.id,
       title: c.title || 'Untitled Document',
       type: c.type || 'Other',
@@ -160,12 +172,46 @@ async function findPossibleDuplicates(db, extraction, meta = {}) {
       originalFilename: c.originalFilename || 'Unknown',
       uploadedAt: c.uploadedAt || c.date || 'N/A',
       uploadedBy: c.uploadedBy || 'Unknown',
+      // uploadedByEmail/requestId/requestType are server-internal — used by scopeDuplicateMatchesForViewer()
+      // below to decide what a given viewer is allowed to see, and stripped before any HTTP response.
+      uploadedByEmail: c.uploadedByEmail || null,
+      requestId: c.requestId != null ? c.requestId : null,
+      requestType: c.requestType || null,
+      exactHash: exactHash,
       fileLink: c.fileLink || '#',
       reasons: reasons,
       reason: reasons.join(' · '),
       score: score,
       matchPercentage: matchPercentage
     }))
+  };
+}
+
+// Privacy scoping for a duplicate-warning response (2026-11): a reviewer (Administrator/Staff) sees full
+// match details for anything findPossibleDuplicates returned — they already have unrestricted read access
+// to every document via GET /uploads/documents/:filename. Everyone else (Partner/potential_partner, Dean/
+// Auth. Personnel) only ever sees details for a match that is their OWN upload; any other match is folded
+// into a plain "a similar document may already exist" signal with no title, institution, uploader, or
+// link revealed — `genericOnly` tells the caller whether to render ONLY that generic sentence (true) or
+// the (possibly filtered-down) match list below it (false). uploadedByEmail is stripped from every match
+// either way — it is never meant to reach the client, only to decide what to keep server-side.
+function scopeDuplicateMatchesForViewer(duplicateResult, viewer, isReviewerRole) {
+  if (!duplicateResult || !duplicateResult.found) return { found: false, matchLevel: null, matches: [], genericOnly: false };
+  const strip = (m) => {
+    const { uploadedByEmail, ...rest } = m;
+    return rest;
+  };
+  if (isReviewerRole) {
+    return { found: true, matchLevel: duplicateResult.matchLevel, matches: duplicateResult.matches.map(strip), genericOnly: false };
+  }
+  const viewerEmail = viewer && viewer.email;
+  const ownMatches = duplicateResult.matches.filter((m) => viewerEmail && m.uploadedByEmail === viewerEmail).map(strip);
+  const hadOtherPeoplesMatches = ownMatches.length < duplicateResult.matches.length;
+  return {
+    found: true,
+    matchLevel: duplicateResult.matchLevel,
+    matches: ownMatches,
+    genericOnly: ownMatches.length === 0 && hadOtherPeoplesMatches
   };
 }
 
@@ -280,7 +326,18 @@ async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, 
     // *Request* awaiting review — this partnership already exists, straight in the Registry) — its own
     // field so the two are never confused, and so a Document Library record can show which partnership it
     // was the supporting document for.
-    ...(meta.partnershipId != null ? { partnershipId: meta.partnershipId } : {})
+    ...(meta.partnershipId != null ? { partnershipId: meta.partnershipId } : {}),
+    // Duplicate-warning acknowledgment (2026-11): set only when the uploader explicitly chose "Upload
+    // anyway" on a duplicate/possible-duplicate warning (never set for an ordinary, no-match upload) — see
+    // the pending-upload accept flow in cirl.js/ocrService.js. acknowledgedMatchIds links the acknowledgment
+    // to exactly which existing document(s) it was warned about, for the Document Library's own
+    // "Acknowledged duplicate" badge/filter.
+    ...(meta.duplicateAcknowledged ? {
+      duplicateAcknowledged: true,
+      acknowledgedBy: meta.acknowledgedBy || null,
+      acknowledgedAt: meta.acknowledgedAt || new Date().toISOString(),
+      acknowledgedMatchIds: meta.acknowledgedMatchIds || []
+    } : {})
   });
 
   // 2026-11 Phase 3: documents was the one sequential-id collection the Phase 2 race-condition fix
@@ -379,4 +436,4 @@ async function archiveRequestRecordToLibrary(db, meta) {
   }));
 }
 
-module.exports = { archiveToDocumentLibrary, updateDocument, archiveRequestRecordToLibrary, supersedePreviousRequestDocuments, findPossibleDuplicates, DOCUMENTS_DIR, EXT_MIME_TYPES };
+module.exports = { archiveToDocumentLibrary, updateDocument, archiveRequestRecordToLibrary, supersedePreviousRequestDocuments, findPossibleDuplicates, scopeDuplicateMatchesForViewer, DOCUMENTS_DIR, EXT_MIME_TYPES };

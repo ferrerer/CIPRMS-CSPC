@@ -78,5 +78,5 @@ test('returns no match when the extraction has neither institution/partner nor f
 
 test('returns no match when extraction itself is null (OCR failed)', async () => {
   const result = await findPossibleDuplicates(db, null, { originalName: 'whatever.pdf' });
-  expect(result).toEqual({ found: false, matches: [] });
+  expect(result).toEqual({ found: false, matchLevel: null, matches: [] });
 });

@@ -391,7 +391,14 @@ async function runJob(jobId, filePath, mimetype, meta = {}) {
 // isn't an extracted/editable field at all — today just { partnershipId }, set only by the Add New
 // Partnership flow once its own save actually succeeds (see registry-gridjs.init.js), so a partnership
 // that never ends up created never gets a document archived for it either — nothing to roll back.
-async function confirmJob(jobId, overrides = {}, session = {}, extraMeta = {}) {
+// acknowledgeDuplicate (2026-11, duplicate-warning follow-up): false (the default) means "check first" —
+// if findPossibleDuplicates matches anything, archive NOTHING and hand the caller a duplicateFound result
+// instead. The job itself (tempFilePath intact, status still 'done', not yet confirmed) IS the pending
+// upload: its own existing 10-minute TTL/sweep (JOB_TTL_MS above) already cleans up the temp file if
+// neither accept nor cancel ever arrives, so no separate pending-upload store is needed for this path —
+// the same jobId doubles as the short-lived pending id. true means the caller already showed the warning
+// and the user chose "Upload anyway": skip the block, and tag the archived record as acknowledged.
+async function confirmJob(jobId, overrides = {}, session = {}, extraMeta = {}, acknowledgeDuplicate = false) {
   const job = jobs.get(jobId);
   if (!job) throw new Error('Job not found or has expired.');
   if (job.status !== 'done') throw new Error('Job is not in a completed state.');
@@ -404,8 +411,27 @@ async function confirmJob(jobId, overrides = {}, session = {}, extraMeta = {}) {
     uploadedByEmail: session.email || job.meta.uploadedByEmail || null
   });
 
+  // Re-checked fresh here rather than trusting the extract-time job.result.duplicateWarning: that ran
+  // before this confirm's own requestId (if any) was known, so it could not yet exclude the request's own
+  // previous version — a new version of the SAME request is never a duplicate warning, only the existing
+  // supersede flow (supersedePreviousRequestDocuments below).
+  const excludeRequestKey = meta.requestId != null && meta.requestType ? { requestId: meta.requestId, requestType: meta.requestType } : null;
+  let dup = { found: false, matchLevel: null, matches: [] };
   try {
-    const archived = await archiveToDocumentLibrary(job.tempFilePath, meta.originalName, extraction, meta);
+    dup = await findPossibleDuplicates(getDb(), extraction, Object.assign({}, meta, { excludeRequestKey }));
+  } catch { /* duplicate check is best-effort — never blocks a save on its own failure */ }
+  if (dup.found && !acknowledgeDuplicate) {
+    return { duplicateFound: true, matchLevel: dup.matchLevel, duplicateResult: dup };
+  }
+
+  try {
+    const archiveMeta = dup.found ? Object.assign({}, meta, {
+      duplicateAcknowledged: true,
+      acknowledgedBy: meta.uploadedByEmail,
+      acknowledgedAt: new Date().toISOString(),
+      acknowledgedMatchIds: dup.matches.map((m) => m.id)
+    }) : meta;
+    const archived = await archiveToDocumentLibrary(job.tempFilePath, meta.originalName, extraction, archiveMeta);
     // Partnership Request dedup (2026-11, revised): extraMeta.requestId/requestType is set only when this
     // confirm is re-extracting/re-OCRing a document for a request that already exists (editing an
     // existing draft) — see POST /api/ocr/confirm (ocrController). Without this, confirming a re-upload

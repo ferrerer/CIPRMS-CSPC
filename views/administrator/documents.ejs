@@ -261,6 +261,12 @@
                                     <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Partner Activities', this)">Partner Activities</button>
                                     <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Other', this)">Other</button>
                                 </div>
+                                <!-- Acknowledged duplicates (2026-11 duplicate-warning follow-up): review every document
+                                     someone chose "Upload anyway" on despite a match — see the badge on each card/row. -->
+                                <div class="form-check mt-3">
+                                    <input class="form-check-input" type="checkbox" id="acknowledged-only-toggle" onchange="toggleAcknowledgedFilter(this.checked)">
+                                    <label class="form-check-label fs-13" for="acknowledged-only-toggle">Acknowledged duplicates only</label>
+                                </div>
                             </div>
                         </div>
 
@@ -466,17 +472,17 @@
                 <div class="d-flex align-items-start gap-2">
                     <i class="ri-alert-fill fs-3 text-warning flex-shrink-0 mt-1"></i>
                     <div class="flex-grow-1">
-                        <h6 class="alert-heading text-warning-emphasis fw-bold fs-15 mb-1">Possible Duplicate Detected</h6>
-                        <p class="fs-13 text-muted mb-2">The system detected that this document may already exist in the Document Library. Review the matching record(s) below:</p>
-                        
+                        <h6 class="alert-heading text-warning-emphasis fw-bold fs-15 mb-1" id="duplicate-warning-heading">Possible Duplicate Detected</h6>
+                        <p class="fs-13 text-muted mb-2">Review the matching record(s) below before deciding:</p>
+
                         <div class="duplicate-matches-list mb-3" id="duplicate-matches-container" style="max-height: 240px; overflow-y: auto;"></div>
 
                         <div class="d-flex flex-wrap gap-2 align-items-center">
                             <button type="button" class="btn btn-warning btn-sm fs-13" id="btn-continue-duplicate" onclick="acknowledgeDuplicateAndContinue()">
-                                <i class="ri-check-line me-1"></i>Continue Anyway &amp; Save
+                                <i class="ri-check-line me-1"></i>Upload anyway
                             </button>
                             <button type="button" class="btn btn-outline-danger btn-sm fs-13" id="btn-discard-duplicate" onclick="discardDuplicateUpload()">
-                                <i class="ri-delete-bin-line me-1"></i>Discard Upload
+                                <i class="ri-delete-bin-line me-1"></i>Cancel
                             </button>
                             <button type="button" class="btn btn-light btn-sm ms-auto fs-13" id="btn-toggle-matches" onclick="toggleDuplicateDetails()">
                                 <i class="ri-arrow-up-s-line me-1" id="toggle-matches-icon"></i><span id="toggle-matches-text">Hide Matches</span>
@@ -547,6 +553,7 @@
     let currentType = 'All';
     let currentTag = 'All';
     let currentSearch = '';
+    let acknowledgedOnly = false; // 2026-11 duplicate-warning follow-up — "Acknowledged duplicates only" toggle
     let currentFolder = 'all'; // 'all' | 'unfiled' | 'archived' | <folder id>
     let currentView = localStorage.getItem('docLibraryView') === 'list' ? 'list' : 'grid';
     // Pagination (2026-11 panel recommendation) — server-side; the grid/list only ever render the current
@@ -649,6 +656,7 @@
         if (currentType !== 'All') params.set('type', currentType);
         if (currentTag !== 'All') params.set('tag', currentTag);
         if (currentSearch) params.set('search', currentSearch);
+        if (acknowledgedOnly) params.set('acknowledgedOnly', 'true');
         return fetch('/api/documents?' + params.toString())
             .then(r => r.json())
             .then(data => {
@@ -719,6 +727,12 @@
         docPage = 1;
         document.querySelectorAll('#type-filter-group .btn').forEach(btn => btn.classList.remove('active'));
         el.classList.add('active');
+        loadPage();
+    }
+
+    function toggleAcknowledgedFilter(checked) {
+        acknowledgedOnly = checked;
+        docPage = 1;
         loadPage();
     }
 
@@ -938,6 +952,7 @@
                                 <div class="flex-grow-1 overflow-hidden">
                                     <h5 class="fs-14 mb-1 text-truncate" title="${escHtml(doc.title)}">${escHtml(doc.title)}</h5>
                                     <p class="text-muted fs-12 mb-0 text-truncate">${escHtml(doc.institution || doc.partner || '')}</p>
+                                    ${doc.duplicateAcknowledged ? '<span class="badge bg-warning-subtle text-warning fs-10 mt-1" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line me-1"></i>Acknowledged duplicate</span>' : ''}
                                 </div>
                             </div>
                             <div class="row g-2 mb-2 align-items-center">
@@ -996,7 +1011,7 @@
             return `
                 <tr>
                     <td><span class="avatar-title bg-light rounded fs-4" style="width:36px;height:36px;display:inline-flex"><i class="${icon}"></i></span></td>
-                    <td class="text-truncate" style="max-width:240px" title="${escHtml(doc.title)}">${escHtml(doc.title)}</td>
+                    <td class="text-truncate" style="max-width:240px" title="${escHtml(doc.title)}">${escHtml(doc.title)}${doc.duplicateAcknowledged ? ' <span class="badge bg-warning-subtle text-warning fs-10" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line"></i></span>' : ''}</td>
                     <td class="text-truncate" style="max-width:180px">${escHtml(doc.institution || doc.partner || '—')}</td>
                     <td class="text-truncate" style="max-width:180px" title="${escHtml(doc.type || '')}">${escHtml(doc.type)}</td>
                     <td><span class="badge ${natureBadge} fs-10">${escHtml(nature)}</span></td>
@@ -1024,6 +1039,10 @@
     // until the user clicks "Save to Document Library" — the variable is set in
     // the modal-shown handler above and mirrored here for use by the functions below.
     var currentJobId = null;
+    // Set true only by "Upload anyway" — tells the NEXT saveDocument() call to pass
+    // acknowledgeDuplicate: true. Reset on a fresh job/discard/successful save so a leftover true from a
+    // PREVIOUS upload in the same modal session can never silently skip the check for a new one.
+    var currentDuplicateAcknowledged = false;
 
     function startOcr() {
         var input = document.getElementById('fileInput');
@@ -1180,6 +1199,7 @@
     function docOcrSucceed(result, jobId) {
         // Store the jobId (NOT a documentId — nothing has been saved yet).
         currentJobId = jobId;
+        currentDuplicateAcknowledged = false;
         document.getElementById('ocr-stage').style.display = 'none';
         document.getElementById('result-stage').style.display = 'block';
         // Always show the Save button — the user must explicitly confirm to save.
@@ -1260,11 +1280,64 @@
             });
     }
 
+    // "Upload anyway" (2026-11 duplicate-warning follow-up): the server already told us, at the PREVIOUS
+    // saveDocument() call, that this upload matches something — acknowledgeDuplicate: true on the next
+    // call tells it to archive despite that, tagged duplicateAcknowledged/acknowledgedBy/acknowledgedAt
+    // (see the "Acknowledged duplicate" badge/filter above). Nothing was archived until this click.
     function acknowledgeDuplicateAndContinue() {
         document.getElementById('duplicate-warning-box').style.display = 'none';
         var successAlert = document.getElementById('result-success-alert');
         if (successAlert) successAlert.style.display = 'block';
+        currentDuplicateAcknowledged = true;
         saveDocument();
+    }
+
+    // Renders the SERVER's authoritative duplicate-warning response (from saveDocument()'s own POST
+    // /api/ocr/confirm call) — distinct from docOcrSucceed's extract-time preview above, which only ever
+    // reflects what OCR itself computed before any Save click and before this document's actual institution/
+    // title edits were applied. This is the one that actually gates archiving: nothing was saved when this
+    // renders. matchLevel picks the wording the task asks for; matches is already privacy-scoped server-side
+    // (harmless here either way — this page is Administrator/Staff only, who always see full details).
+    function renderServerDuplicateWarning(data) {
+        var dupBox = document.getElementById('duplicate-warning-box');
+        var dupContainer = document.getElementById('duplicate-matches-container');
+        var successAlert = document.getElementById('result-success-alert');
+        var headingEl = document.getElementById('duplicate-warning-heading');
+        if (headingEl) {
+            headingEl.textContent = data.matchLevel === 'exact'
+                ? 'This file already exists in the Document Library.'
+                : 'This document looks similar to existing documents.';
+        }
+        if (successAlert) successAlert.style.display = 'none';
+        if (data.genericOnly || !data.matches || !data.matches.length) {
+            dupContainer.innerHTML = '<p class="text-muted fs-13 mb-0">A similar document may already exist.</p>';
+        } else {
+            dupContainer.innerHTML = data.matches.map(function (m) {
+                return `
+                    <div class="card mb-2 border border-warning-subtle duplicate-match-card">
+                        <div class="card-body p-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                            <div class="text-truncate" style="max-width: 72%;">
+                                <div class="fw-semibold text-truncate">
+                                    <span class="badge bg-primary-subtle text-primary me-1">${escHtml(m.type || 'Document')}</span>
+                                    ${escHtml(m.title || 'Untitled Document')}
+                                </div>
+                                <div class="fs-12 text-muted text-truncate mt-1">
+                                    <span><i class="ri-building-line me-1"></i>${escHtml(m.institution || '—')}</span> ·
+                                    <span><i class="ri-calendar-line me-1"></i>${escHtml(m.uploadedAt || m.validity || '—')}</span> ·
+                                    <span class="text-warning fw-medium"><i class="ri-information-line me-1"></i>${escHtml(m.reason || 'Match')}</span>
+                                </div>
+                            </div>
+                            <div>
+                                <a href="${escHtml(m.fileLink || '#')}" target="_blank" rel="noopener" class="btn btn-sm btn-soft-primary" title="Preview Existing Document">
+                                    <i class="ri-eye-line me-1"></i>View
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        dupBox.style.display = 'block';
     }
 
     function toggleDuplicateDetails() {
@@ -1290,15 +1363,19 @@
         var saveBtn = document.getElementById('saveDocBtn');
         if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving…'; }
 
-        // POST /api/ocr/confirm — permanently archives the temp file and creates
-        // the Document Library record, with any user-edited field values merged in.
+        // POST /api/ocr/confirm — checks for a duplicate first (2026-11 duplicate-warning follow-up): if
+        // findPossibleDuplicates matches something and this call isn't already acknowledging it, the
+        // server archives NOTHING and returns duplicateFound instead — the temp file/job stay held under
+        // this same jobId (its own existing 10-minute TTL) until this function is called again with
+        // acknowledgeDuplicate: true ("Upload anyway") or /api/ocr/discard is called ("Cancel").
         fetch('/api/ocr/confirm', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 jobId: currentJobId,
                 title: document.getElementById('res-title').value.trim(),
-                institution: document.getElementById('res-inst').value.trim()
+                institution: document.getElementById('res-inst').value.trim(),
+                acknowledgeDuplicate: currentDuplicateAcknowledged === true
             })
         })
             .then(function (r) { return r.json(); })
@@ -1308,7 +1385,12 @@
                     showToast('<i class="ri-error-warning-line me-1"></i>' + (data.error || 'Failed to save. Please try again.'), '#f06548');
                     return;
                 }
+                if (data.duplicateFound) {
+                    renderServerDuplicateWarning(data);
+                    return;
+                }
                 currentJobId = null;
+                currentDuplicateAcknowledged = false;
                 bootstrap.Modal.getInstance(document.getElementById('uploadModal'))?.hide();
                 loadDocuments();
                 showToast('<i class="ri-checkbox-circle-line me-1"></i>Document saved to the library successfully.');

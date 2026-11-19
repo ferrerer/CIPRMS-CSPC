@@ -1,5 +1,11 @@
 const fs = require('fs');
 const ocrService = require('../services/ocrService');
+const { scopeDuplicateMatchesForViewer } = require('../services/documentLibraryService');
+
+// Same reviewer role set as cirl.js's REQUEST_REVIEWER_ROLES — duplicated here rather than imported to
+// avoid a circular require (cirl.js requires this controller's router indirectly); kept in sync by hand,
+// same as every other place in this app that already repeats this exact pair for an unrelated reason.
+const REVIEWER_ROLES = ['Administrator', 'Staff'];
 
 // POST /api/ocr/extract — accepts either one document (field 'document', the original single-file path —
 // still used as-is by every existing caller) or multiple photos of one document (field 'documents',
@@ -63,7 +69,7 @@ function status(req, res) {
 // institution) with the extracted fields, then permanently archives the file.
 // Only the session owner of the job may confirm it.
 async function confirm(req, res) {
-  const { jobId, title, institution, documentType, partnershipId, requestId } = req.body || {};
+  const { jobId, title, institution, documentType, partnershipId, requestId, acknowledgeDuplicate } = req.body || {};
   if (!jobId) {
     return res.status(400).json({ success: false, error: 'jobId is required.' });
   }
@@ -111,8 +117,18 @@ async function confirm(req, res) {
 
   try {
     const session = (req.session && req.session.user) || {};
-    const archived = await ocrService.confirmJob(jobId, overrides, session, extraMeta);
-    res.json({ success: true, documentId: archived.documentId, fileLink: archived.fileLink });
+    const result = await ocrService.confirmJob(jobId, overrides, session, extraMeta, !!acknowledgeDuplicate);
+    // Duplicate/possible-duplicate found and not yet acknowledged (2026-11 duplicate-warning follow-up):
+    // nothing was archived — the job itself stays pending (same jobId, same 10-minute TTL) until the
+    // client re-calls this exact endpoint with acknowledgeDuplicate: true ("Upload anyway"), or calls
+    // POST /api/ocr/discard ("Cancel"). scopeDuplicateMatchesForViewer() strips anything this session
+    // isn't allowed to see before it ever leaves the server — a Partner/Dean gets a generic signal only,
+    // never another user's document titles or links.
+    if (result.duplicateFound) {
+      const scoped = scopeDuplicateMatchesForViewer(result.duplicateResult, session, REVIEWER_ROLES.includes(session.role));
+      return res.json({ success: true, duplicateFound: true, pendingId: jobId, matchLevel: scoped.matchLevel, matches: scoped.matches, genericOnly: scoped.genericOnly });
+    }
+    res.json({ success: true, documentId: result.documentId, fileLink: result.fileLink });
   } catch (err) {
     // Same convention as the safe-error-response pass elsewhere in this app: log the real error
     // server-side, never echo it to the client (it previously did `error: err.message`).

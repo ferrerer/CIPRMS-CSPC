@@ -173,6 +173,17 @@
       margin-bottom: 4px;
     }
 
+    .sign-img {
+      display: block;
+      max-width: 100%;
+      height: 45px;
+      object-fit: contain;
+      margin: 0 auto -10px;
+      /* slightly overlaps .sign-name's own bottom border, like a real signature sitting on the line */
+      position: relative;
+      z-index: 1;
+    }
+
     .sign-label {
       font-size: 12px;
       margin-bottom: 22px;
@@ -311,6 +322,10 @@
     <div class="sign-block">
       <div class="sign-col">
         <div class="sign-label">Approved By:</div>
+        <% if (hasApproverSignature) { %>
+          <img class="sign-img" src="/api/document-requests/<%= r.id %>/signature-image" alt=""
+            onerror="this.remove()">
+        <% } %>
         <div class="sign-name">
           <%= approverName %>
         </div>

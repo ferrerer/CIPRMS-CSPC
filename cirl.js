@@ -21,7 +21,9 @@ const ExcelJS = require('exceljs');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { connectDB, getDb, insertWithNextId, insertManyWithNextId, isConnected: isDbConnected, getClientPromise } = require('./db');
 const ocrRoutes = require('./routes/ocrRoutes');
-const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary, supersedePreviousRequestDocuments, EXT_MIME_TYPES } = require('./services/documentLibraryService');
+const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary, supersedePreviousRequestDocuments, findPossibleDuplicates, scopeDuplicateMatchesForViewer, EXT_MIME_TYPES } = require('./services/documentLibraryService');
+const pendingUploadService = require('./services/pendingUploadService');
+const signatureService = require('./services/signatureService');
 const documentStorageService = require('./services/documentStorageService');
 const downloadTokenService = require('./services/downloadTokenService');
 const pdfTableHelper = require('./services/pdfTableHelper');
@@ -42,6 +44,7 @@ const aiInsightService = require('./services/aiInsightService');
 const analyticsIntentService = require('./services/analyticsIntentService');
 const uploadAvatar = require('./middleware/avatarUploadMiddleware');
 const uploadDoc = require('./middleware/uploadMiddleware');
+const uploadSignature = require('./middleware/signatureUploadMiddleware');
 const verifyMagicBytes = require('./middleware/verifyMagicBytes');
 const helmet = require('helmet');
 
@@ -1790,6 +1793,64 @@ async function archivePartnerActivitiesPdf(db, res, partnership, activities, act
 // they themselves submitted (same `submittedByEmail` filter as
 // GET /api/requests/mine below).
 const REQUEST_REVIEWER_ROLES = ['Administrator', 'Staff'];
+
+// Duplicate-warning gate (2026-11) shared by every DIRECT (non-OCR) upload-to-Document-Library route:
+// POST /api/requests/:id/documents, POST /api/document-requests/:id/documents, POST
+// /api/college-requests/:id/reference-documents and .../documents. The OCR pipeline (POST /api/ocr/confirm)
+// has its own equivalent check built into ocrService.confirmJob — it already holds the temp file as a job,
+// so it doesn't need this module's separate pendingUploadService hold.
+//
+// `file` is the multer file object (path/originalname) already on disk; `extraction` is whatever this
+// route can synthesize about the upload without OCR (institution/documentType from the request record
+// it's attached to) — never null here as it would be for a failed OCR, since a direct upload always has
+// at least a filename. `excludeRequestKey` ({requestId, requestType}) is the same "this is a new version
+// of its OWN request, not a duplicate" exclusion findPossibleDuplicates applies for the OCR path.
+// `archive` is an async (ackMeta) => {documentId, fileLink} closure the caller builds, capturing whatever
+// that route's own archiveToDocumentLibrary call + post-archive steps (supersede, push to a history
+// array, logActivity) need — called with the acknowledgment fields already merged in once accepted.
+//
+// Returns null when nothing matched (caller proceeds to archive immediately, exactly as before). Returns
+// a ready-to-send response body when a duplicate was found and the upload was held instead — the file is
+// NOT on disk anymore from the route's own perspective; pendingUploadService owns it until accept/cancel/
+// expiry.
+// Returns { held: false, fileHash } when nothing matched — the caller proceeds to archive immediately
+// (exactly as before), merging `fileHash` into its own meta so a FUTURE upload can be compared against
+// THIS one by exact hash (previously these direct routes never stored one at all). Returns
+// { held: true, response } when a duplicate was found — the caller sends `response` as-is and returns;
+// the file is held, not archived, under `archive`'s closure (see pendingUploadService above).
+// A file below this size is never hash-matched (for exact-duplicate detection OR for storage) — a real
+// scanned MOA/MOU/Accreditation PDF or photo is never this small; a file this tiny is a placeholder/
+// corrupted/degenerate upload (and, incidentally, also what minimal magic-bytes-only test fixtures look
+// like — this threshold exists for the production reason above, not to dodge that, but it does so too).
+const MIN_HASH_MATCH_BYTES = 1024;
+async function duplicateWarningGate({ db, file, actor, extraction, excludeRequestKey, archive }) {
+  let fileHash = null;
+  let dup = { found: false, matchLevel: null, matches: [] };
+  try {
+    const fileBuffer = await fs.promises.readFile(file.path);
+    if (fileBuffer.length >= MIN_HASH_MATCH_BYTES) {
+      fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    }
+    dup = await findPossibleDuplicates(db, extraction, { fileHash, originalName: file.originalname, excludeRequestKey });
+  } catch (err) {
+    console.error('⚠️  Duplicate check failed (best-effort, upload proceeds):', err.message);
+    return { held: false, fileHash: null };
+  }
+  if (!dup.found) return { held: false, fileHash };
+  const pendingId = pendingUploadService.hold({
+    tempFilePath: file.path,
+    uploadedByEmail: actor.email,
+    archive: () => archive({
+      fileHash,
+      duplicateAcknowledged: true,
+      acknowledgedBy: actor.email,
+      acknowledgedAt: new Date().toISOString(),
+      acknowledgedMatchIds: dup.matches.map((m) => m.id)
+    })
+  });
+  const scoped = scopeDuplicateMatchesForViewer(dup, actor, REQUEST_REVIEWER_ROLES.includes(actor.role));
+  return { held: true, response: { success: true, duplicateFound: true, pendingId, matchLevel: scoped.matchLevel, matches: scoped.matches, genericOnly: scoped.genericOnly } };
+}
 // LAU (2026-10) gets the same org-wide, every-submitter visibility as Administrator/Staff on THIS read-only
 // list — but is deliberately kept out of REQUEST_REVIEWER_ROLES itself, since that constant also gates real
 // write/decision authority elsewhere (approve/reject, supporting-document upload, notification targeting —
@@ -2518,85 +2579,107 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
       // A notes-only version has no file at all — skip the archive step
       // entirely rather than inventing a fake filename/Document Library
       // record for something that was never uploaded.
-      let documentId = null, fileLink = null;
+      // Duplicate-warning gate (2026-11): everything that used to happen unconditionally right here —
+      // archive, supersede, push into supportingDocuments, status transition, notifications — now lives in
+      // this one closure so it can be deferred behind an "Upload anyway"/"Cancel" choice when
+      // findPossibleDuplicates matches something, while a plain re-upload with no match still runs it
+      // immediately below, exactly as before. ackMeta (duplicateAcknowledged/acknowledgedBy/
+      // acknowledgedAt/acknowledgedMatchIds) is only ever set by the accept path.
+      async function finishUpload(ackMeta) {
+        let documentId = null, fileLink = null;
+        if (req.file) {
+          // Document Library duplicate cleanup (2026-11, revised): keep exactly one CURRENT library entry
+          // for this request — every new version (draft re-upload, MOA/MOU submission, College Report)
+          // marks the previous one superseded instead of deleting it (never deleted, so its link in the
+          // supportingDocuments timeline below keeps working — only superseded entries are hidden from
+          // Document Library browsing). Called AFTER archiving so the new document's own id is the one
+          // passed as "current", never the one that gets marked superseded by its own call.
+          ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
+            documentType: target.isSubmission ? 'MOA/MOU Submission' : expandDocTypeLabel(target.type),
+            institution: target.institution,
+            partner: target.institution,
+            title: target.isCollegeReport
+              ? `Approved ${target.type || 'Agreement'} – ${target.institution} (${target.unit ? target.unit + ' ' : ''}College Report #${id})`
+              : `${target.isSubmission ? 'MOA/MOU Submission' : (target.type || 'Document')} – ${target.institution} (Request #${id})`
+          }, Object.assign({
+            uploadedBy: isReviewer ? actor.name : (target.requestedBy || 'Unknown'),
+            uploadedByEmail: isReviewer ? actor.email : target.submittedByEmail,
+            requestId: id,
+            requestType: 'partnership'
+          }, ackMeta || {})));
+          await supersedePreviousRequestDocuments(db, id, 'partnership', documentId);
+        }
+
+        const docRecord = {
+          documentId, fileLink,
+          originalFilename: req.file ? req.file.originalname : null,
+          uploadedAt: new Date().toISOString(), uploadedBy: actor.name,
+          uploadedByEmail: actor.email, uploaderRole: actor.role,
+          note, fileType: req.file ? req.file.mimetype : null, fileSize: req.file ? req.file.size : 0
+        };
+        const setFields = { updatedAt: new Date().toISOString() };
+        // The file that goes with a brand-new MOA/MOU submission is part of the submission itself: it is not a "revised
+        // draft", so it neither starts the review nor sends reviewers a second notification. Only the owner, only on a
+        // submission that has no document yet, and only when the page says it is the initial attachment.
+        // The same goes for the approved copy attached to a College Partnership Report.
+        const initialSubmissionFile = !!(target.isSubmission || target.isCollegeReport) && isOwner && req.body.initial === '1'
+          && !(Array.isArray(target.supportingDocuments) && target.supportingDocuments.length);
+        // A new version puts the request back "in collaboration" — reuses the
+        // existing Under Review status rather than inventing a new one (it
+        // already means exactly this for Approve/Reject purposes too).
+        if (target.status === 'Pending' && !initialSubmissionFile) setFields.status = 'Under Review';
+        await db.collection('requests').updateOne({ id }, { $push: { supportingDocuments: docRecord }, $set: setFields });
+        const updated = await db.collection('requests').findOne({ id });
+
+        const fileLabel = req.file ? req.file.originalname : 'notes only';
+        await logActivity(db, actor, 'EDIT',
+          `Draft document uploaded for partnership request: ${target.institution} (${fileLabel})${note ? ' — "' + note + '"' : ''}`);
+
+        // Reviewer uploaded → notify the requester. Requester uploaded a
+        // revision → notify every reviewer (same broadcast set used for a
+        // brand-new submission), not just Administrator.
+        if (isReviewer && target.submittedByEmail) {
+          const submitter = await db.collection('users').findOne({ email: target.submittedByEmail });
+          await notifyUsers(db, [target.submittedByEmail], {
+            module: 'request',
+            tag: target.isRenewal ? 'Renewal Request' : 'Partnership Request',
+            icon: 'ri-file-upload-line',
+            color: 'info',
+            title: `New draft uploaded: ${target.institution}`,
+            desc: req.file
+              ? `${actor.name} uploaded "${req.file.originalname}" for your request (${target.institution}).${note ? ' Note: ' + note : ''}`
+              : `${actor.name} added new notes for your request (${target.institution}).${note ? ' Note: ' + note : ''}`,
+            link: prLinkForRole(submitter && submitter.role, id),
+            downloadLink: fileLink
+          });
+        } else if (isOwner && !initialSubmissionFile) {
+          const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
+          await notifyReviewers(db, reviewers, {
+            module: 'request',
+            tag: target.isRenewal ? 'Renewal Request' : 'Partnership Request',
+            icon: 'ri-file-upload-line',
+            color: 'info',
+            title: `Revised draft uploaded: ${target.institution}`,
+            desc: req.file
+              ? `${actor.name} uploaded a revised draft "${req.file.originalname}" for their request (${target.institution}).${note ? ' Note: ' + note : ''}`
+              : `${actor.name} added new notes to their request (${target.institution}).${note ? ' Note: ' + note : ''}`
+          }, role => prLinkForRole(role, id));
+        }
+        return { documentId, fileLink, updated };
+      }
+
+      let uploadFileHash = null;
       if (req.file) {
-        // Document Library duplicate cleanup (2026-11, revised): keep exactly one CURRENT library entry
-        // for this request — every new version (draft re-upload, MOA/MOU submission, College Report)
-        // marks the previous one superseded instead of deleting it (never deleted, so its link in the
-        // supportingDocuments timeline below keeps working — only superseded entries are hidden from
-        // Document Library browsing). Called AFTER archiving so the new document's own id is the one
-        // passed as "current", never the one that gets marked superseded by its own call.
-        ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
-          documentType: target.isSubmission ? 'MOA/MOU Submission' : expandDocTypeLabel(target.type),
-          institution: target.institution,
-          partner: target.institution,
-          title: target.isCollegeReport
-            ? `Approved ${target.type || 'Agreement'} – ${target.institution} (${target.unit ? target.unit + ' ' : ''}College Report #${id})`
-            : `${target.isSubmission ? 'MOA/MOU Submission' : (target.type || 'Document')} – ${target.institution} (Request #${id})`
-        }, {
-          uploadedBy: isReviewer ? actor.name : (target.requestedBy || 'Unknown'),
-          uploadedByEmail: isReviewer ? actor.email : target.submittedByEmail,
-          requestId: id,
-          requestType: 'partnership'
-        }));
-        await supersedePreviousRequestDocuments(db, id, 'partnership', documentId);
-      }
-
-      const docRecord = {
-        documentId, fileLink,
-        originalFilename: req.file ? req.file.originalname : null,
-        uploadedAt: new Date().toISOString(), uploadedBy: actor.name,
-        uploadedByEmail: actor.email, uploaderRole: actor.role,
-        note, fileType: req.file ? req.file.mimetype : null, fileSize: req.file ? req.file.size : 0
-      };
-      const setFields = { updatedAt: new Date().toISOString() };
-      // The file that goes with a brand-new MOA/MOU submission is part of the submission itself: it is not a "revised
-      // draft", so it neither starts the review nor sends reviewers a second notification. Only the owner, only on a
-      // submission that has no document yet, and only when the page says it is the initial attachment.
-      // The same goes for the approved copy attached to a College Partnership Report.
-      const initialSubmissionFile = !!(target.isSubmission || target.isCollegeReport) && isOwner && req.body.initial === '1'
-        && !(Array.isArray(target.supportingDocuments) && target.supportingDocuments.length);
-      // A new version puts the request back "in collaboration" — reuses the
-      // existing Under Review status rather than inventing a new one (it
-      // already means exactly this for Approve/Reject purposes too).
-      if (target.status === 'Pending' && !initialSubmissionFile) setFields.status = 'Under Review';
-      await db.collection('requests').updateOne({ id }, { $push: { supportingDocuments: docRecord }, $set: setFields });
-      const updated = await db.collection('requests').findOne({ id });
-
-      const fileLabel = req.file ? req.file.originalname : 'notes only';
-      await logActivity(db, actor, 'EDIT',
-        `Draft document uploaded for partnership request: ${target.institution} (${fileLabel})${note ? ' — "' + note + '"' : ''}`);
-
-      // Reviewer uploaded → notify the requester. Requester uploaded a
-      // revision → notify every reviewer (same broadcast set used for a
-      // brand-new submission), not just Administrator.
-      if (isReviewer && target.submittedByEmail) {
-        const submitter = await db.collection('users').findOne({ email: target.submittedByEmail });
-        await notifyUsers(db, [target.submittedByEmail], {
-          module: 'request',
-          tag: target.isRenewal ? 'Renewal Request' : 'Partnership Request',
-          icon: 'ri-file-upload-line',
-          color: 'info',
-          title: `New draft uploaded: ${target.institution}`,
-          desc: req.file
-            ? `${actor.name} uploaded "${req.file.originalname}" for your request (${target.institution}).${note ? ' Note: ' + note : ''}`
-            : `${actor.name} added new notes for your request (${target.institution}).${note ? ' Note: ' + note : ''}`,
-          link: prLinkForRole(submitter && submitter.role, id),
-          downloadLink: fileLink
+        const gate = await duplicateWarningGate({
+          db, file: req.file, actor,
+          extraction: { institution: target.institution, documentType: target.type },
+          excludeRequestKey: { requestId: id, requestType: 'partnership' },
+          archive: (ackMeta) => finishUpload(ackMeta)
         });
-      } else if (isOwner && !initialSubmissionFile) {
-        const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
-        await notifyReviewers(db, reviewers, {
-          module: 'request',
-          tag: target.isRenewal ? 'Renewal Request' : 'Partnership Request',
-          icon: 'ri-file-upload-line',
-          color: 'info',
-          title: `Revised draft uploaded: ${target.institution}`,
-          desc: req.file
-            ? `${actor.name} uploaded a revised draft "${req.file.originalname}" for their request (${target.institution}).${note ? ' Note: ' + note : ''}`
-            : `${actor.name} added new notes to their request (${target.institution}).${note ? ' Note: ' + note : ''}`
-        }, role => prLinkForRole(role, id));
+        if (gate.held) return res.json(gate.response);
+        uploadFileHash = gate.fileHash;
       }
+      const { documentId, fileLink, updated } = await finishUpload(uploadFileHash ? { fileHash: uploadFileHash } : {});
 
       // scopeLauReviewsForViewer (2026-11, LAU Internal Review leak audit): this route's isOwner branch
       // means the request's own submitter is a real caller here, not just reviewers — `updated` must never
@@ -2997,6 +3080,9 @@ app.patch('/api/document-requests/:id', requireStaffAccess, announce('documentRe
       setFields.releasedBy = req.session.user.name;
       setFields.releasedAt = now;
     }
+    // Tracked across the whole handler so the response below can tell the client to show a warning toast
+    // — set only when this transition is the one actually reaching Completed with nothing uploaded yet.
+    let noSignatureWarning = false;
     if (status === 'Completed') {
       // Received By defaults to the request's own requester (the person the
       // documents were requested for) but a reviewer may override it — e.g.
@@ -3004,6 +3090,13 @@ app.patch('/api/document-requests/:id', requireStaffAccess, announce('documentRe
       // documents on the requester's behalf.
       setFields.receivedBy = (receivedBy && receivedBy.trim()) || current.requestedBy || '';
       setFields.receivedAt = now;
+      // Snapshot (2026-11): freeze which signature file this request's printable form uses from now on,
+      // so replacing or removing the org's current signature later never changes a form that was already
+      // Completed. `null` here (no signature uploaded yet) is itself the frozen answer — the form keeps
+      // generating with a blank space even if a signature is uploaded afterward.
+      const currentSignature = await signatureService.getCurrentSignature(db);
+      setFields.signatureFileIdAtCompletion = currentSignature ? currentSignature.fileId : null;
+      noSignatureWarning = !currentSignature;
     }
     // Every transition — including automatic ones elsewhere in this file —
     // is appended to statusHistory, never overwritten, so the full audit
@@ -3042,7 +3135,7 @@ app.patch('/api/document-requests/:id', requireStaffAccess, announce('documentRe
       await notifyUsers(db, [updated.requestedByEmail], { module: 'request', tag: 'Document Request', icon, color, title, desc, link });
     }
 
-    res.json({ success: true, request: updated });
+    res.json({ success: true, request: updated, noSignatureWarning });
   } catch (err) {
     console.error('❌ Document request decision error:', err);
     res.status(500).json({ error: 'Unable to update the document request right now. Please try again.' });
@@ -3150,104 +3243,122 @@ app.post('/api/document-requests/:id/documents', requireAuth, announce('document
       // reviewer's own library. A notes-only version has no file at all —
       // skip the archive step entirely rather than inventing a fake
       // filename/Document Library record for something never uploaded.
-      let documentId = null, fileLink = null;
+      // Duplicate-warning gate (2026-11) — see /api/requests/:id/documents above for the same pattern.
+      // Linking an already-archived document (linkedDocs) never goes through this: it creates no new file
+      // and no new `documents` record, so there's nothing new to check for duplication.
+      async function finishUpload(ackMeta) {
+        let documentId = null, fileLink = null;
+        if (req.file) {
+          ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
+            documentType: expandDocTypeLabel(target.documentType),
+            institution: target.institution,
+            partner: target.institution,
+            title: `${target.documentType || 'Document'} – ${target.institution} (Doc Request #${id})`
+          }, Object.assign({
+            uploadedBy: isReviewer ? actor.name : (target.requestedBy || 'Unknown'),
+            uploadedByEmail: isReviewer ? actor.email : target.requestedByEmail,
+            requestId: id,
+            requestType: 'document'
+          }, ackMeta || {})));
+        }
+
+        const now = new Date().toISOString();
+        const newRecords = [];
+        if (req.file) {
+          newRecords.push({
+            documentId, fileLink,
+            originalFilename: req.file.originalname,
+            uploadedAt: now, uploadedBy: actor.name,
+            uploadedByEmail: actor.email, uploaderRole: actor.role,
+            note, fileType: req.file.mimetype, fileSize: req.file.size, linked: false
+          });
+        }
+        // Linking an existing document never creates a new file or a new `documents` record — it only adds
+        // a reference (documentId + the original's own fileLink) to this request's timeline. Preserves the
+        // original's own metadata/storage location/ownership entirely untouched.
+        linkedDocs.forEach((doc) => {
+          newRecords.push({
+            documentId: doc.id, fileLink: doc.fileLink,
+            originalFilename: doc.originalFilename || doc.title || null,
+            uploadedAt: now, uploadedBy: actor.name,
+            uploadedByEmail: actor.email, uploaderRole: actor.role,
+            note, fileType: EXT_MIME_TYPES[path.extname(doc.fileLink || '').toLowerCase()] || null, fileSize: null, linked: true
+          });
+        });
+        // A note-only contribution (no file, no link) is still one timeline entry.
+        if (!newRecords.length) {
+          newRecords.push({
+            documentId: null, fileLink: null, originalFilename: null,
+            uploadedAt: now, uploadedBy: actor.name,
+            uploadedByEmail: actor.email, uploaderRole: actor.role,
+            note, fileType: null, fileSize: 0, linked: false
+          });
+        }
+
+        const setFields = { updatedAt: now };
+        // A reviewer's first draft contribution signals work has actually begun —
+        // auto-advance Received → Preparing (recorded in statusHistory like
+        // every other transition) rather than requiring a separate manual
+        // status click for what just happened anyway. Notes-only (or a link-only
+        // contribution) counts too — it's still real review progress.
+        const pushOps = { supportingDocuments: { $each: newRecords } };
+        if (canonicalDrStatus(target.status) === 'Received') {
+          setFields.status = 'Preparing';
+          pushOps.statusHistory = { from: target.status, to: 'Preparing', at: now, by: actor.name, byEmail: actor.email, remark: 'Auto-advanced on first draft upload' };
+        }
+        await db.collection('documentrequests').updateOne({ id }, { $push: pushOps, $set: setFields });
+        const updated = await db.collection('documentrequests').findOne({ id });
+
+        const parts = [];
+        if (req.file) parts.push(`uploaded "${req.file.originalname}"`);
+        if (linkedDocs.length) parts.push(`linked ${linkedDocs.length} existing document${linkedDocs.length === 1 ? '' : 's'} (${linkedDocs.map((d) => d.title).join(', ')})`);
+        if (!parts.length) parts.push('added notes');
+        const actionSummary = parts.join(' and ');
+
+        await logActivity(db, actor, 'EDIT',
+          `Draft update for document request: ${target.institution} — ${actionSummary}${note ? ' — "' + note + '"' : ''}`);
+
+        // Reviewer contributed → notify the requester. Requester uploaded a
+        // revision → notify every reviewer, same broadcast set used for a
+        // brand-new submission.
+        if (isReviewer && target.requestedByEmail) {
+          const requester = await db.collection('users').findOne({ email: target.requestedByEmail });
+          await notifyUsers(db, [target.requestedByEmail], {
+            module: 'request',
+            tag: 'Document Request',
+            icon: 'ri-file-upload-line',
+            color: 'info',
+            title: `New draft uploaded: ${target.institution}`,
+            desc: `${actor.name} ${actionSummary} for your document request (${target.institution}).${note ? ' Note: ' + note : ''}`,
+            link: drLinkForRole(requester && requester.role, id),
+            downloadLink: fileLink || (linkedDocs[0] && linkedDocs[0].fileLink) || null
+          });
+        } else if (isOwner) {
+          const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
+          await notifyReviewers(db, reviewers, {
+            module: 'request',
+            tag: 'Document Request',
+            icon: 'ri-file-upload-line',
+            color: 'info',
+            title: `Revised draft uploaded: ${target.institution}`,
+            desc: `${actor.name} ${actionSummary} for their document request (${target.institution}).${note ? ' Note: ' + note : ''}`
+          }, role => drLinkForRole(role, id));
+        }
+        return { documentId, fileLink, updated };
+      }
+
+      let uploadFileHash = null;
       if (req.file) {
-        ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
-          documentType: expandDocTypeLabel(target.documentType),
-          institution: target.institution,
-          partner: target.institution,
-          title: `${target.documentType || 'Document'} – ${target.institution} (Doc Request #${id})`
-        }, {
-          uploadedBy: isReviewer ? actor.name : (target.requestedBy || 'Unknown'),
-          uploadedByEmail: isReviewer ? actor.email : target.requestedByEmail,
-          requestId: id,
-          requestType: 'document'
-        }));
-      }
-
-      const now = new Date().toISOString();
-      const newRecords = [];
-      if (req.file) {
-        newRecords.push({
-          documentId, fileLink,
-          originalFilename: req.file.originalname,
-          uploadedAt: now, uploadedBy: actor.name,
-          uploadedByEmail: actor.email, uploaderRole: actor.role,
-          note, fileType: req.file.mimetype, fileSize: req.file.size, linked: false
+        const gate = await duplicateWarningGate({
+          db, file: req.file, actor,
+          extraction: { institution: target.institution, documentType: target.documentType },
+          excludeRequestKey: { requestId: id, requestType: 'document' },
+          archive: (ackMeta) => finishUpload(ackMeta)
         });
+        if (gate.held) return res.json(gate.response);
+        uploadFileHash = gate.fileHash;
       }
-      // Linking an existing document never creates a new file or a new `documents` record — it only adds
-      // a reference (documentId + the original's own fileLink) to this request's timeline. Preserves the
-      // original's own metadata/storage location/ownership entirely untouched.
-      linkedDocs.forEach((doc) => {
-        newRecords.push({
-          documentId: doc.id, fileLink: doc.fileLink,
-          originalFilename: doc.originalFilename || doc.title || null,
-          uploadedAt: now, uploadedBy: actor.name,
-          uploadedByEmail: actor.email, uploaderRole: actor.role,
-          note, fileType: EXT_MIME_TYPES[path.extname(doc.fileLink || '').toLowerCase()] || null, fileSize: null, linked: true
-        });
-      });
-      // A note-only contribution (no file, no link) is still one timeline entry.
-      if (!newRecords.length) {
-        newRecords.push({
-          documentId: null, fileLink: null, originalFilename: null,
-          uploadedAt: now, uploadedBy: actor.name,
-          uploadedByEmail: actor.email, uploaderRole: actor.role,
-          note, fileType: null, fileSize: 0, linked: false
-        });
-      }
-
-      const setFields = { updatedAt: now };
-      // A reviewer's first draft contribution signals work has actually begun —
-      // auto-advance Received → Preparing (recorded in statusHistory like
-      // every other transition) rather than requiring a separate manual
-      // status click for what just happened anyway. Notes-only (or a link-only
-      // contribution) counts too — it's still real review progress.
-      const pushOps = { supportingDocuments: { $each: newRecords } };
-      if (canonicalDrStatus(target.status) === 'Received') {
-        setFields.status = 'Preparing';
-        pushOps.statusHistory = { from: target.status, to: 'Preparing', at: now, by: actor.name, byEmail: actor.email, remark: 'Auto-advanced on first draft upload' };
-      }
-      await db.collection('documentrequests').updateOne({ id }, { $push: pushOps, $set: setFields });
-      const updated = await db.collection('documentrequests').findOne({ id });
-
-      const parts = [];
-      if (req.file) parts.push(`uploaded "${req.file.originalname}"`);
-      if (linkedDocs.length) parts.push(`linked ${linkedDocs.length} existing document${linkedDocs.length === 1 ? '' : 's'} (${linkedDocs.map((d) => d.title).join(', ')})`);
-      if (!parts.length) parts.push('added notes');
-      const actionSummary = parts.join(' and ');
-
-      await logActivity(db, actor, 'EDIT',
-        `Draft update for document request: ${target.institution} — ${actionSummary}${note ? ' — "' + note + '"' : ''}`);
-
-      // Reviewer contributed → notify the requester. Requester uploaded a
-      // revision → notify every reviewer, same broadcast set used for a
-      // brand-new submission.
-      if (isReviewer && target.requestedByEmail) {
-        const requester = await db.collection('users').findOne({ email: target.requestedByEmail });
-        await notifyUsers(db, [target.requestedByEmail], {
-          module: 'request',
-          tag: 'Document Request',
-          icon: 'ri-file-upload-line',
-          color: 'info',
-          title: `New draft uploaded: ${target.institution}`,
-          desc: `${actor.name} ${actionSummary} for your document request (${target.institution}).${note ? ' Note: ' + note : ''}`,
-          link: drLinkForRole(requester && requester.role, id),
-          downloadLink: fileLink || (linkedDocs[0] && linkedDocs[0].fileLink) || null
-        });
-      } else if (isOwner) {
-        const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
-        await notifyReviewers(db, reviewers, {
-          module: 'request',
-          tag: 'Document Request',
-          icon: 'ri-file-upload-line',
-          color: 'info',
-          title: `Revised draft uploaded: ${target.institution}`,
-          desc: `${actor.name} ${actionSummary} for their document request (${target.institution}).${note ? ' Note: ' + note : ''}`
-        }, role => drLinkForRole(role, id));
-      }
-
+      const { documentId, fileLink, updated } = await finishUpload(uploadFileHash ? { fileHash: uploadFileHash } : {});
       res.json({ success: true, documentId, fileLink, linkedCount: linkedDocs.length, request: updated });
     } catch (e) {
       console.error('❌ Document request draft upload error:', e);
@@ -3294,11 +3405,21 @@ function drFormFields(r) {
   // (blank until their own stage is reached) — no gating needed there.
   const canonical = canonicalDrStatus(r.status);
   const isFulfilled = ['Approved', 'Release', 'Completed'].includes(canonical);
+  // The Head's actual e-signature image (2026-11) is gated more strictly than the approver NAME/TITLE
+  // text above: it only ever appears once the request is truly Completed (not merely Approved/Release),
+  // and only using the exact file snapshotted at that moment — see signatureFileIdAtCompletion and
+  // services/signatureService.js. Checking live `canonical` here (not a stored boolean) is what makes a
+  // request moved back off Completed lose the signature again on its own, with no extra code.
+  const approverSignaturePath = canonical === 'Completed'
+    ? signatureService.resolveSignatureFileForRequest(r)
+    : null;
   return {
     dateTimeStr, documentItems, fmtDate, isFulfilled,
     approverName: isFulfilled ? DR_APPROVER_NAME : '',
     approverTitle: isFulfilled ? DR_APPROVER_TITLE : '',
-    approvedDateStr: isFulfilled ? fmtDate(r.approvedAt || r.updatedAt) : ''
+    approvedDateStr: isFulfilled ? fmtDate(r.approvedAt || r.updatedAt) : '',
+    approverSignaturePath,
+    hasApproverSignature: !!approverSignaturePath
   };
 }
 
@@ -3330,6 +3451,99 @@ app.get('/api/document-requests/:id/pdf', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('❌ Document request PDF error:', err);
     res.status(500).json({ error: 'Unable to generate the document right now. Please try again.' });
+  }
+});
+
+// Serves the Head's e-signature image for exactly ONE Document Request's own printable/PDF view — gated
+// by the same canAccessDocumentRequest check as the print/PDF routes above, never a static/public path
+// (see services/signatureService.js). Only returns bytes once the request is actually Completed and a
+// signature was snapshotted for it; everything else (wrong status, no snapshot, file missing) is a plain
+// 404, which the browser print view's <img onerror> below treats as "no signature" rather than an error.
+app.get('/api/document-requests/:id/signature-image', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id);
+  try {
+    const db = getDb();
+    const target = await db.collection('documentrequests').findOne({ id });
+    if (!target) return res.status(404).end();
+    if (!canAccessDocumentRequest(req.session.user, target)) return res.status(403).end();
+    const { approverSignaturePath } = drFormFields(target);
+    if (!approverSignaturePath) return res.status(404).end();
+    res.sendFile(approverSignaturePath);
+  } catch (err) {
+    console.error('❌ Document request signature image error:', err);
+    res.status(500).end();
+  }
+});
+
+// ── Head's E-Signature (2026-11) — one organization-wide asset (never a per-user signature), managed
+// from Admin/Staff → Requests → Document Requests → "Add E-Sign". Applied only to a Document Request's
+// printable form once it is Completed (see drFormFields/renderDocumentRequestPdf above and
+// services/signatureService.js); Administrator and Staff share full read/write parity here, matching
+// requireStaffAccess's existing convention everywhere else in this file.
+app.get('/api/settings/signature', requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    const current = await signatureService.getCurrentSignature(db);
+    if (!current) return res.json({ success: true, hasSignature: false });
+    const filePath = signatureService.signatureFilePath(current.fileId);
+    let dataUri = null;
+    if (fs.existsSync(filePath)) {
+      dataUri = `data:${current.mimetype};base64,${fs.readFileSync(filePath).toString('base64')}`;
+    }
+    res.json({
+      success: true,
+      hasSignature: !!dataUri,
+      dataUri,
+      uploadedBy: current.uploadedBy,
+      uploadedAt: current.uploadedAt
+    });
+  } catch (err) {
+    console.error('❌ Get signature error:', err);
+    res.status(500).json({ error: 'Unable to load the signature right now. Please try again.' });
+  }
+});
+
+app.post('/api/settings/signature', requireStaffAccess, (req, res) => {
+  uploadSignature.single('signature')(req, res, async (err) => {
+    if (err instanceof multer.MulterError) {
+      const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 2MB.' : err.message;
+      return res.status(400).json({ error: message });
+    }
+    if (err) {
+      if (!err.clientSafe) console.error('❌ Signature upload error:', err);
+      return res.status(400).json({ error: err.clientSafe ? err.message : 'Upload failed. Please try again.' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'Choose or draw a signature first.' });
+    if (!verifyMagicBytes(req.file)) {
+      return res.status(400).json({ error: 'Unsupported file type. Only PNG and JPG are accepted.' });
+    }
+    try {
+      const db = getDb();
+      const actor = req.session.user;
+      await signatureService.saveSignature(db, {
+        fileId: req.file.filename,
+        mimetype: req.file.mimetype,
+        uploadedBy: actor.name,
+        uploadedByEmail: actor.email
+      });
+      await logActivity(db, actor, 'EDIT', 'Uploaded/replaced the Head of CIRL e-signature.');
+      res.json({ success: true });
+    } catch (e) {
+      console.error('❌ Save signature error:', e);
+      res.status(500).json({ error: 'Unable to save the signature right now. Please try again.' });
+    }
+  });
+});
+
+app.delete('/api/settings/signature', requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    await signatureService.removeSignature(db);
+    await logActivity(db, req.session.user, 'DELETE', 'Removed the Head of CIRL e-signature.');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ Remove signature error:', err);
+    res.status(500).json({ error: 'Unable to remove the signature right now. Please try again.' });
   }
 });
 
@@ -3500,31 +3714,43 @@ app.post('/api/college-requests/:id/reference-documents', requireStaffAccess, an
         return res.status(404).json({ error: 'College request not found.' });
       }
 
-      const { documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
-        documentType: target.requestType,
-        institution: getAssignedDeans(target).map(d => d.college).filter(Boolean).join(', '),
-        title: `${target.requestType} Reference – ${target.title}`
-      }, {
-        uploadedBy: actor.name,
-        uploadedByEmail: actor.email,
-        requestId: id,
-        requestType: 'college-request'
+      async function finishUpload(ackMeta) {
+        const { documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
+          documentType: target.requestType,
+          institution: getAssignedDeans(target).map(d => d.college).filter(Boolean).join(', '),
+          title: `${target.requestType} Reference – ${target.title}`
+        }, Object.assign({
+          uploadedBy: actor.name,
+          uploadedByEmail: actor.email,
+          requestId: id,
+          requestType: 'college-request'
+        }, ackMeta || {}));
+
+        const docRecord = {
+          documentId, fileLink, originalFilename: req.file.originalname,
+          uploadedAt: new Date().toISOString(), uploadedBy: actor.name, uploadedByEmail: actor.email,
+          note, fileType: req.file.mimetype, fileSize: req.file.size
+        };
+        await db.collection('collegedeanrequests').updateOne({ id }, {
+          $push: { referenceDocuments: docRecord },
+          $set: { updatedAt: new Date().toISOString() }
+        });
+        const updated = await db.collection('collegedeanrequests').findOne({ id });
+
+        await logActivity(db, actor, 'EDIT',
+          `Reference document attached to college request: ${target.title} (${req.file.originalname})`);
+        return { documentId, fileLink, updated };
+      }
+
+      // Duplicate-warning gate (2026-11) — see /api/requests/:id/documents above for the same pattern.
+      const gate = await duplicateWarningGate({
+        db, file: req.file, actor,
+        extraction: { institution: getAssignedDeans(target).map(d => d.college).filter(Boolean).join(', '), documentType: target.requestType },
+        excludeRequestKey: { requestId: id, requestType: 'college-request' },
+        archive: (ackMeta) => finishUpload(ackMeta)
       });
-
-      const docRecord = {
-        documentId, fileLink, originalFilename: req.file.originalname,
-        uploadedAt: new Date().toISOString(), uploadedBy: actor.name, uploadedByEmail: actor.email,
-        note, fileType: req.file.mimetype, fileSize: req.file.size
-      };
-      await db.collection('collegedeanrequests').updateOne({ id }, {
-        $push: { referenceDocuments: docRecord },
-        $set: { updatedAt: new Date().toISOString() }
-      });
-      const updated = await db.collection('collegedeanrequests').findOne({ id });
-
-      await logActivity(db, actor, 'EDIT',
-        `Reference document attached to college request: ${target.title} (${req.file.originalname})`);
-
+      if (gate.held) return res.json(gate.response);
+      const { documentId, fileLink, updated } = await finishUpload(gate.fileHash ? { fileHash: gate.fileHash } : {});
       res.json({ success: true, documentId, fileLink, request: updated });
     } catch (e) {
       console.error('❌ College request reference upload error:', e);
@@ -4024,6 +4250,11 @@ app.get('/api/documents', requireUploader, async (req, res) => {
       // a regex against an array field (searchKeywords) already matches if ANY element matches.
       filter.$or = [{ title: re }, { institution: re }, { partner: re }, { ocrText: re }, { searchKeywords: re }];
     }
+    // Acknowledged-duplicate filter (2026-11 duplicate-warning follow-up) — lets Administrator/Staff review
+    // every document someone chose "Upload anyway" on despite a match. Any role can pass it (the role-scope
+    // filter above still applies first), but only Admin/Staff's shared library has enough breadth for this
+    // to be a meaningful review tool.
+    if (req.query.acknowledgedOnly === 'true') filter.duplicateAcknowledged = true;
 
     const totalCount = await db.collection('documents').countDocuments(filter);
     const records = await db.collection('documents').find(filter).sort({ id: -1 }).skip((page - 1) * pageSize).limit(pageSize).toArray();
@@ -4198,6 +4429,47 @@ app.delete('/api/documents/:id', requireUploader, announce('document'), async (r
     console.error('❌ Delete document error:', err);
     res.status(500).json({ error: 'Unable to delete the document right now. Please try again.' });
   }
+});
+
+// ── PENDING UPLOADS (duplicate-warning follow-up, 2026-11) ────────────────────────────────────────
+// Resolves a duplicate-warning hold created by duplicateWarningGate() above for any of the DIRECT
+// (non-OCR) upload routes — POST /api/requests/:id/documents, POST /api/document-requests/:id/documents,
+// POST /api/college-requests/:id/reference-documents. (The OCR pipeline has its own equivalent: POST
+// /api/ocr/confirm again, with acknowledgeDuplicate: true, using the same jobId as the pendingId — no
+// separate accept route needed there, since the job itself already holds the temp file.) Generic across
+// every direct route on purpose: by the time a duplicate was found, pendingUploadService already holds
+// everything needed to finish that specific route's own archive + side effects — this endpoint never
+// needs to know which route a given pendingId came from.
+app.post('/api/uploads/pending/:pendingId/accept', requireAuth, async (req, res) => {
+  const entry = pendingUploadService.peek(req.params.pendingId);
+  if (!entry) {
+    return res.status(404).json({ error: 'This upload is no longer pending — it may have already been resolved or expired. Please re-upload.' });
+  }
+  if (entry.uploadedByEmail && entry.uploadedByEmail !== req.session.user.email) {
+    return res.status(403).json({ error: 'You do not have access to this upload.' });
+  }
+  try {
+    const archived = await pendingUploadService.accept(req.params.pendingId);
+    if (!archived) {
+      return res.status(404).json({ error: 'This upload is no longer pending — it may have already been resolved or expired. Please re-upload.' });
+    }
+    res.json({ success: true, documentId: archived.documentId, fileLink: archived.fileLink });
+  } catch (err) {
+    console.error('❌ Pending upload accept error:', err);
+    res.status(500).json({ error: 'Unable to save the uploaded document right now. Please try again.' });
+  }
+});
+
+// Cancel ("Cancel" on the duplicate warning): deletes the held temp file, creates no Document Library
+// record, and no request-side-effect of any kind ever ran — the route that created this hold never got
+// past duplicateWarningGate() in the first place.
+app.post('/api/uploads/pending/:pendingId/cancel', requireAuth, (req, res) => {
+  const entry = pendingUploadService.peek(req.params.pendingId);
+  if (entry && entry.uploadedByEmail && entry.uploadedByEmail !== req.session.user.email) {
+    return res.status(403).json({ error: 'You do not have access to this upload.' });
+  }
+  const cancelled = pendingUploadService.cancel(req.params.pendingId);
+  res.json({ success: true, cancelled });
 });
 
 // ── PARTNERSHIPS (Registry) ───────────────────────────────────────────────────
@@ -4914,7 +5186,7 @@ function renderDocumentRequestPdf(res, r) {
   res.on('error', (err) => console.error('❌ Document Request PDF response stream error:', err));
   doc.pipe(res);
 
-  const { dateTimeStr, documentItems, fmtDate, isFulfilled, approverName, approverTitle, approvedDateStr } = drFormFields(r);
+  const { dateTimeStr, documentItems, fmtDate, isFulfilled, approverName, approverTitle, approvedDateStr, approverSignaturePath } = drFormFields(r);
   const left = doc.page.margins.left;
   const right = doc.page.width - doc.page.margins.right;
   const contentWidth = right - left;
@@ -5045,22 +5317,47 @@ function renderDocumentRequestPdf(res, r) {
     const x = left + i * colW;
     doc.font('Helvetica').fontSize(9).text(col.label, x, sigTop, { width: sigW });
 
+    // The Head's actual e-signature (2026-11) only ever applies to the Approved By column, and only once
+    // drFormFields has already confirmed the request is Completed and a snapshot file exists on disk.
+    const hasSig = i === 0 && approverSignaturePath;
+    if (hasSig) {
+      try {
+        const imgH = 45; // 40-50px tall per spec; width follows the image's own aspect ratio (fit)
+        doc.image(approverSignaturePath, x, sigLineY - imgH + 8, { fit: [sigW, imgH], align: 'center', valign: 'bottom' });
+      } catch (e) {
+        // Corrupt/unreadable file on disk — print the form with no signature rather than fail the whole PDF.
+        console.error('❌ Document Request PDF signature image error:', e);
+      }
+    }
+
     let name = col.name || ' ';
     let nameSize = 10;
     doc.font('Helvetica-Bold');
     while (nameSize > 7 && doc.fontSize(nameSize).widthOfString(name) > sigW) nameSize -= 0.5;
     doc.fontSize(nameSize);
     while (name.length > 1 && doc.widthOfString(name) > sigW) name = name.slice(0, -2) + '…';
-    doc.text(name, x, sigTop + 34 + (10 - nameSize), { width: sigW, align: 'center', lineBreak: false });
 
     doc.moveTo(x, sigLineY).lineTo(x + sigW, sigLineY).stroke();
 
-    let dateY = sigTop + 54;
-    if (col.sub) {
-      doc.font('Helvetica').fontSize(7.5).text(col.sub, x, sigLineY + 3, { width: sigW, align: 'center' });
-      dateY = doc.y + 3;
+    if (hasSig) {
+      // With the signature image sitting on the line (above), the typed name moves below it, reading as
+      // the caption under a real signature rather than sitting on the line itself.
+      doc.text(name, x, sigLineY + 3, { width: sigW, align: 'center', lineBreak: false });
+      let cy = doc.y + 2;
+      if (col.sub) {
+        doc.font('Helvetica').fontSize(7.5).text(col.sub, x, cy, { width: sigW, align: 'center' });
+        cy = doc.y + 3;
+      }
+      doc.font('Helvetica').fontSize(8).text('DATE: ' + (col.date || ''), x, cy, { width: sigW, align: 'center' });
+    } else {
+      doc.text(name, x, sigTop + 34 + (10 - nameSize), { width: sigW, align: 'center', lineBreak: false });
+      let dateY = sigTop + 54;
+      if (col.sub) {
+        doc.font('Helvetica').fontSize(7.5).text(col.sub, x, sigLineY + 3, { width: sigW, align: 'center' });
+        dateY = doc.y + 3;
+      }
+      doc.font('Helvetica').fontSize(8).text('DATE: ' + (col.date || ''), x, dateY, { width: sigW, align: 'center' });
     }
-    doc.font('Helvetica').fontSize(8).text('DATE: ' + (col.date || ''), x, dateY, { width: sigW, align: 'center' });
   });
 
   // ── Footer ──

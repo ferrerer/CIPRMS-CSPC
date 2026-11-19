@@ -631,7 +631,15 @@
                             <option>Completed</option>
                             <option>Rejected</option>
                           </select>
-                          <span class="text-muted fs-12 ms-auto" id="dr-count"></span>
+                          <div class="ms-auto d-flex align-items-center gap-2">
+                            <!-- Document Requests tab only (this button lives inside #panel-dr); LAU never
+                                 reaches this tab at all (see IS_LAU below), so Administrator/Staff is the
+                                 only audience that ever sees it. -->
+                            <button type="button" class="btn btn-sm btn-soft-primary" id="dr-esign-btn" onclick="openEsignModal()">
+                              <i class="ri-quill-pen-line me-1"></i>Add E-Sign
+                            </button>
+                            <span class="text-muted fs-12" id="dr-count"></span>
+                          </div>
                         </div>
 
                         <div class="table-responsive">
@@ -1082,6 +1090,52 @@
         <div class="modal-footer">
           <span class="text-muted fs-12 me-auto" id="dr-select-existing-count"></span>
           <button type="button" class="btn btn-primary" data-bs-dismiss="modal">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Head of CIRL E-Signature Modal (2026-11) — Document Requests tab only, Administrator/Staff.
+       One organization-wide signature, never per-user: upload or draw, preview, Save, Replace, Remove.
+       Styled like this page's own dr-select-existing-modal/draft-preview-modal (modal fade zoomIn,
+       bg-light header, list-group-free simple body). -->
+  <div class="modal fade zoomIn" id="esign-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header bg-light p-3">
+          <h5 class="modal-title"><i class="ri-quill-pen-line me-2 text-primary"></i>Head of CIRL E-Signature</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="border rounded p-3 mb-3 text-center" id="esign-current-wrap">
+            <img id="esign-current-img" src="" alt="Current signature" style="max-height:70px;max-width:100%;display:none;">
+            <p class="text-muted fs-13 mb-0" id="esign-current-empty">No signature uploaded yet.</p>
+            <p class="text-muted fs-12 mb-0 mt-1" id="esign-current-meta"></p>
+          </div>
+
+          <ul class="nav nav-tabs nav-tabs-custom mb-3" role="tablist">
+            <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#esign-tab-upload">Upload</a></li>
+            <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#esign-tab-draw" onclick="esignInitCanvas()">Draw</a></li>
+          </ul>
+          <div class="tab-content">
+            <div class="tab-pane active" id="esign-tab-upload">
+              <input type="file" class="form-control form-control-sm" id="esign-file-input" accept=".png,.jpg,.jpeg,image/png,image/jpeg" onchange="esignPreviewFile()">
+              <div class="form-text">PNG or JPG, max 2MB. A transparent PNG is recommended.</div>
+              <img id="esign-upload-preview" src="" alt="" style="max-height:70px;max-width:100%;display:none;" class="mt-2">
+            </div>
+            <div class="tab-pane" id="esign-tab-draw">
+              <canvas id="esign-draw-canvas" width="460" height="140" style="border:1px solid #ced4da;border-radius:4px;width:100%;max-width:460px;touch-action:none;cursor:crosshair;background:#fff;"></canvas>
+              <div class="mt-2">
+                <button type="button" class="btn btn-sm btn-light" onclick="esignClearCanvas()">Clear</button>
+              </div>
+            </div>
+          </div>
+          <div class="text-danger fs-13 mt-2 d-none" id="esign-error"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-danger btn-sm" id="esign-remove-btn" onclick="esignRemove()">Remove</button>
+          <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Close</button>
+          <button type="button" class="btn btn-primary btn-sm" id="esign-save-btn" onclick="esignSave()">Save</button>
         </div>
       </div>
     </div>
@@ -2852,6 +2906,9 @@
            Document request ${verbLabel} for ${r.institution}.`,
           newStatus === 'Rejected' ? '#f06548' : '#0ab39c'
         );
+        if (res.data.noSignatureWarning) {
+          showToast('<i class="ri-alert-line me-1"></i>No Head of CIRL signature is on file yet — this form will print with a blank signature. Add one from "Add E-Sign".', '#f7b84b');
+        }
       } finally {
         drStatusInFlight.delete(id);
         renderDR();                     // re-enables the control and shows the real (new, or restored previous) status
@@ -2929,6 +2986,138 @@
         await submitDrStatusChange(id, newStatus); // unchanged: same PATCH, same audit/notification/history side effects as before
       } finally {
         modalInstance('dr-status-confirm-modal').hide();
+      }
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       HEAD OF CIRL E-SIGNATURE (2026-11) — one organization-wide asset,
+       uploaded or drawn from the Document Requests tab. GET/POST/DELETE
+       /api/settings/signature (requireStaffAccess server-side — Administrator
+       and Staff both manage it, matching IS_ADMIN's existing dual-role
+       meaning on this page). Applied to the printed form only once a request
+       is Completed — see drFormFields/renderDocumentRequestPdf in cirl.js.
+    ═══════════════════════════════════════════════════════ */
+    var esignDrawing = false, esignCanvasInit = false, esignHasStrokes = false;
+
+    async function openEsignModal() {
+      document.getElementById('esign-error').classList.add('d-none');
+      document.getElementById('esign-file-input').value = '';
+      document.getElementById('esign-upload-preview').style.display = 'none';
+      esignClearCanvas();
+      try {
+        const res = await CIPRMS.api('/api/settings/signature', { quiet: true });
+        const img = document.getElementById('esign-current-img');
+        const empty = document.getElementById('esign-current-empty');
+        const meta = document.getElementById('esign-current-meta');
+        if (res.ok && res.data.hasSignature) {
+          img.src = res.data.dataUri;
+          img.style.display = '';
+          empty.style.display = 'none';
+          const when = res.data.uploadedAt ? new Date(res.data.uploadedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+          meta.textContent = `Last updated by ${res.data.uploadedBy || '—'}${when ? ' on ' + when : ''}`;
+        } else {
+          img.style.display = 'none';
+          empty.style.display = '';
+          meta.textContent = '';
+        }
+      } catch (e) { /* modal still opens; the preview box just stays empty */ }
+      modalInstance('esign-modal').show();
+    }
+
+    function esignPreviewFile() {
+      const file = document.getElementById('esign-file-input').files[0];
+      const preview = document.getElementById('esign-upload-preview');
+      if (!file) { preview.style.display = 'none'; return; }
+      const reader = new FileReader();
+      reader.onload = (e) => { preview.src = e.target.result; preview.style.display = ''; };
+      reader.readAsDataURL(file);
+    }
+
+    function esignInitCanvas() {
+      if (esignCanvasInit) return;
+      esignCanvasInit = true;
+      const canvas = document.getElementById('esign-draw-canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#000';
+      function posFromEvent(e) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
+        return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+      }
+      canvas.addEventListener('pointerdown', (e) => {
+        esignDrawing = true;
+        const p = posFromEvent(e);
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!esignDrawing) return;
+        const p = posFromEvent(e);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        esignHasStrokes = true;
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => canvas.addEventListener(ev, () => { esignDrawing = false; }));
+    }
+
+    function esignClearCanvas() {
+      esignHasStrokes = false;
+      const canvas = document.getElementById('esign-draw-canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function esignActiveTab() {
+      return document.getElementById('esign-tab-draw').classList.contains('active') ? 'draw' : 'upload';
+    }
+
+    async function esignSave() {
+      const errBox = document.getElementById('esign-error');
+      errBox.classList.add('d-none');
+      const btn = document.getElementById('esign-save-btn');
+      const formData = new FormData();
+
+      if (esignActiveTab() === 'draw') {
+        if (!esignHasStrokes) { errBox.textContent = 'Draw a signature first.'; errBox.classList.remove('d-none'); return; }
+        const canvas = document.getElementById('esign-draw-canvas');
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+        formData.append('signature', blob, 'signature.png');
+      } else {
+        const file = document.getElementById('esign-file-input').files[0];
+        if (!file) { errBox.textContent = 'Choose a file first.'; errBox.classList.remove('d-none'); return; }
+        formData.append('signature', file);
+      }
+
+      btn.disabled = true;
+      const originalHtml = btn.innerHTML;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+      try {
+        const res = await CIPRMS.api('/api/settings/signature', { method: 'POST', body: formData, quiet: true });
+        if (!res.ok) { errBox.textContent = res.error || 'Upload failed.'; errBox.classList.remove('d-none'); return; }
+        showToast('<i class="ri-checkbox-circle-line me-1"></i>Signature saved.', '#0ab39c');
+        modalInstance('esign-modal').hide();
+      } catch (e) {
+        errBox.textContent = 'Upload failed. Please try again.';
+        errBox.classList.remove('d-none');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }
+
+    async function esignRemove() {
+      if (!confirm('Remove the Head of CIRL e-signature? Document Requests already Completed keep showing the signature they were completed with.')) return;
+      const btn = document.getElementById('esign-remove-btn');
+      btn.disabled = true;
+      try {
+        const res = await CIPRMS.api('/api/settings/signature', { method: 'DELETE', quiet: true });
+        if (!res.ok) { showToast('<i class="ri-error-warning-line me-1"></i>' + (res.error || 'Could not remove the signature.'), '#f06548'); return; }
+        showToast('<i class="ri-checkbox-circle-line me-1"></i>Signature removed.', '#0ab39c');
+        modalInstance('esign-modal').hide();
+      } finally {
+        btn.disabled = false;
       }
     }
 

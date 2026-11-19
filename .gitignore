@@ -64,3 +64,8 @@ uploads/avatars/*
 # uploaded to Google Drive in the background, local disk is only a transient fallback)
 uploads/achievements/*
 !uploads/achievements/.gitkeep
+
+# Head of CIRL e-signature uploads (runtime data, not source — see services/signatureService.js; every
+# replace/remove keeps older files on disk so an already-Completed form's snapshot keeps rendering)
+uploads/signatures/*
+!uploads/signatures/.gitkeep
