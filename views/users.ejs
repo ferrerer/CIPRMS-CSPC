@@ -591,6 +591,11 @@
             getModal().hide();
             renderUsers();
             showToast(`<i class="ri-checkbox-circle-fill me-1"></i>${name} added.`, '#0ab39c');
+            // The account exists either way (data.emailWarning is set by the server only when the
+            // welcome e-mail itself failed to send — it never blocks account creation).
+            if (data.emailWarning) {
+              setTimeout(() => showToast(`<i class="ri-mail-close-line me-1"></i>${data.emailWarning}`, '#f7b84b'), 2600);
+            }
           } else {
             showToast(`<i class="ri-error-warning-line me-1"></i>${data.error || 'Error adding user.'}`, '#f06548');
           }

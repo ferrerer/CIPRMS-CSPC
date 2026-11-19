@@ -477,7 +477,7 @@
                  something that was never actually implemented at all. %>
             <p class="text-muted fs-13 mb-3">Upload a MOA, MOU, Contract, Partnership Proposal, or Letter of Intent. The system extracts text and suggests values for the form below. Once you save the partnership, the file is archived to the <a href="<%= docLibraryHref %>" target="_blank" class="fw-medium text-decoration-underline">Document Library</a> too.</p>
             <div id="monitoring-ocr-dropzone-wrap" class="mb-3">
-              <input type="file" class="form-control" id="ocr-file-input" accept=".pdf,.jpg,.jpeg,.png">
+              <input type="file" class="form-control" id="ocr-file-input" accept=".pdf,.jpg,.jpeg,.png,.docx">
             </div>
             <div class="d-flex align-items-center gap-2 flex-wrap">
               <button type="button" class="btn btn-primary px-3 text-nowrap" id="ocr-extract-btn" onclick="startOcrExtraction()">
@@ -499,7 +499,6 @@
               <div class="d-flex flex-wrap gap-2 mb-2">
                 <span class="badge bg-success-subtle text-success" id="ocr-confidence-badge">Confidence: —</span>
                 <span class="badge bg-info-subtle text-info" id="ocr-doctype-badge">Document type: —</span>
-                <span class="badge bg-warning-subtle text-warning" id="ocr-warning-badge" style="display:none">Low confidence — verify carefully</span>
               </div>
 
               <div id="ocr-idp-panel" class="mb-2" style="display:none"></div>
@@ -1143,11 +1142,11 @@
       window._monitoringOcrDropzone = window.CIPRMS.initDropzone({
         container: '#monitoring-ocr-dropzone-wrap',
         input: '#ocr-file-input',
-        accept: '.pdf,.jpg,.jpeg,.png',
-        maxSize: 10 * 1024 * 1024,
+        acceptedExtensions: ['.pdf', '.jpg', '.jpeg', '.png', '.docx'],
+        maxSizeBytes: 10 * 1024 * 1024,
         compact: true,
         title: 'Upload Document',
-        desc: 'PDF, JPG, JPEG, or PNG · Max 10MB'
+        desc: 'PDF, JPG, PNG, or DOCX · Max 10MB'
       });
     }
   });

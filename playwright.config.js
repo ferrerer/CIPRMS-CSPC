@@ -8,8 +8,16 @@
 // mongodb:// database whose name ends in "_test", and db.js refuses it again on its own under NODE_ENV=test.
 // Specs still tag and clean up whatever they create, the same discipline test/helpers.js's cleanupAll()
 // enforces for the Jest suite.
+const path = require('path');
 const { defineConfig } = require('@playwright/test');
 const { resolveTestDatabaseUri } = require('./services/testDatabaseGuard');
+
+// Central guard (2026-11, production-exposure audit follow-up) — see test/guard-preload.js's own comment
+// for the full rationale. Appending to any NODE_OPTIONS already set (rather than overwriting) so this
+// still composes if something else in the environment also sets it. Set before Playwright spawns
+// anything below, so every worker and the webServer child both inherit it.
+const GUARD_PRELOAD = path.join(__dirname, 'test', 'guard-preload.js');
+process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS ? process.env.NODE_OPTIONS + ' ' : ''}--require ${GUARD_PRELOAD}`;
 
 const PORT = 3999;
 const TEST_MONGO_URI = resolveTestDatabaseUri(process.env);

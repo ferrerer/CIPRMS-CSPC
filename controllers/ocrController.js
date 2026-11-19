@@ -63,7 +63,7 @@ function status(req, res) {
 // institution) with the extracted fields, then permanently archives the file.
 // Only the session owner of the job may confirm it.
 async function confirm(req, res) {
-  const { jobId, title, institution, documentType, partnershipId } = req.body || {};
+  const { jobId, title, institution, documentType, partnershipId, requestId } = req.body || {};
   if (!jobId) {
     return res.status(400).json({ success: false, error: 'jobId is required.' });
   }
@@ -97,6 +97,16 @@ async function confirm(req, res) {
   const extraMeta = {};
   if (partnershipId != null && Number.isInteger(Number(partnershipId)) && Number(partnershipId) > 0) {
     extraMeta.partnershipId = Number(partnershipId);
+  }
+  // requestId (2026-11, Document Library duplicate cleanup): lets a caller editing an EXISTING
+  // Partnership Request draft (the request already has an id) tag this archive so re-confirming a
+  // re-uploaded/re-OCR'd document replaces the request's previous Document Library record instead of
+  // piling up a new one each time — see ocrService.confirmJob's replacePreviousRequestDocument call.
+  // A brand-new request (not yet created) has no id yet, so it's omitted and this confirm archives
+  // untagged; the create/submit route that follows retroactively tags it once the request itself exists.
+  if (requestId != null && Number.isInteger(Number(requestId)) && Number(requestId) > 0) {
+    extraMeta.requestId = Number(requestId);
+    extraMeta.requestType = 'partnership';
   }
 
   try {

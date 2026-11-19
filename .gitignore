@@ -5,6 +5,10 @@ Database_backup/
 .env
 .env.local
 .env.*.local
+# .env.development (local-only, no real secrets) and .env.production (real Atlas URI + secrets, 2026-11
+# environment split) — never committed, same as the plain .env above.
+.env.development
+.env.production
 
 # Dependencies
 node_modules/

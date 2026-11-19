@@ -331,7 +331,8 @@ describe('Admin/Staff-Initiated Partnership Requests to Partners', () => {
     const countIdx = res.text.indexOf('id="pr-count"');
     const btnIdx = res.text.indexOf('id="pr-initiate-btn"');
     const filterRowIdx = res.text.lastIndexOf('class="filter-row"', btnIdx);
-    const sectionTabsIdx = res.text.indexOf('class="section-tabs"');
+    // Tabs bar (2026-11: reports.ejs's nav-tabs-custom markup, replacing the old .section-tabs cards).
+    const sectionTabsIdx = res.text.indexOf('nav-tabs-custom');
     expect(btnIdx).toBeGreaterThan(countIdx);
     expect(filterRowIdx).toBeGreaterThan(sectionTabsIdx);
     // Bigger modal.

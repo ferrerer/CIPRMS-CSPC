@@ -12,6 +12,8 @@
 // E-mail is always best-effort: a missing configuration or a mail failure is logged and never blocks the request
 // action that triggered it. Under Jest nothing leaves the machine — messages are captured in `sentForTests`.
 const { Resend } = require('resend');
+const fs = require('fs');
+const path = require('path');
 
 const sentForTests = [];
 let resendClient = null;
@@ -23,6 +25,34 @@ function isConfigured() {
 function getClient() {
   if (!resendClient) resendClient = new Resend(process.env.RESEND_API_KEY);
   return resendClient;
+}
+
+// Safe dev default (2026-11): outside a real production run, e-mail is logged/saved instead of actually
+// sent, by default — a developer running the app locally (NODE_ENV unset/development) has real recipient
+// addresses in seeded/imported data and no reason to actually deliver mail to them. Set
+// MAIL_SEND_IN_DEV=true explicitly to opt back into real sending for a deliberate local test. Jest has its
+// own, separate, pre-existing capture path (sentForTests below) and is never affected by this flag.
+function devSendDisabled() {
+  return process.env.NODE_ENV !== 'production' && process.env.MAIL_SEND_IN_DEV !== 'true';
+}
+
+const MAIL_LOG_DIR = path.join(__dirname, '..', 'tmp', 'mail');
+
+// Dev-only transport: prints the recipient/subject/body to the console AND saves the full message
+// (including the HTML body) to tmp/mail/ as a plain text file, one per send. Never throws — a failure to
+// write the file still leaves the console log as a record, and either way this never blocks the request
+// that triggered it, same guarantee the real Resend path already gives callers.
+function logEmailInsteadOfSending(msg) {
+  console.log(`📧 [DEV MAIL — not sent; set MAIL_SEND_IN_DEV=true to send for real]\n  To: ${msg.to}\n  Subject: ${msg.subject}\n  ${msg.text.replace(/\n/g, '\n  ')}`);
+  try {
+    if (!fs.existsSync(MAIL_LOG_DIR)) fs.mkdirSync(MAIL_LOG_DIR, { recursive: true });
+    const safeTo = msg.to.replace(/[^a-z0-9@._-]/gi, '_');
+    const filePath = path.join(MAIL_LOG_DIR, `${Date.now()}-${safeTo}.txt`);
+    const contents = `To: ${msg.to}\nFrom: ${msg.from.name} <${msg.from.address}>\nSubject: ${msg.subject}\n\n${msg.text}\n\n--- HTML body ---\n${msg.html}\n`;
+    fs.writeFileSync(filePath, contents);
+  } catch (err) {
+    console.error('Dev mail transport: could not write to tmp/mail/ (console log above still has it):', err && err.message);
+  }
 }
 
 function baseUrl() {
@@ -69,7 +99,9 @@ async function sendNotificationEmails(emails, payload) {
   const targets = [...new Set((emails || []).map(e => String(e || '').trim().toLowerCase()).filter(e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)))];
   const result = { sent: [], failed: [], skipped: null };
   if (!targets.length) return result;
-  if (!isConfigured() && !process.env.JEST_WORKER_ID) {
+  // The dev log/file transport below never calls Resend at all, so a missing RESEND_API_KEY/MAIL_USER is
+  // never a reason to skip it — only the real-send path still requires real configuration.
+  if (!isConfigured() && !process.env.JEST_WORKER_ID && !devSendDisabled()) {
     result.skipped = 'not_configured';
     return result;
   }
@@ -78,6 +110,8 @@ async function sendNotificationEmails(emails, payload) {
     try {
       if (process.env.JEST_WORKER_ID) {
         sentForTests.push(msg);
+      } else if (devSendDisabled()) {
+        logEmailInsteadOfSending(msg);
       } else {
         // buildMessage()'s `from` stays a plain {name, address} object (unchanged shape — existing tests
         // read msg.to/subject/text/html directly) — only converted to Resend's "Name <address>" string here,

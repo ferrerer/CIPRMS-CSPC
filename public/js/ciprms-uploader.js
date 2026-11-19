@@ -36,6 +36,7 @@
     const ext = (filename || '').split('.').pop().toLowerCase();
     if (ext === 'pdf') return 'ri-file-pdf-line text-danger';
     if (['jpg', 'jpeg', 'png'].includes(ext)) return 'ri-image-line text-success';
+    if (ext === 'docx') return 'ri-file-word-2-line text-primary';
     return 'ri-file-text-line text-primary';
   }
 

@@ -78,20 +78,27 @@
       flex-shrink: 0;
     }
 
-    /* ── Section Switcher Cards ── */
-    .section-tabs {
-      display: flex;
-      gap: .75rem;
-      margin-bottom: 1.5rem;
-      flex-wrap: wrap;
-      align-items: flex-start;
-    }
-
     /* "Request Partnership" (2026-11, moved into the search/filter row 2026-11) sits next to the
        "N of N requests" count, shown only while the Partnership Requests tab is active (toggled in
        switchSection()); .filter-row already wraps on narrow viewports (see its own rule above). */
     #pr-initiate-btn {
       flex: 0 0 auto;
+    }
+
+    /* Tabs scroll horizontally on mobile instead of wrapping (2026-11) — nav-tabs-custom's underlying
+       .nav is a plain flex-wrap row, which on a narrow viewport would stack three tabs into a tall column
+       instead of the compact single-row bar the rest of this layout matches (reports.ejs's own 3 tabs
+       happen to fit without needing this, but this page's slightly longer labels don't). Scoped to this
+       page's own card-header-tabs only, not nav-tabs-custom generally. */
+    @media (max-width: 575.98px) {
+      .card-header-tabs.nav-tabs-custom {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .card-header-tabs.nav-tabs-custom .nav-item {
+        flex: 0 0 auto;
+      }
     }
 
     /* Target Partner searchable combobox (2026-11) — same visual pattern as the Country combobox used
@@ -110,150 +117,6 @@
     [data-bs-theme="dark"] .pri-partner-dropdown { background: #2a2f3c; border-color: #3a4053; box-shadow: 0 10px 28px rgba(0,0,0,.4); }
     [data-bs-theme="dark"] .pri-partner-option { color: #d3d5db; }
     [data-bs-theme="dark"] .pri-partner-option:hover, [data-bs-theme="dark"] .pri-partner-option.is-active { background: #363c4c; color: #a9bcf5; }
-
-    .section-tab {
-      flex: 1 1 200px;
-      min-width: 180px;
-      max-width: 300px;
-      padding: 1rem 1.2rem;
-      border-radius: 12px;
-      font-size: .84rem;
-      font-weight: 600;
-      cursor: pointer;
-      border: 2px solid #e9ecef;
-      transition: all .2s ease;
-      display: flex;
-      align-items: center;
-      gap: .75rem;
-      text-decoration: none;
-      color: #495057;
-      background: #fff;
-      box-shadow: 0 1px 4px rgba(0,0,0,.05);
-    }
-
-    .section-tab:hover {
-      border-color: #405189;
-      background: #f0f3ff;
-      color: #405189;
-      transform: translateY(-2px);
-      box-shadow: 0 4px 14px rgba(64,81,137,.12);
-    }
-
-    .section-tab.active {
-      border-color: #405189;
-      background: var(--vz-card-bg, #fff);
-      color: #405189;
-      box-shadow: 0 4px 14px rgba(64,81,137,.18);
-    }
-
-    .section-tab.active .tab-count {
-      background: #405189;
-      color: #fff;
-    }
-
-    .section-tab-icon {
-      width: 42px;
-      height: 42px;
-      border-radius: 10px;
-      background: rgba(255,255,255,.2);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.3rem;
-      flex-shrink: 0;
-      transition: background .2s;
-    }
-
-    .section-tab:not(.active) .section-tab-icon {
-      background: #eef1fb;
-      color: #405189;
-    }
-
-    .section-tab.active .section-tab-icon {
-      background: #405189;
-      color: #fff;
-    }
-
-    /* DR variant accent */
-    .section-tab[id="tab-dr"]:not(.active):hover {
-      border-color: #0ab39c;
-      background: #f0fdf4;
-      color: #0ab39c;
-    }
-    .section-tab[id="tab-dr"]:not(.active):hover .section-tab-icon {
-      background: #d1fae5;
-      color: #0ab39c;
-    }
-    .section-tab[id="tab-dr"].active {
-      background: var(--vz-card-bg, #fff);
-      color: #0ab39c;
-      border-color: #0ab39c;
-      box-shadow: 0 4px 14px rgba(10,179,156,.18);
-    }
-    .section-tab[id="tab-dr"].active .section-tab-icon,
-    .section-tab[id="tab-dr"].active .tab-count {
-      background: #0ab39c;
-      color: #fff;
-    }
-
-    .section-tab-body {
-      display: flex;
-      flex-direction: column;
-    }
-    .section-tab-title {
-      font-size: .88rem;
-      font-weight: 700;
-      line-height: 1.2;
-    }
-    .section-tab-desc {
-      font-size: .72rem;
-      font-weight: 400;
-      opacity: .75;
-      margin-top: 1px;
-    }
-    .section-tab .tab-count {
-      margin-left: auto;
-      background: rgba(255,255,255,.25);
-      border-radius: 20px;
-      padding: 2px 9px;
-      font-size: .75rem;
-      font-weight: 700;
-      flex-shrink: 0;
-    }
-    .section-tab:not(.active) .tab-count {
-      background: #e2e7f8;
-      color: #405189;
-    }
-    .section-tab[id="tab-dr"]:not(.active) .tab-count {
-      background: #d1fae5;
-      color: #0ab39c;
-    }
-
-    /* CDR (College Requests) variant accent */
-    .section-tab[id="tab-cdr"]:not(.active):hover {
-      border-color: #6f42c1;
-      background: #f5f0fc;
-      color: #6f42c1;
-    }
-    .section-tab[id="tab-cdr"]:not(.active):hover .section-tab-icon {
-      background: #e8d9f7;
-      color: #6f42c1;
-    }
-    .section-tab[id="tab-cdr"].active {
-      background: var(--vz-card-bg, #fff);
-      color: #6f42c1;
-      border-color: #6f42c1;
-      box-shadow: 0 4px 14px rgba(111,66,193,.18);
-    }
-    .section-tab[id="tab-cdr"].active .section-tab-icon,
-    .section-tab[id="tab-cdr"].active .tab-count {
-      background: #6f42c1;
-      color: #fff;
-    }
-    .section-tab[id="tab-cdr"]:not(.active) .tab-count {
-      background: #e8d9f7;
-      color: #6f42c1;
-    }
 
     /* ── Filter row ── */
     .filter-row {
@@ -354,49 +217,14 @@
     [data-bs-theme="dark"] .ribbon-rejected { --rb-bg: rgba(239, 68, 68, .15);  --rb-fg: #f87171; }
 
     /* ── Dark mode overrides ──────────────────────────────────────────────
-       This page's own light-only inline colors above (section tabs, detail
-       box/value) had no [data-bs-theme="dark"] counterpart, so they stayed
-       hardcoded light/white even with Dark Mode on. Values mirror the same
-       Velzon dark surface/text tones already used by ciprms-bridge.css's
-       dark-mode block (see assets/css/ciprms-bridge.css) for consistency. */
-    [data-bs-theme="dark"] .section-tab {
-      background: #1e2533;
-      color: #ced4da;
-      border-color: rgba(255, 255, 255, .12);
-    }
-    [data-bs-theme="dark"] .section-tab.active {
-      background: #1e2533;
-      color: #7094f5;
-      border-color: #405189;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-dr"].active {
-      color: #3bc2b0;
-      border-color: #0ab39c;
-    }
-    [data-bs-theme="dark"] .section-tab:hover {
-      background: #262d3d;
-      color: #7094f5;
-    }
-    [data-bs-theme="dark"] .section-tab:not(.active) .section-tab-icon {
-      background: rgba(112, 148, 245, .15);
-      color: #7094f5;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active):hover {
-      background: rgba(10, 179, 156, .12);
-      color: #3bc2b0;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active):hover .section-tab-icon {
-      background: rgba(10, 179, 156, .18);
-      color: #3bc2b0;
-    }
-    [data-bs-theme="dark"] .section-tab:not(.active) .tab-count {
-      background: rgba(112, 148, 245, .18);
-      color: #7094f5;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active) .tab-count {
-      background: rgba(10, 179, 156, .18);
-      color: #3bc2b0;
-    }
+       This page's own light-only inline colors above (detail box/value) had
+       no [data-bs-theme="dark"] counterpart, so they stayed hardcoded light/
+       white even with Dark Mode on. Values mirror the same Velzon dark
+       surface/text tones already used by ciprms-bridge.css's dark-mode block
+       (see assets/css/ciprms-bridge.css) for consistency. The tabs themselves
+       (2026-11, now the same nav-tabs-custom markup reports.ejs uses) need no
+       page-specific dark-mode rule here — that shared style already has its
+       own dark-mode handling, same as every other nav-tabs-custom page. */
     [data-bs-theme="dark"] .pr-hero {
       background: #1e2533;
       border-color: rgba(255, 255, 255, .12);
@@ -697,38 +525,37 @@
               <div class="row">
                 <div class="col-12">
                   <div class="card border-0 shadow-sm">
-                    <div class="card-header border-bottom bg-transparent pt-3 pb-0">
-                      <!-- Section switcher cards -->
-                      <div class="section-tabs">
-                        <a class="section-tab active" id="tab-pr" href="#" onclick="switchSection('pr');return false;">
-                          <div class="section-tab-icon"><i class="ri-building-4-line"></i></div>
-                          <div class="section-tab-body">
-                            <span class="section-tab-title">Partnership Requests/Submission</span>
-                          </div>
-                          <span class="tab-count" id="tab-cnt-pr">0</span>
-                        </a>
+                    <div class="card-header border-0">
+                      <!-- Section switcher (2026-11) — same nav-tabs-custom markup/classes as Reports &
+                           Analytics' own tabs (views/administrator/reports.ejs), reused as-is rather than
+                           styled separately. Counts keep the existing tab-cnt-* ids switchSection()/
+                           updateStats() already depend on; they're now a plain, light badge instead of the
+                           old per-tab-colored pill, to stay visually consistent with this simpler tab style. -->
+                      <ul class="nav nav-tabs-custom rounded card-header-tabs border-bottom-0" role="tablist">
+                        <li class="nav-item">
+                          <a class="nav-link active" id="tab-pr" href="#" onclick="switchSection('pr');return false;">
+                            <i class="ri-building-4-line me-1"></i> Partnership Requests
+                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-pr">0</span>
+                          </a>
+                        </li>
                         <% if (typeof user === 'undefined' || !user || user.role !== 'LAU') { %>
-                        <a class="section-tab" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
-                          <div class="section-tab-icon"><i class="ri-file-shield-2-line"></i></div>
-                          <div class="section-tab-body">
-                            <span class="section-tab-title">Document Requests</span>
-                            <span class="section-tab-desc">Official document processing</span>
-                          </div>
-                          <span class="tab-count" id="tab-cnt-dr">0</span>
-                        </a>
+                        <li class="nav-item">
+                          <a class="nav-link" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
+                            <i class="ri-file-shield-2-line me-1"></i> Document Requests
+                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-dr">0</span>
+                          </a>
+                        </li>
                         <!-- College Requests (2026-11) — MOA/MOU/Accreditation requests Administrator/Staff assign to a
                              specific College Dean. Same requireAdmin/requireStaffAccess-gated audience as Document
                              Requests above, so it shares that tab's LAU exclusion rather than needing its own. -->
-                        <a class="section-tab" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
-                          <div class="section-tab-icon"><i class="ri-award-line"></i></div>
-                          <div class="section-tab-body">
-                            <span class="section-tab-title">College Requests</span>
-                            <span class="section-tab-desc">MOA / MOU / Accreditation</span>
-                          </div>
-                          <span class="tab-count" id="tab-cnt-cdr">0</span>
-                        </a>
+                        <li class="nav-item">
+                          <a class="nav-link" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
+                            <i class="ri-award-line me-1"></i> College Requests
+                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-cdr">0</span>
+                          </a>
+                        </li>
                         <% } %>
-                      </div>
+                      </ul>
                     </div>
 
                     <div class="card-body pt-3">
@@ -928,7 +755,7 @@
             <div class="mb-3">
               <label class="form-label ocr-field-label fs-13 mb-1" for="pr-draft-file">Attachment (Optional)</label>
               <div id="pr-draft-dropzone-wrap">
-                <input type="file" class="form-control" id="pr-draft-file" accept=".pdf,.jpg,.jpeg,.png">
+                <input type="file" class="form-control" id="pr-draft-file" accept=".pdf,.jpg,.jpeg,.png,.docx">
               </div>
             </div>
             <div class="mb-3">
@@ -938,7 +765,7 @@
             <button type="button" class="btn btn-primary px-3 fs-13" id="pr-draft-upload-btn" onclick="uploadDraftDocument()">
               <i class="ri-upload-2-line me-1"></i>Upload Version
             </button>
-            <p class="text-muted fs-12 mt-2 mb-0">A file, a note, or both — at least one is required. A file (PDF, JPG, or PNG, max 10MB) is archived to the Document Library; collaborators are notified automatically.</p>
+            <p class="text-muted fs-12 mt-2 mb-0">A file, a note, or both — at least one is required. A file (PDF, JPG, PNG, or DOCX, max 10MB) is archived to the Document Library; collaborators are notified automatically.</p>
           </div>
           <div id="pr-draft-closed-note" class="alert alert-secondary fs-13 mb-0" style="display:none;">
             <i class="ri-lock-line me-1"></i>This request has already been decided — no further documents can be added.
@@ -955,7 +782,7 @@
             <div id="pr-lau-review-form" style="display:none;">
               <div class="mb-3">
                 <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-file">Revised Document (Optional)</label>
-                <input type="file" class="form-control" id="pr-lau-file" accept=".pdf,.jpg,.jpeg,.png">
+                <input type="file" class="form-control" id="pr-lau-file" accept=".pdf,.jpg,.jpeg,.png,.docx">
               </div>
               <div class="mb-3">
                 <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-note">Notes (Optional)</label>
@@ -1085,7 +912,7 @@
             <div class="mb-3">
               <label class="form-label ocr-field-label fs-13 mb-1" for="dr-draft-file">Attachment (Optional)</label>
               <div id="dr-draft-dropzone-wrap">
-                <input type="file" class="form-control" id="dr-draft-file" accept=".pdf,.jpg,.jpeg,.png">
+                <input type="file" class="form-control" id="dr-draft-file" accept=".pdf,.jpg,.jpeg,.png,.docx">
               </div>
             </div>
             <div class="text-center my-2 fs-12 text-muted">— or —</div>
@@ -1105,7 +932,7 @@
             <button type="button" class="btn btn-primary px-3 fs-13" id="dr-draft-upload-btn" onclick="uploadDRDraftDocument()">
               <i class="ri-upload-2-line me-1"></i>Upload Version
             </button>
-            <p class="text-muted fs-12 mt-2 mb-0">A file, a linked existing document, a note, or any combination — at least one is required. A new file (PDF, JPG, or PNG, max 10MB) is archived to the Document Library; collaborators are notified automatically.</p>
+            <p class="text-muted fs-12 mt-2 mb-0">A file, a linked existing document, a note, or any combination — at least one is required. A new file (PDF, JPG, PNG, or DOCX, max 10MB) is archived to the Document Library; collaborators are notified automatically.</p>
           </div>
           <div id="dr-draft-closed-note" class="alert alert-secondary fs-13 mb-0" style="display:none;">
             <i class="ri-lock-line me-1"></i>This document request has already been decided — no further documents can be added.
@@ -1145,9 +972,9 @@
           <div class="card border border-primary-subtle mb-4">
             <div class="card-body">
               <h6 class="mb-2"><i class="ri-scan-2-line text-primary me-1"></i>Auto-fill from Document (OCR) — Optional</h6>
-              <p class="text-muted fs-13 mb-3">Upload a draft MOA/MOU or Accreditation document (PDF, JPG, or PNG — max 10MB). The system extracts text and suggests values below, and the file itself becomes this request's supporting document attachment.</p>
+              <p class="text-muted fs-13 mb-3">Upload a draft MOA/MOU or Accreditation document (PDF, JPG, PNG, or DOCX — max 10MB). The system extracts text and suggests values below, and the file itself becomes this request's supporting document attachment.</p>
               <div id="pri-ocr-dropzone-wrap" class="mb-3">
-                <input type="file" class="form-control" id="pri-ocr-file-input" accept=".pdf,.jpg,.jpeg,.png">
+                <input type="file" class="form-control" id="pri-ocr-file-input" accept=".pdf,.jpg,.jpeg,.png,.docx">
               </div>
               <div class="d-flex align-items-center gap-2 flex-wrap">
                 <button type="button" class="btn btn-primary text-nowrap" onclick="priStartOcrExtraction()"><i class="ri-magic-line me-1"></i>Extract & Attach</button>
@@ -3408,7 +3235,7 @@
                   (r.reviewRemark && r.status === 'Returned for Revision' ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
                   '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(from you)</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.') +
                   '<div class="input-group input-group-sm mb-3">' +
-                      '<input type="file" class="form-control" id="cdr-ref-file">' +
+                      '<input type="file" class="form-control" id="cdr-ref-file" accept=".pdf,.jpg,.jpeg,.png,.docx">' +
                       '<button class="btn btn-outline-secondary" type="button" onclick="cdrAddReference(' + r.id + ')">Attach</button>' +
                   '</div>' +
                   '<p class="mb-1"><strong>Submitted Documents</strong> <span class="text-muted">(from the Dean)</span></p>' + cdrDocListHtml(r.submittedDocuments, 'Nothing submitted yet.') +
@@ -3556,26 +3383,28 @@
         window.prDraftDropzone = CIPRMS.initDropzone({
           container: '#pr-draft-dropzone-wrap',
           input: '#pr-draft-file',
+          acceptedExtensions: ['.pdf', '.jpg', '.jpeg', '.png', '.docx'],
           compact: true,
           title: 'Upload Document',
-          desc: 'PDF, JPG, JPEG, or PNG · Max 10MB'
+          desc: 'PDF, JPG, PNG, or DOCX · Max 10MB'
         });
         window.drDraftDropzone = CIPRMS.initDropzone({
           container: '#dr-draft-dropzone-wrap',
           input: '#dr-draft-file',
+          acceptedExtensions: ['.pdf', '.jpg', '.jpeg', '.png', '.docx'],
           compact: true,
           title: 'Upload Document',
-          desc: 'PDF, JPG, JPEG, or PNG · Max 10MB'
+          desc: 'PDF, JPG, PNG, or DOCX · Max 10MB'
         });
         if (document.getElementById('pri-ocr-dropzone-wrap')) {
           window._priOcrDropzone = CIPRMS.initDropzone({
             container: '#pri-ocr-dropzone-wrap',
             input: '#pri-ocr-file-input',
-            accept: '.pdf,.jpg,.jpeg,.png',
-            maxSize: 10 * 1024 * 1024,
+            acceptedExtensions: ['.pdf', '.jpg', '.jpeg', '.png', '.docx'],
+            maxSizeBytes: 10 * 1024 * 1024,
             compact: true,
             title: 'Upload Supporting Document',
-            desc: 'PDF, JPG, JPEG, or PNG · Max 10MB'
+            desc: 'PDF, JPG, PNG, or DOCX · Max 10MB'
           });
         }
       }

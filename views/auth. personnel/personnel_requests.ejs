@@ -440,8 +440,8 @@
                                         </div>
                                         <div class="col-12">
                                             <label class="form-label" for="cr-file">Approved (signed) copy <span class="text-danger">*</span></label>
-                                            <input type="file" class="form-control" id="cr-file" accept=".pdf,.jpg,.jpeg,.png">
-                                            <div class="form-text">PDF, JPG or PNG — max 10MB.</div>
+                                            <input type="file" class="form-control" id="cr-file" accept=".pdf,.jpg,.jpeg,.png,.docx">
+                                            <div class="form-text">PDF, JPG, PNG, or DOCX — max 10MB.</div>
                                         </div>
                                         <div class="col-12">
                                             <label class="form-label" for="cr-notes">Notes for CIRL</label>
@@ -888,6 +888,10 @@
     var CDR_MAX_FILES = 10;
     var CDR_MAX_FILE_BYTES = 10 * 1024 * 1024;
     var cdrPendingFiles = [];
+    // Set at the top of cdrOpenDetail()'s success handler — lets cdrDownloadReference() below look up a
+    // reference document's fileLink/originalFilename by id without re-fetching or threading them through
+    // an onclick attribute (which would need careful escaping for any filename containing a quote).
+    var cdrCurrentDetail = null;
 
     function cdrFmtFileSize(bytes) {
         if (bytes < 1024) return bytes + ' B';
@@ -930,7 +934,7 @@
         var errors = [];
         picked.forEach(function (f) {
             var ext = '.' + (f.name.split('.').pop() || '').toLowerCase();
-            if (!['.pdf', '.jpg', '.jpeg', '.png'].includes(ext)) { errors.push('"' + f.name + '": unsupported file type.'); return; }
+            if (!['.pdf', '.jpg', '.jpeg', '.png', '.docx'].includes(ext)) { errors.push('"' + f.name + '": unsupported file type.'); return; }
             if (f.size > CDR_MAX_FILE_BYTES) { errors.push('"' + f.name + '": too large (max 10MB).'); return; }
             if (cdrPendingFiles.length >= CDR_MAX_FILES) { errors.push('"' + f.name + '": skipped — maximum ' + CDR_MAX_FILES + ' files per submission.'); return; }
             if (cdrPendingFiles.some(function (x) { return x.name === f.name && x.size === f.size; })) return; // already selected
@@ -941,22 +945,98 @@
         e.target.value = ''; // lets the same filename be re-picked later if removed first
     }
 
-    function cdrDocListHtml(docs, emptyLabel) {
+    // oneTimeDownload (2026-11): only Reference Documents (uploaded FOR the Dean by Staff/Administrator)
+    // are limited to one download — Your Submissions (the Dean's own uploads) are never gated, so this is
+    // an explicit opt-in per call rather than a property of the document itself. requestId is the
+    // college request's own id, needed by the Download button's onclick to call cdrDownloadReference();
+    // only passed (truthy) when oneTimeDownload is true.
+    function cdrDocListHtml(docs, emptyLabel, oneTimeDownload, requestId) {
         if (!docs || !docs.length) return '<p class="text-muted mb-0">' + emptyLabel + '</p>';
         return docs.map(function (d) {
             var label = d.originalFilename || (d.note ? 'Note only' : 'Attachment');
+            var downloadControl = '';
+            if (d.fileLink) {
+                if (oneTimeDownload && d.youAlreadyDownloaded) {
+                    downloadControl = '<button class="btn btn-sm btn-soft-secondary" disabled><i class="ri-checkbox-circle-line me-1"></i>Downloaded on ' + cdrFmtDate(d.yourDownloadedAt) + '</button>';
+                } else if (oneTimeDownload) {
+                    // No inline preview at all for a Reference Document — a plain <a href target="_blank">
+                    // lets the browser open/preview a PDF on its own with no token and no way to tell
+                    // whether that counted as the one try. This button instead requests a one-time token
+                    // first (cdrDownloadReference), so only an explicit click can ever start a download.
+                    downloadControl = '<button class="btn btn-sm btn-soft-secondary" onclick="cdrDownloadReference(this, ' + requestId + ', ' + d.documentId + ')"><i class="ri-download-2-line me-1"></i>Download</button>';
+                } else {
+                    downloadControl = '<a class="btn btn-sm btn-soft-secondary" href="' + d.fileLink + '" target="_blank"><i class="ri-download-2-line"></i></a>';
+                }
+            }
             return '<div class="d-flex align-items-center justify-content-between border rounded p-2 mb-2">' +
                 '<div><i class="ri-file-line me-1"></i>' + escapeHtml(label) +
-                (d.note ? '<div class="text-muted small">' + escapeHtml(d.note) + '</div>' : '') + '</div>' +
-                (d.fileLink ? '<a class="btn btn-sm btn-soft-secondary" href="' + d.fileLink + '" target="_blank"><i class="ri-download-2-line"></i></a>' : '') +
+                (d.note ? '<div class="text-muted small">' + escapeHtml(d.note) + '</div>' : '') +
+                (oneTimeDownload && d.fileLink ? '<div class="text-muted small">Can be downloaded once. Contact CIRL for another copy.</div>' : '') +
+                '</div>' + downloadControl +
                 '</div>';
         }).join('');
+    }
+
+    // Download button click handler for a Reference Document (2026-11 reliability follow-up). Requests a
+    // short-lived, single-use token first (POST .../download-token) — this is the ONLY way a token is
+    // ever obtained, so a bare file URL with no token (a prefetch, a retried/cached link, a second tab)
+    // can never get anywhere. Fetches the file as a blob rather than navigating to it directly so this
+    // function actually knows whether the transfer completed before updating the button to "Downloaded
+    // on…" — a navigation (location.href = url) would give no such signal.
+    //
+    // On success the button is updated DIRECTLY (btn.outerHTML) rather than by re-fetching the request
+    // detail from the server: recording the download server-side (cirl.js's recordDeanDownload) is
+    // deliberately fire-and-forget so it never delays the response the browser just finished receiving —
+    // a re-fetch issued immediately after could race that write and still see "not yet downloaded". The
+    // browser already knows, with certainty, that ITS OWN download just completed; no server round trip
+    // is needed to tell it that again.
+    function cdrDownloadReference(btn, requestId, documentId) {
+        var doc = cdrCurrentDetail && (cdrCurrentDetail.referenceDocuments || []).find(function (d) { return d.documentId === documentId; });
+        if (!doc || !doc.fileLink) { showToast('<i class="ri-error-warning-line me-2"></i> This document is no longer available.', '#f06548'); return; }
+
+        btn.disabled = true;
+        fetch('/api/college-requests/' + requestId + '/reference-documents/' + documentId + '/download-token', {
+            method: 'POST', headers: { 'X-Requested-With': 'ciprms' }
+        })
+            .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+            .then(function (res) {
+                if (!res.ok || !res.body.success) {
+                    btn.disabled = false;
+                    showToast('<i class="ri-error-warning-line me-2"></i> ' + (res.body.error || 'Unable to start the download.'), '#f06548');
+                    return;
+                }
+                return fetch(doc.fileLink + '?token=' + encodeURIComponent(res.body.token), { headers: { 'X-Requested-With': 'ciprms' } })
+                    .then(function (fileRes) {
+                        if (!fileRes.ok) throw new Error('download failed');
+                        return fileRes.blob();
+                    })
+                    .then(function (blob) {
+                        var url = URL.createObjectURL(blob);
+                        var a = document.createElement('a');
+                        a.href = url;
+                        a.download = doc.originalFilename || 'document';
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        URL.revokeObjectURL(url);
+                        var now = new Date().toISOString();
+                        doc.youAlreadyDownloaded = true;
+                        doc.yourDownloadedAt = now;
+                        btn.outerHTML = '<button class="btn btn-sm btn-soft-secondary" disabled><i class="ri-checkbox-circle-line me-1"></i>Downloaded on ' + cdrFmtDate(now) + '</button>';
+                        showToast('<i class="ri-checkbox-circle-line me-2"></i> Downloaded.', '#0ab39c');
+                    });
+            })
+            .catch(function () {
+                btn.disabled = false;
+                showToast('<i class="ri-error-warning-line me-2"></i> The download did not complete. You can try again.', '#f06548');
+            });
     }
 
     function cdrOpenDetail(id) {
         fetch('/api/college-requests/' + id, { headers: { 'X-Requested-With': 'ciprms' } })
             .then(function (r) { return r.json(); })
             .then(function (r) {
+                cdrCurrentDetail = r;
                 var canSubmit = r.status === 'Pending' || r.status === 'Returned for Revision';
                 var required = (r.requiredDocuments || []).map(function (d) { return '<span class="cdr-doc-chip">' + escapeHtml(d) + '</span>'; }).join('') || '<span class="text-muted">None specified</span>';
                 document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>' + escapeHtml(r.title);
@@ -971,12 +1051,12 @@
                     '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +
                     (r.status === 'Returned for Revision' && r.reviewRemark ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
                     (r.status === 'Completed' ? '<div class="alert alert-success"><i class="ri-checkbox-circle-line me-1"></i> This request has been accepted.</div>' : '') +
-                    '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(provided by ' + escapeHtml(r.createdBy) + ')</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents were attached.') +
-                    '<p class="mb-1 mt-3"><strong>Your Submissions</strong></p>' + cdrDocListHtml(r.submittedDocuments, 'You have not submitted anything yet.') +
+                    '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(provided by ' + escapeHtml(r.createdBy) + ')</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents were attached.', true, r.id) +
+                    '<p class="mb-1 mt-3"><strong>Your Submissions</strong></p>' + cdrDocListHtml(r.submittedDocuments, 'You have not submitted anything yet.', false) +
                     (canSubmit ? (
                         '<div class="border rounded p-3 mt-3 bg-light-subtle">' +
                         '<p class="mb-2"><strong>' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + ' Documents</strong></p>' +
-                        '<input type="file" id="cdr-sub-file" class="d-none" accept=".pdf,.jpg,.jpeg,.png" multiple>' +
+                        '<input type="file" id="cdr-sub-file" class="d-none" accept=".pdf,.jpg,.jpeg,.png,.docx" multiple>' +
                         '<button type="button" class="btn btn-sm btn-soft-primary mb-2" id="cdr-sub-pick-btn"><i class="ri-attachment-2 me-1"></i>Select Files</button>' +
                         '<div id="cdr-sub-file-list"></div>' +
                         '<div class="fs-12 text-muted mb-2" id="cdr-sub-file-count"></div>' +
@@ -1106,7 +1186,7 @@
         if (!country) return bad('cr-country', 'Please select a country from the list.');
         if (new Date(v('cr-end')) <= new Date(v('cr-start'))) return bad('cr-end', 'The expiry date must be after the effective date.');
         if (file.size > CR_MAX_BYTES) return bad('cr-file', 'That file is too large. The maximum size is 10MB.');
-        if (!/\.(pdf|jpe?g|png)$/i.test(file.name)) return bad('cr-file', 'Only PDF, JPG or PNG files are accepted.');
+        if (!/\.(pdf|jpe?g|png|docx)$/i.test(file.name)) return bad('cr-file', 'Only PDF, JPG, PNG, or DOCX files are accepted.');
 
         var btn = document.getElementById('cr-submit-btn');
         var orig = btn.innerHTML;

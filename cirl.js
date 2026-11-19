@@ -21,8 +21,9 @@ const ExcelJS = require('exceljs');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const { connectDB, getDb, insertWithNextId, insertManyWithNextId, isConnected: isDbConnected, getClientPromise } = require('./db');
 const ocrRoutes = require('./routes/ocrRoutes');
-const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary, EXT_MIME_TYPES } = require('./services/documentLibraryService');
+const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary, supersedePreviousRequestDocuments, EXT_MIME_TYPES } = require('./services/documentLibraryService');
 const documentStorageService = require('./services/documentStorageService');
+const downloadTokenService = require('./services/downloadTokenService');
 const pdfTableHelper = require('./services/pdfTableHelper');
 const excelFormatHelper = require('./services/excelFormatHelper');
 const statusColors = require('./assets/js/shared/status-colors.js');
@@ -2105,6 +2106,18 @@ app.post('/api/requests', requireRequesterOrInstitutionInitiator, denyCollegeSta
           type: entry.type, submittedBy: entry.requestedBy, submittedByEmail: entry.submittedByEmail
         });
       }
+      // Document Library duplicate cleanup (2026-11): an OCR-confirmed attachment on a brand-new request
+      // was archived before this request existed (see POST /api/ocr/confirm), so it has no
+      // requestId/requestType yet — tag it now that the request has an id, so a later re-upload via
+      // POST /api/requests/:id/documents can find it and mark it superseded
+      // (supersedePreviousRequestDocuments) instead of silently leaving it behind as an untagged
+      // duplicate.
+      if (entry.attachmentLink) {
+        await db.collection('documents').updateOne(
+          { fileLink: entry.attachmentLink, requestId: { $exists: false } },
+          { $set: { requestId: entry.id, requestType: 'partnership' } }
+        );
+      }
     }
 
     res.json({ success: true, request: entry });
@@ -2152,6 +2165,22 @@ app.patch('/api/requests/:id/edit', requireRequester, denyCollegeStaffPartnershi
     }
     const fixedUnit = partnerRequestUnit(req.session.user, target);
     if (fixedUnit) patch.unit = fixedUnit;
+    // Document Library duplicate cleanup (2026-11, revised): editing a draft to attach a DIFFERENT
+    // OCR-confirmed file (re-upload/re-extract) must not leave the draft's previous Document Library
+    // entry visible alongside the new one — mark it superseded (never deleted, so its link in the
+    // request's own history timeline keeps working), tag the new file so later edits/re-uploads can find
+    // it in turn. A patch that doesn't touch attachmentLink, or re-sends the same link, changes nothing
+    // here. Looks the new document up by fileLink first (rather than assuming it's untagged) since OCR
+    // confirm may have already tagged it with this same requestId itself.
+    if (patch.attachmentLink && patch.attachmentLink !== target.attachmentLink) {
+      const newDoc = await db.collection('documents').findOne({ fileLink: patch.attachmentLink });
+      if (newDoc) {
+        if (newDoc.requestId == null) {
+          await db.collection('documents').updateOne({ id: newDoc.id }, { $set: { requestId: id, requestType: 'partnership' } });
+        }
+        await supersedePreviousRequestDocuments(db, id, 'partnership', newDoc.id);
+      }
+    }
     await db.collection('requests').updateOne({ id }, { $set: patch });
     const updated = await db.collection('requests').findOne({ id });
     res.json({ success: true, request: scopeLauReviewsForViewer(updated, req.session.user) });
@@ -2330,6 +2359,19 @@ app.patch('/api/requests/:id', requireStaffAccess, announce('request'), async (r
     await logActivity(db, req.session.user, action,
       `Partnership request ${status.toLowerCase()}: ${updated.inst || updated.institution || 'ID #' + id} (${updated.type || ''})`);
 
+    // Document Library duplicate cleanup (2026-11): mark this request's CURRENT library entry (if it has
+    // one — not every request has an attachment) as final now that it's been decided, so it reads as
+    // the approved MOA/MOU rather than just another in-review draft version. superseded: { $ne: true }
+    // targets only the current version — with marking-superseded (not deletion) now in place, older
+    // versions of this same request can also match {requestId, requestType} and updateOne would
+    // otherwise update whichever one Mongo happens to find first.
+    if (status === 'Approved') {
+      await db.collection('documents').updateOne(
+        { requestId: id, requestType: 'partnership', superseded: { $ne: true } },
+        { $set: { final: true, approvedAt: new Date().toISOString() } }
+      );
+    }
+
     // Approving a renewal request doesn't just flip its own status — it actually
     // extends the linked partnership record (new expiry + recomputed status).
     if (status === 'Approved' && updated.isRenewal && updated.renewalPartnershipId) {
@@ -2478,6 +2520,12 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
       // record for something that was never uploaded.
       let documentId = null, fileLink = null;
       if (req.file) {
+        // Document Library duplicate cleanup (2026-11, revised): keep exactly one CURRENT library entry
+        // for this request — every new version (draft re-upload, MOA/MOU submission, College Report)
+        // marks the previous one superseded instead of deleting it (never deleted, so its link in the
+        // supportingDocuments timeline below keeps working — only superseded entries are hidden from
+        // Document Library browsing). Called AFTER archiving so the new document's own id is the one
+        // passed as "current", never the one that gets marked superseded by its own call.
         ({ documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
           documentType: target.isSubmission ? 'MOA/MOU Submission' : expandDocTypeLabel(target.type),
           institution: target.institution,
@@ -2491,6 +2539,7 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
           requestId: id,
           requestType: 'partnership'
         }));
+        await supersedePreviousRequestDocuments(db, id, 'partnership', documentId);
       }
 
       const docRecord = {
@@ -3484,6 +3533,72 @@ app.post('/api/college-requests/:id/reference-documents', requireStaffAccess, an
   });
 });
 
+// One-time download reset (2026-11, Document Requests one-time-download feature): clears every recorded
+// download on this reference document, so an assigned Dean who already used their one try (GET
+// /uploads/documents/:filename above) can download it again. Staff/Administrator only, same as the
+// upload route above; logged so there's a record of who re-opened the limit and when, same convention
+// as every other EDIT activity on this request.
+app.patch('/api/college-requests/:id/reference-documents/:documentId/reset-download', requireStaffAccess, announce('collegeRequest'), async (req, res) => {
+  const id = parseInt(req.params.id);
+  const documentId = parseInt(req.params.documentId);
+  try {
+    const db = getDb();
+    const target = await db.collection('collegedeanrequests').findOne({ id });
+    if (!target) return res.status(404).json({ error: 'College request not found.' });
+    const refDoc = (target.referenceDocuments || []).find((r) => r.documentId === documentId);
+    if (!refDoc) return res.status(404).json({ error: 'Reference document not found on this request.' });
+
+    await db.collection('collegedeanrequests').updateOne(
+      { id, 'referenceDocuments.documentId': documentId },
+      { $set: { 'referenceDocuments.$.downloads': [] } }
+    );
+    const updated = await db.collection('collegedeanrequests').findOne({ id });
+    await logActivity(db, req.session.user, 'EDIT',
+      `Reset Dean download limit for reference document on college request: ${target.title} (${refDoc.originalFilename || 'document'})`);
+    res.json({ success: true, request: updated });
+  } catch (err) {
+    console.error('❌ College request download reset error:', err);
+    res.status(500).json({ error: 'Unable to reset the download right now. Please try again.' });
+  }
+});
+
+// One-time download token (2026-11, reliability follow-up): the Dean's Download button calls this FIRST
+// to obtain a short-lived (5-minute), single-use token — the actual file URL (GET
+// /uploads/documents/:filename) then requires it (downloadTokenService.peekToken). A bare link sitting in
+// the page can be retried, prefetched, or opened in a background tab with no real user action at all;
+// requiring a token minted by an explicit POST here — never embedded as a static attribute anywhere in
+// the page — means none of that can ever claim the Dean's one try, only a real button click can mint one
+// in the first place. Re-checks every condition the file-serving route itself checks (already
+// downloaded, assigned Dean, reference document exists) so a Dean who has already used their try, or
+// isn't assigned to this request, is told so immediately instead of only failing once they attempt the
+// actual download.
+app.post('/api/college-requests/:id/reference-documents/:documentId/download-token', requireAuth, async (req, res) => {
+  if (req.session.user.role !== 'Auth. Personnel') {
+    return res.status(403).json({ error: 'Only the assigned Dean needs a download token.' });
+  }
+  const id = parseInt(req.params.id);
+  const documentId = parseInt(req.params.documentId);
+  try {
+    const db = getDb();
+    const target = await db.collection('collegedeanrequests').findOne({ id });
+    if (!target) return res.status(404).json({ error: 'College request not found.' });
+    if (!isAssignedDean(target, req.session.user.email)) {
+      return res.status(403).json({ error: 'You are not assigned to this request.' });
+    }
+    const refDoc = (target.referenceDocuments || []).find((r) => r.documentId === documentId);
+    if (!refDoc) return res.status(404).json({ error: 'Reference document not found on this request.' });
+    const email = req.session.user.email;
+    if ((refDoc.downloads || []).some((d) => d.email === email)) {
+      return res.status(403).json({ error: 'This document has already been downloaded. Contact CIRL for another copy.' });
+    }
+    const token = downloadTokenService.issueToken({ email, documentId, requestId: id });
+    res.json({ success: true, token });
+  } catch (err) {
+    console.error('❌ College request download-token error:', err);
+    res.status(500).json({ error: 'Unable to start the download right now. Please try again.' });
+  }
+});
+
 // List — Administrator/Staff see every request (their monitoring queue); the assigned Dean sees only their
 // own. No other role has any business here at all (unlike Document Requests, this isn't requester-initiated).
 app.get('/api/college-requests', requireAuth, async (req, res) => {
@@ -3517,6 +3632,20 @@ app.get('/api/college-requests', requireAuth, async (req, res) => {
   }
 });
 
+// College Dean one-time download (2026-11): a Dean viewer gets their OWN download state folded into each
+// reference document (youAlreadyDownloaded/yourDownloadedAt) — the UI button needs this to know whether to
+// render "Download" or "Downloaded on <date>" (disabled) without the client ever seeing another Dean's own
+// downloads array directly. Administrator/Staff get the raw `downloads` array unchanged, since they are
+// unlimited and need to see every assigned Dean's download history, not just one.
+function withDeanDownloadState(target, user) {
+  if (!target || !user || user.role !== 'Auth. Personnel') return target;
+  const referenceDocuments = (target.referenceDocuments || []).map((d) => {
+    const mine = (d.downloads || []).find((dl) => dl.email === user.email);
+    return { ...d, youAlreadyDownloaded: !!mine, yourDownloadedAt: mine ? mine.downloadedAt : null };
+  });
+  return { ...target, referenceDocuments };
+}
+
 app.get('/api/college-requests/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id);
   try {
@@ -3526,7 +3655,7 @@ app.get('/api/college-requests/:id', requireAuth, async (req, res) => {
     if (!canAccessCollegeRequest(req.session.user, target)) {
       return res.status(403).json({ error: 'You are not authorized to view this college request.' });
     }
-    res.json(target);
+    res.json(withDeanDownloadState(target, req.session.user));
   } catch (err) {
     console.error('❌ College request detail error:', err);
     res.status(500).json({ error: 'Unable to load the college request right now. Please try again.' });
@@ -3739,7 +3868,12 @@ app.patch('/api/college-requests/:id', requireStaffAccess, announce('collegeRequ
 // Personnel; see docs/SYSTEM_AUDIT_2026-07-16.md for the full rationale,
 // including that system-wide lifecycle alerts, which carry no targetEmail,
 // are no longer visible to anyone via this route as a result.)
-const OWN_SCOPE_ROLES = ['Administrator', 'Auth. Personnel', 'potential_partner', 'Staff'];
+// Shared Document Library (2026-11): Administrator and Staff (REQUEST_REVIEWER_ROLES) see every
+// document regardless of uploader — removed from this list rather than carved out with a separate
+// condition in the one place it's used below, so this constant stays the single source of truth for
+// "own uploads only" scoping. Auth. Personnel and potential_partner are unchanged — each still sees only
+// what they themselves uploaded.
+const OWN_SCOPE_ROLES = ['Auth. Personnel', 'potential_partner'];
 
 // requireAuth (not requirePersonnel) as of 2026-08-27 — administrator/
 // notifications.ejs is now also rendered for Staff (/staff/notifications,
@@ -3816,35 +3950,38 @@ app.get('/api/notifications/all', requireAdmin, async (req, res) => {
 
 // requireUploader (not requireAuth) restricts this to the four internal/
 // uploading roles — Administrator, Auth. Personnel, potential_partner, and
-// Staff (added 2026-08-27, View-Only → Staff migration) — all four of which
-// are also in OWN_SCOPE_ROLES, so the filter below always scopes to the
-// caller's own uploads. (Historical: pre-2026-07-18, this route was
-// reachable unscoped by an under-restricted role, exposing every
-// organization's document metadata — residual S7, Roadmap v2 Phase B1, see
+// Staff (added 2026-08-27, View-Only → Staff migration). Auth. Personnel and
+// potential_partner are in OWN_SCOPE_ROLES, so the filter below scopes them
+// to their own uploads; Administrator and Staff are not (2026-11, shared
+// Document Library), so they always see every document regardless of who
+// uploaded it. (Historical: pre-2026-07-18, this route was reachable
+// unscoped by an under-restricted role, exposing every organization's
+// document metadata — residual S7, Roadmap v2 Phase B1, see
 // docs/SYSTEM_AUDIT_2026-07-16.md.)
 app.get('/api/documents', requireUploader, async (req, res) => {
   try {
     const db = getDb();
-    // scope=all (2026-11, "Select Existing Documents" for Document Request fulfillment): Administrator/
-    // Staff already have unrestricted READ access to any document once it's linked to a request they
-    // review (see GET /uploads/documents/:filename, which deliberately exempts REQUEST_REVIEWER_ROLES from
-    // the own-uploads-only check) — this param lets their own picker show that same full set up front,
-    // rather than forcing them to re-upload something a different reviewer already archived. Every other
-    // caller — no scope param, or a non-reviewer role even if it tries to pass one — keeps the exact
-    // original own-uploads-only behavior; Auth. Personnel/potential_partner's own file-access stays
-    // restricted to their own uploads (SELF_UPLOAD_ONLY_ROLES), so they never get this broader scope.
-    const wantsAll = req.query.scope === 'all' && REQUEST_REVIEWER_ROLES.includes(req.session.user.role);
+    // scope=all (2026-11, "Select Existing Documents" for Document Request fulfillment) used to be the
+    // only way for Administrator/Staff to see every document instead of just their own; now that the
+    // shared Document Library (see OWN_SCOPE_ROLES above) gives them that by default, this query param is
+    // a harmless no-op for them and still does nothing for every other role, which keeps the exact
+    // original own-uploads-only behavior.
     // LAU Internal Review Uploads (2026-11) — excluded from every Document Library listing/search, not just
-    // scoped by uploader. Without this, the scope=all "Select Existing Documents" picker (Document Request
+    // scoped by uploader. Without this, the "Select Existing Documents" picker (Document Request
     // fulfillment) would offer a reviewer an LAU review file as if it were an ordinary reusable attachment —
     // one mistaken click would link it into a DIFFERENT request's supportingDocuments, where that request's
     // own requester WOULD see it. The requester's own own-uploads-only filter already excludes it by
-    // uploader email alone, but this closes the gap for the one path (scope=all) that isn't scoped that way.
+    // uploader email alone, but this closes the gap for reviewers, who are never own-uploads-scoped at all.
+    // superseded (2026-11, Document Library dedup revision): an older version of a Partnership Request's
+    // document that was marked superseded by a newer re-upload (supersedePreviousRequestDocuments) is
+    // never deleted — its file and record stay intact so the request's own history timeline can still
+    // link to it — but it no longer belongs in ordinary Document Library browsing/search/folders. This
+    // excludes it from every GET /api/documents caller, including the Select Existing Documents picker.
     const roleFilter = Object.assign(
-      (!wantsAll && OWN_SCOPE_ROLES.includes(req.session.user.role))
+      OWN_SCOPE_ROLES.includes(req.session.user.role)
         ? { uploadedByEmail: req.session.user.email }
         : {},
-      { requestType: { $ne: 'partnership-lau-review' } }
+      { requestType: { $ne: 'partnership-lau-review' }, superseded: { $ne: true } }
     );
 
     // Server-side pagination (2026-11 panel recommendation) — strictly OPT-IN via the `page` query param.
@@ -3904,7 +4041,7 @@ app.get('/api/documents/mine', requireAuth, async (req, res) => {
   try {
     const db = getDb();
     const docs = await db.collection('documents')
-      .find({ uploadedByEmail: email })
+      .find({ uploadedByEmail: email, superseded: { $ne: true } })
       .sort({ id: -1 })
       .toArray();
     res.json(docs);
@@ -3953,8 +4090,12 @@ app.patch('/api/documents/:id', requirePersonnel, announce('document'), async (r
 app.get('/api/document-folders/mine', requireUploader, async (req, res) => {
   try {
     const db = getDb();
+    // Shared Document Library (2026-11): Administrator/Staff see every folder, not just their own —
+    // same OWN_SCOPE_ROLES boundary GET /api/documents uses for the documents themselves. Auth.
+    // Personnel/potential_partner are unchanged (own folders only).
+    const folderFilter = OWN_SCOPE_ROLES.includes(req.session.user.role) ? { ownerEmail: req.session.user.email } : {};
     const folders = await db.collection('documentfolders')
-      .find({ ownerEmail: req.session.user.email })
+      .find(folderFilter)
       .sort({ name: 1 })
       .toArray();
     res.json(folders);
@@ -7404,18 +7545,40 @@ app.post('/api/users', requireStaffAccess, async (req, res) => {
       position: typeof req.body.position === 'string' ? req.body.position.trim() : '', contactNumber: contact.value || '', password: passwordToStore, createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     }));
     await logActivity(db, req.session.user, 'ADD', `User created: ${entry.name} (${entry.role}) — ${entry.email}`);
-    await notifyUsers(db, [entry.email], {
+    // notifyUsers (notificationService.createNotification) already sends this through BOTH channels — an
+    // in-app notification AND an e-mail to entry.email via the exact same sendNotificationEmails()/
+    // buildMessage() transport/template every other notification e-mail in this app uses (CSPC-CIRL
+    // footer, "Open in CIPRMS" button, dev-safe log transport outside production) — reused here rather
+    // than sending a second, separate e-mail of our own. The desc includes the user's name and role, and
+    // never the auto-generated tempPassword below (kept server-side-only, shown once to the admin here,
+    // never stored in plain text, never e-mailed). There is no self-service set-password or "Forgot
+    // password" flow anywhere in this app (checked — neither route nor UI link exists), and this route's
+    // own account record signs in with Google (see the tempPassword comment below: "never shown, never
+    // used"), so the e-mail points the new user at signing in with Google using this exact address, with
+    // contacting CIRL as the fallback for anyone who can't.
+    const notifyResult = await notifyUsers(db, [entry.email], {
       module: 'user',
       tag: 'Account',
       icon: 'ri-user-star-line',
       color: 'primary',
       title: 'Welcome to CIPRMS',
-      desc: `Your CIPRMS account has been created with role "${entry.role}". You can now sign in and activate your account.`,
+      desc: `Hello ${entry.name}, your CIPRMS account has been created with the role "${entry.role}". Sign in `
+        + `with Google using this e-mail address (${entry.email}) to get started. If you don't have Google `
+        + `access for this address, or run into trouble signing in, please contact the CIRL office for assistance.`,
       link: '/activate'
     });
+    // The account is already created at this point regardless of what happens below — a failed e-mail
+    // never rolls it back. Awaited (not fire-and-forget, unlike emailSubmissionReceipt) so the admin can
+    // be warned in the same response if it didn't go out; sendNotificationEmails() itself never throws.
+    let emailWarning = null;
+    const emailResult = (notifyResult && await notifyResult.emailPromise) || { failed: [], skipped: 'no_result' };
+    if (emailResult.skipped || (emailResult.failed && emailResult.failed.length)) {
+      console.error('❌ New-account welcome email not sent:', emailResult.skipped || (emailResult.failed[0] && emailResult.failed[0].error));
+      emailWarning = 'The account was created, but the welcome e-mail could not be sent.';
+    }
     const { password: _, ...safeEntry } = entry; // don't return the password hash
     // tempPassword is only ever returned this one time so the admin can relay it out-of-band.
-    res.json({ success: true, user: safeEntry, tempPassword });
+    res.json({ success: true, user: safeEntry, tempPassword, emailWarning });
   } catch (err) {
     // The findOne check above is a courtesy, not a guarantee — two
     // near-simultaneous creates for the same email can both pass it before
@@ -7889,14 +8052,16 @@ async function publishChange(topic, req, body, prior) {
       realtime.publish('calendar.updated', { id, action: req.method === 'POST' ? 'created' : 'updated' }, calendarAudience(ev));
     }
   } else if (topic === 'document') {
-    // Document Library visibility is own-uploads-only even for Administrator/Staff (GET /api/documents scopes by
-    // uploadedByEmail — see OWN_SCOPE_ROLES) — the live update follows the exact same boundary: only the uploader's
-    // own open Library page needs to know one of ITS rows changed (e.g. a Nature-of-Partnership filter button that
-    // should now appear/disappear). This never widens who can see a document, only keeps what a page already shows
-    // in sync with the database, same as every other announce() topic.
+    // Document Library visibility is own-uploads-only for Auth. Personnel/potential_partner (GET
+    // /api/documents scopes by uploadedByEmail — see OWN_SCOPE_ROLES) — the live update follows the same
+    // boundary for them: only the uploader's own open Library page needs to know one of ITS rows changed.
+    // Administrator/Staff share one Document Library (2026-11) regardless of uploader, so they also get
+    // this update even when they aren't the uploader — otherwise their shared view would only refresh
+    // for whichever one of them happened to upload the file.
     const doc = body && body.document;
     if (doc && doc.uploadedByEmail) {
-      realtime.publish('document.updated', { id: doc.id, action: req.method === 'POST' ? 'created' : 'updated' }, realtime.audience.emails([doc.uploadedByEmail]));
+      realtime.publish('document.updated', { id: doc.id, action: req.method === 'POST' ? 'created' : 'updated' },
+        realtime.audience.merge(realtime.audience.emails([doc.uploadedByEmail]), realtime.audience.roles(REQUEST_REVIEWER_ROLES)));
     }
   } else if (topic === 'notificationState' && actor) {
     const mine = realtime.audience.emails([actor.email]);
@@ -10108,25 +10273,95 @@ app.get('/uploads/documents/:filename', requireFileAccess, async (req, res) => {
         return res.status(403).send('Forbidden');
       }
     }
+
+    // College Dean one-time download (2026-11, Document Requests one-time-download feature; revised for
+    // reliability): a reference document a Staff/Administrator uploaded FOR the Dean (requestType
+    // 'college-request') may be opened by each assigned Dean only once — Administrator/Staff are never
+    // gated here (REQUEST_REVIEWER_ROLES, not Auth. Personnel) and can reset a Dean's download (see
+    // PATCH .../reset-download above). Inline preview is no longer possible for the Dean on these files
+    // at all: Content-Disposition is always forced to attachment below, and the file URL itself requires
+    // a short-lived, single-use token minted by POST .../download-token (downloadTokenService) — a bare
+    // link sitting in the page, a background prefetch, or a retried request with no fresh token can never
+    // reach this far.
+    let deanDownloadGate = null;
+    if (doc && doc.requestType === 'college-request' && req.session.user.role === 'Auth. Personnel') {
+      const cdr = await db.collection('collegedeanrequests').findOne({ id: doc.requestId });
+      const refDoc = cdr && (cdr.referenceDocuments || []).find((r) => r.documentId === doc.id);
+      if (refDoc) {
+        const email = req.session.user.email;
+        if ((refDoc.downloads || []).some((d) => d.email === email)) {
+          return res.status(403).send('This document has already been downloaded. Contact CIRL for another copy.');
+        }
+        // Range requests (2026-11 reliability follow-up): a 206 partial-content response must never be
+        // mistaken for a complete download, and a Range request could otherwise be used to pull the file
+        // in pieces without ever triggering the "already downloaded" counter on a single full 200. Rather
+        // than rely on res.sendFile's own Range handling and track whether it responded 200 vs 206,
+        // Range is rejected outright for this one case — the Dean's browser never needs it for a document
+        // this small, and every other role/document type keeps normal Range support untouched.
+        if (req.headers.range) {
+          return res.status(416).send('Range requests are not supported for this document.');
+        }
+        const token = typeof req.query.token === 'string' ? req.query.token : null;
+        if (!downloadTokenService.peekToken(token, { email, documentId: doc.id })) {
+          return res.status(403).send('This download link is invalid or has expired. Request a new one from the Download button.');
+        }
+        deanDownloadGate = { requestId: cdr.id, documentId: doc.id, email, name: req.session.user.name, token };
+      }
+    }
+    // Only recorded once the file has actually been sent in full — a failed send (Drive error, missing
+    // local file, an aborted/interrupted transfer) must never use up the Dean's one try. The token is
+    // consumed (deleted) in this same step: a retry of an incomplete attempt can reuse it, but once a
+    // transfer actually completes it can never be used again, even if it hasn't expired yet.
+    const recordDeanDownload = () => {
+      if (!deanDownloadGate) return;
+      downloadTokenService.consumeToken(deanDownloadGate.token);
+      db.collection('collegedeanrequests').updateOne(
+        { id: deanDownloadGate.requestId, 'referenceDocuments.documentId': deanDownloadGate.documentId },
+        { $push: { 'referenceDocuments.$.downloads': { email: deanDownloadGate.email, name: deanDownloadGate.name, downloadedAt: new Date().toISOString() } } }
+      ).catch((err) => console.error('❌ Could not record Dean download:', err));
+    };
+
     // Google Drive storage (2026-11, see services/documentStorageService.js): a document archived after that
     // change has driveFileId set and no reliable local copy (Render's free plan wipes local disk on every
     // redeploy) — stream it from Drive instead. A document archived before this change, or one that fell back
     // to local disk because Drive wasn't connected at upload time, has no driveFileId and is served exactly as
     // before. The RBAC check above already ran either way — this only changes WHERE the bytes come from.
+    // .docx (2026-11 follow-up): unlike PDF/JPG/PNG, a browser can never render this inline (the whole
+    // reason document_viewer.ejs shows a "Download/Open" message instead of an <iframe> for it) — so
+    // forcing Content-Disposition: attachment here is the correct behavior for this one extension only.
+    // PDF/JPG/PNG deliberately keep the existing no-Content-Disposition (inline-renderable) behavior that
+    // doc-viewer's own <iframe>/<img> preview still relies on — UNLESS deanDownloadGate is set, in which
+    // case inline preview must never be possible at all (see above), so attachment is forced regardless
+    // of extension.
+    if (path.extname(filename).toLowerCase() === '.docx' || deanDownloadGate) {
+      res.set('Content-Disposition', `attachment; filename="${filename}"`);
+    }
+    // 'finish' (not sendFile's own callback, not the stream's 'end') is what actually distinguishes a
+    // complete transfer from an aborted one: Node only emits it once the ENTIRE response has been
+    // flushed to the client's socket. If the client disconnects mid-download, the response goes straight
+    // to 'close' and 'finish' never fires at all — exactly the "don't count an aborted download" rule.
+    // Registered once, up front, so it covers both the Drive-stream and local-file branches below the
+    // same way; the error flag it checks is set synchronously before either branch could emit 'finish'
+    // for an error response of its own (e.g. the 404 sent when the local file is missing).
+    let deanDownloadFailed = false;
+    if (deanDownloadGate) {
+      res.on('finish', () => { if (!deanDownloadFailed) recordDeanDownload(); });
+    }
     if (doc && doc.driveFileId) {
       try {
         const stream = await documentStorageService.downloadDocument(db, doc.driveFileId);
         res.set('Content-Type', EXT_MIME_TYPES[path.extname(filename).toLowerCase()] || 'application/octet-stream');
-        stream.on('error', (err) => { if (!res.headersSent) res.status(404).send('Not found'); });
+        stream.on('error', (err) => { deanDownloadFailed = true; if (!res.headersSent) res.status(404).send('Not found'); });
         stream.pipe(res);
       } catch (err) {
+        deanDownloadFailed = true;
         console.error('❌ Document Library: Drive download failed:', documentStorageService.describeGoogleError(err));
         res.status(404).send('Not found');
       }
       return;
     }
     res.sendFile(path.join(__dirname, 'uploads', 'documents', filename), (err) => {
-      if (err && !res.headersSent) res.status(404).send('Not found');
+      if (err) { deanDownloadFailed = true; if (!res.headersSent) res.status(404).send('Not found'); }
     });
   } catch (err) {
     res.status(500).send('Server error');

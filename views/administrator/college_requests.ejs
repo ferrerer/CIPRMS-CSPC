@@ -319,16 +319,42 @@
       }).join('');
   }
 
-  function cdrDocListHtml(docs, emptyLabel) {
+  // requestId (2026-11, one-time-download feature) is only passed for Reference Documents — the ones a
+  // Dean can download just once — so the Reset control (and the "who/when downloaded" line) only ever
+  // shows there, never on the Dean's own Submitted Documents, which were never subject to the limit.
+  function cdrDocListHtml(docs, emptyLabel, requestId) {
       if (!docs || !docs.length) return '<p class="text-muted mb-0">' + emptyLabel + '</p>';
       return docs.map(function (d) {
           var label = d.originalFilename || (d.note ? 'Note only' : 'Attachment');
+          var downloads = d.downloads || [];
+          var downloadStatus = '';
+          if (requestId) {
+              downloadStatus = downloads.length
+                  ? downloads.map(function (dl) { return '<div class="text-success small"><i class="ri-checkbox-circle-line"></i> Downloaded by ' + escapeHtml(dl.name || dl.email) + ' on ' + fmtDate(dl.downloadedAt) + '</div>'; }).join('')
+                  : '<div class="text-muted small">Not yet downloaded by the Dean.</div>';
+          }
           return '<div class="d-flex align-items-center justify-content-between border rounded p-2 mb-2">' +
               '<div><i class="ri-file-line me-1"></i>' + escapeHtml(label) +
-              (d.note ? '<div class="text-muted small">' + escapeHtml(d.note) + '</div>' : '') + '</div>' +
+              (d.note ? '<div class="text-muted small">' + escapeHtml(d.note) + '</div>' : '') +
+              downloadStatus + '</div>' +
+              '<div class="d-flex gap-1">' +
+              (requestId && downloads.length ? '<button class="btn btn-sm btn-soft-warning" title="Let the Dean download this again" onclick="cdrResetDownload(' + requestId + ', ' + d.documentId + ')"><i class="ri-restart-line"></i></button>' : '') +
               (d.fileLink ? '<a class="btn btn-sm btn-soft-secondary" href="' + d.fileLink + '" target="_blank"><i class="ri-download-2-line"></i></a>' : '') +
-              '</div>';
+              '</div></div>';
       }).join('');
+  }
+
+  function cdrResetDownload(id, documentId) {
+      fetch('/api/college-requests/' + id + '/reference-documents/' + documentId + '/reset-download', {
+          method: 'PATCH', headers: { 'X-Requested-With': 'ciprms' }
+      })
+          .then(function (r) { return r.json(); })
+          .then(function (r) {
+              if (!r.success) { showToast(r.error || 'Unable to reset the download.', '#f44336'); return; }
+              showToast('The Dean can download this document again.', '#0ab39c');
+              cdrOpenDetail(id);
+          })
+          .catch(function () { showToast('Unable to reset the download.', '#f44336'); });
   }
 
   function cdrOpenDetail(id) {
@@ -347,9 +373,9 @@
                   (r.description ? '<p class="mb-3"><strong>Description:</strong><br>' + escapeHtml(r.description).replace(/\n/g, '<br>') + '</p>' : '') +
                   '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +
                   (r.reviewRemark && r.status === 'Returned for Revision' ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
-                  '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(from you)</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.') +
+                  '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(from you — the Dean can download each one once)</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.', r.id) +
                   '<div class="input-group input-group-sm mb-3">' +
-                      '<input type="file" class="form-control" id="cdr-ref-file">' +
+                      '<input type="file" class="form-control" id="cdr-ref-file" accept=".pdf,.jpg,.jpeg,.png,.docx">' +
                       '<button class="btn btn-outline-secondary" type="button" onclick="cdrAddReference(' + r.id + ')">Attach</button>' +
                   '</div>' +
                   '<p class="mb-1"><strong>Submitted Documents</strong> <span class="text-muted">(from the Dean)</span></p>' + cdrDocListHtml(r.submittedDocuments, 'Nothing submitted yet.') +

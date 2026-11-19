@@ -7,9 +7,10 @@ const sharp = require('sharp');
 const PDFDocument = require('pdfkit');
 const Tesseract = require('tesseract.js');
 const { PDFParse } = require('pdf-parse');
+const mammoth = require('mammoth');
 const { extractFields } = require('./extractionService');
-const { UPLOAD_DIR } = require('../middleware/uploadMiddleware');
-const { archiveToDocumentLibrary, findPossibleDuplicates } = require('./documentLibraryService');
+const { UPLOAD_DIR, DOCX_MIME } = require('../middleware/uploadMiddleware');
+const { archiveToDocumentLibrary, supersedePreviousRequestDocuments, findPossibleDuplicates } = require('./documentLibraryService');
 const { analyzeImageQuality } = require('./imageQualityService');
 const { getDb } = require('../db');
 const realtime = require('./realtime');
@@ -293,6 +294,25 @@ async function processImage(filePath, jobId) {
   return { text, confidence, method: 'ocr', pages: 1, imageQuality };
 }
 
+// ── Word document handling (2026-11): direct text extraction, no OCR ────────
+// A .docx's text is already digital — there is nothing to rasterize or run Tesseract on, so this mirrors
+// processPdf()'s own "text-layer" fast path exactly: full confidence, no imageQuality (there is no page
+// image for analyzeImageQuality to look at). mammoth.extractRawText() reads paragraph text (ignoring
+// styling/markup), which is what extractFields()'s regex-based field parsing already expects — the same
+// input shape a PDF's text layer or OCR's own output would have produced.
+// mammoth is a new dependency (^1.13.0) added specifically for this — see the task report.
+//
+// Legacy .doc is rejected outright by middleware/uploadMiddleware.js's fileFilter, with a message asking
+// the user to save as .docx, rather than attempting a server-side conversion: no LibreOffice (or other
+// safe .doc->.docx converter) is installed on this deployment, and installing one is an infrastructure
+// change out of scope for this task.
+async function processDocx(filePath, jobId) {
+  updateJob(jobId, { progress: 50, stage: 'extracting-docx-text' });
+  const buffer = await fsp.readFile(filePath);
+  const { value: text } = await mammoth.extractRawText({ buffer });
+  return { text: (text || '').trim(), confidence: 100, method: 'docx-text-extraction', pages: null, imageQuality: null };
+}
+
 // ── Orchestration for a single uploaded file, tracked by jobId ───────────────
 // NOTE: This function deliberately does NOT persist anything to the database.
 // The uploaded file is kept in the temp uploads directory while the job is
@@ -304,7 +324,9 @@ async function runJob(jobId, filePath, mimetype, meta = {}) {
     updateJob(jobId, { progress: 5, stage: 'starting' });
 
     const ocrResult = await withTimeout(
-      mimetype === 'application/pdf' ? processPdf(filePath, jobId) : processImage(filePath, jobId),
+      mimetype === 'application/pdf' ? processPdf(filePath, jobId)
+        : mimetype === DOCX_MIME ? processDocx(filePath, jobId)
+        : processImage(filePath, jobId),
       OCR_TIMEOUT_MS,
       'OCR processing timed out. Try a smaller file or a clearer scan.'
     );
@@ -384,6 +406,15 @@ async function confirmJob(jobId, overrides = {}, session = {}, extraMeta = {}) {
 
   try {
     const archived = await archiveToDocumentLibrary(job.tempFilePath, meta.originalName, extraction, meta);
+    // Partnership Request dedup (2026-11, revised): extraMeta.requestId/requestType is set only when this
+    // confirm is re-extracting/re-OCRing a document for a request that already exists (editing an
+    // existing draft) — see POST /api/ocr/confirm (ocrController). Without this, confirming a re-upload
+    // for the same request would leave the previous version's Document Library record visible alongside
+    // this one instead of marked superseded by it. Called AFTER archiving (not before) so the new
+    // document's own id is known and is never the one marked superseded by its own call.
+    if (meta.requestId != null && meta.requestType) {
+      await supersedePreviousRequestDocuments(getDb(), meta.requestId, meta.requestType, archived.documentId);
+    }
     // Mark the job as confirmed so it cannot be confirmed again and its temp path is cleared.
     updateJob(jobId, { confirmed: true, tempFilePath: null, documentId: archived.documentId, fileLink: archived.fileLink });
     // Notify the uploader's open Document Library tab so it can refresh.

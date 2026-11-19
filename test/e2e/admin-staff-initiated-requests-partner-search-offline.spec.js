@@ -179,7 +179,7 @@ test('(2026-11 follow-up) "Request Partnership" sits in the search row next to t
   await page.setContent(html, { waitUntil: 'load' });
   expect(html.indexOf('id="pr-count"')).toBeLessThan(html.indexOf('id="pr-initiate-btn"'));
   expect(html.lastIndexOf('class="filter-row"', html.indexOf('id="pr-initiate-btn"')))
-    .toBeGreaterThan(html.indexOf('class="section-tabs"'));
+    .toBeGreaterThan(html.indexOf('nav-tabs-custom')); // 2026-11: reports.ejs's tab markup, replacing .section-tabs
   await expect(page.locator('#pr-initiate-btn')).toBeVisible();
   await page.click('#pr-initiate-btn');
   await expect(page.locator('#pr-initiate-modal .modal-dialog')).toHaveClass(/modal-xl/);

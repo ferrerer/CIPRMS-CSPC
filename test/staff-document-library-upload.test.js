@@ -304,7 +304,7 @@ describe('Real end-to-end OCR pipeline (actual Tesseract, not mocked) for Admini
     expect(entry.uploadedByEmail).toBe(staffUser.email);
   }, 45000);
 
-  test('Separate libraries: Administrator does not see Staff\'s OCR upload, and Staff does not see Administrator\'s', async () => {
+  test('Shared library (2026-11): Administrator sees Staff\'s OCR upload, and Staff sees Administrator\'s', async () => {
     // Relies on the two documentIds captured by the previous two tests.
     const adminDocId = createdDocIds[createdDocIds.length - 2];
     const staffDocId = createdDocIds[createdDocIds.length - 1];
@@ -312,9 +312,9 @@ describe('Real end-to-end OCR pipeline (actual Tesseract, not mocked) for Admini
     expect(staffDocId).toBeTruthy();
 
     const adminLib = await adminAgent.get('/api/documents');
-    expect(adminLib.body.some((d) => d.id === staffDocId)).toBe(false);
+    expect(adminLib.body.some((d) => d.id === staffDocId)).toBe(true);
 
     const staffLib = await staffAgent.get('/api/documents');
-    expect(staffLib.body.some((d) => d.id === adminDocId)).toBe(false);
+    expect(staffLib.body.some((d) => d.id === adminDocId)).toBe(true);
   });
 });

@@ -17,22 +17,41 @@ const DEFAULT_TEST_MONGO_URI = 'mongodb://127.0.0.1:27018/ciprms_test';
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const TEST_DB_NAME_RE = /^[A-Za-z0-9_-]+_test$/;
 
-// True only for a plain mongodb:// URI whose every host is a loopback address and whose database name ends
-// in "_test". mongodb+srv:// is always rejected (that scheme is only ever a hosted cluster such as Atlas).
-// Never throws; never includes the URI (which may hold credentials) in anything it returns.
-function isSafeTestDatabaseUri(uri) {
-  if (typeof uri !== 'string' || !uri) return false;
+// Shared by isLocalMongoUri() and isSafeTestDatabaseUri() below — parses a mongodb:// URI's host list and
+// database name, or returns null if it isn't even that well-formed. mongodb+srv:// is deliberately never
+// matched here (that scheme is only ever a hosted cluster such as Atlas, never a local loopback instance),
+// so both callers correctly treat it as "not local" without needing their own separate check for it.
+function parseMongoUri(uri) {
+  if (typeof uri !== 'string' || !uri) return null;
   const match = /^mongodb:\/\/(?:[^@/]*@)?([^/?]+)\/([^?]*)/.exec(uri.trim());
-  if (!match) return false;
+  if (!match) return null;
   const hosts = match[1].split(',').map((h) => {
     const host = h.trim().toLowerCase();
     if (host.startsWith('[')) return host.slice(0, host.indexOf(']') + 1);
     return host.replace(/:\d+$/, '');
   });
-  if (!hosts.length || !hosts.every((h) => LOOPBACK_HOSTS.has(h))) return false;
   let dbName;
-  try { dbName = decodeURIComponent(match[2]); } catch (e) { return false; }
-  return TEST_DB_NAME_RE.test(dbName);
+  try { dbName = decodeURIComponent(match[2]); } catch (e) { return null; }
+  return { hosts, dbName };
+}
+
+// True only for a plain mongodb:// URI whose every host is a loopback address (127.0.0.1/localhost/::1) —
+// no requirement on the database name. This is the broader, standalone-usable check db.js's fail-closed
+// guard (2026-11 production-exposure audit, proposal 2) runs against EVERY connection attempt, test or
+// not: a non-local URI is only ever allowed when NODE_ENV=production is explicit. Never throws; never
+// includes the URI (which may hold credentials) in anything it returns.
+function isLocalMongoUri(uri) {
+  const parsed = parseMongoUri(uri);
+  return !!parsed && parsed.hosts.length > 0 && parsed.hosts.every((h) => LOOPBACK_HOSTS.has(h));
+}
+
+// True only for a plain mongodb:// URI whose every host is a loopback address and whose database name ends
+// in "_test". mongodb+srv:// is always rejected (that scheme is only ever a hosted cluster such as Atlas).
+// Never throws; never includes the URI (which may hold credentials) in anything it returns.
+function isSafeTestDatabaseUri(uri) {
+  const parsed = parseMongoUri(uri);
+  if (!parsed || !parsed.hosts.length || !parsed.hosts.every((h) => LOOPBACK_HOSTS.has(h))) return false;
+  return TEST_DB_NAME_RE.test(parsed.dbName);
 }
 
 // Resolves the test database URI for this run (TEST_MONGO_URI if set, else the local default) and throws
@@ -45,4 +64,4 @@ function resolveTestDatabaseUri(env = process.env) {
   return uri;
 }
 
-module.exports = { DEFAULT_TEST_MONGO_URI, isSafeTestDatabaseUri, resolveTestDatabaseUri };
+module.exports = { DEFAULT_TEST_MONGO_URI, isLocalMongoUri, isSafeTestDatabaseUri, resolveTestDatabaseUri };

@@ -355,8 +355,15 @@ describe('7. Attachment isolation between Deans (file-access authorization)', ()
       .set('X-Requested-With', 'ciprms').attach('document', pdfBuffer('reference'), 'checklist.pdf');
     expect(refRes.status).toBe(200);
     const fileLink = refRes.body.fileLink;
+    const documentId = refRes.body.documentId;
 
-    expect((await deanAAgent.get(fileLink)).status).toBe(200);
+    // A one-time-download token is required for a Dean on a Reference Document (2026-11 reliability
+    // follow-up) — see test/college-dean-one-time-download.test.js for the full token/range/preview suite.
+    const tokenRes = await deanAAgent
+      .post('/api/college-requests/' + r.body.request.id + '/reference-documents/' + documentId + '/download-token')
+      .set('X-Requested-With', 'ciprms');
+    expect(tokenRes.status).toBe(200);
+    expect((await deanAAgent.get(fileLink + '?token=' + tokenRes.body.token)).status).toBe(200);
     expect((await deanBAgent.get(fileLink)).status).toBe(403);
   });
 });

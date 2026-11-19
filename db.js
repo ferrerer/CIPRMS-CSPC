@@ -28,6 +28,31 @@ if (NODE_ENV === 'test' || process.env.JEST_WORKER_ID) {
     throw new Error('Refusing to connect: test runs may only use a local MongoDB database whose name ends in "_test" (see services/testDatabaseGuard.js).');
   }
 }
+// Masks MONGO_URI down to a host a person can recognize at a glance without ever printing credentials or
+// the full cluster hostname — e.g. "cluster0.***.mongodb.net" for Atlas, or "127.0.0.1:27018" unchanged
+// for a local URI (nothing sensitive there to begin with). Used only for the one-line startup log below;
+// the real URI itself is still never printed anywhere in this file. Parsed by hand rather than with the
+// WHATWG URL class: a real Atlas replica-set URI lists several comma-separated shard hosts in its
+// authority component (e.g. "host-00-00.x.mongodb.net:27017,host-00-01.x.mongodb.net:27017,..."), which
+// URL's parser rejects outright as invalid.
+const IPV4_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+function maskMongoHost(rawUri) {
+  try {
+    const afterScheme = rawUri.replace(/^mongodb(\+srv)?:\/\//, '');
+    const afterCreds = afterScheme.includes('@') ? afterScheme.slice(afterScheme.indexOf('@') + 1) : afterScheme;
+    const hostList = afterCreds.split(/[/?]/)[0];
+    if (!hostList) throw new Error('no host');
+    return hostList.split(',').map((hostPort) => {
+      const [host, port] = hostPort.split(':');
+      const parts = host.split('.');
+      const masked = (parts.length > 2 && !IPV4_RE.test(host)) ? `${parts[0]}.***.${parts.slice(-2).join('.')}` : host;
+      return port ? `${masked}:${port}` : masked;
+    }).join(', ');
+  } catch {
+    return '(unparseable host)';
+  }
+}
+
 let client;
 let db;
 
@@ -65,6 +90,7 @@ async function connectDB() {
     db = client.db();
     resolveClientPromise(client);
     console.log('✓ Connected to MongoDB successfully');
+    console.log(`  Host: ${maskMongoHost(uri)} | Database: ${db.databaseName}`);
     // 2026-09-06 security hardening (Finding #4): every write path already
     // normalizes email to trim+lowercase before storing (login, signup,
     // /api/users), so a plain unique index is enough to close the

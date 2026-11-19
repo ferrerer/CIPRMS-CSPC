@@ -8,7 +8,10 @@ const documentStorageService = require('./documentStorageService');
 const DOCUMENTS_DIR = path.join(__dirname, '..', 'uploads', 'documents');
 if (!fs.existsSync(DOCUMENTS_DIR)) fs.mkdirSync(DOCUMENTS_DIR, { recursive: true });
 
-const EXT_MIME_TYPES = { '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png' };
+const EXT_MIME_TYPES = {
+  '.pdf': 'application/pdf', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+};
 
 // Maps the free-form OCR document-type guess down to the short codes the
 // Document Library UI filters by (All / MOA / MOU / Other). Accreditation records keep their
@@ -335,6 +338,26 @@ async function updateDocument(id, updates) {
 // library already reads from. `type` is expected to already be a short code
 // (both requests collections store one — MOA/MOU/LOI/JVA/Accreditation/Other —
 // so no OCR-style free-text mapping is needed here).
+// Partnership Request de-duplication (2026-11, revised): keeps exactly one CURRENT Document Library
+// record per Partnership Request. An earlier version of this function deleted the previous record's DB
+// row and its physical file outright — which broke the request's own supportingDocuments/history
+// timeline, since that array stores each version's fileLink directly and keeps linking to it forever.
+// This version never deletes anything: it marks every other document already tagged with this
+// {requestId, requestType} as superseded (superseded: true, supersededBy: the new document's id,
+// supersededAt: now), leaving its DB record and file completely intact. A superseded document is
+// excluded from Document Library listings/search/folders (see the `superseded: { $ne: true }` filter on
+// GET /api/documents) so only the current version clutters browsing, but every version — superseded or
+// not — stays fully downloadable via its own unchanged fileLink, exactly as the request's timeline
+// expects. Call this AFTER archiving the new version, passing its id, so the new document is never the
+// one that gets marked superseded by its own call.
+async function supersedePreviousRequestDocuments(db, requestId, requestType, currentDocumentId) {
+  if (requestId == null || !requestType || currentDocumentId == null) return;
+  await db.collection('documents').updateMany(
+    { requestId, requestType, id: { $ne: currentDocumentId }, superseded: { $ne: true } },
+    { $set: { superseded: true, supersededBy: currentDocumentId, supersededAt: new Date().toISOString() } }
+  );
+}
+
 async function archiveRequestRecordToLibrary(db, meta) {
   const label = meta.requestType === 'document' ? 'Document Request' : 'Partnership Request';
   return insertWithNextId(db.collection('documents'), (id) => ({
@@ -356,4 +379,4 @@ async function archiveRequestRecordToLibrary(db, meta) {
   }));
 }
 
-module.exports = { archiveToDocumentLibrary, updateDocument, archiveRequestRecordToLibrary, findPossibleDuplicates, DOCUMENTS_DIR, EXT_MIME_TYPES };
+module.exports = { archiveToDocumentLibrary, updateDocument, archiveRequestRecordToLibrary, supersedePreviousRequestDocuments, findPossibleDuplicates, DOCUMENTS_DIR, EXT_MIME_TYPES };

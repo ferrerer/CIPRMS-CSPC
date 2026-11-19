@@ -92,6 +92,10 @@ window.DocViewer = (function () {
     // internal API). Anything else recognized as an image renders as a plain <img> so it zooms/pans without
     // any stretching — CSS transform:scale never distorts aspect ratio.
     var IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
+    // .docx (2026-11) — browsers have no built-in Word renderer (unlike PDF), so an <iframe> here would
+    // either download the file unexpectedly or show nothing useful depending on the browser. Download/Open
+    // (docv-download/docv-open, both already wired above regardless of branch) are the real affordance.
+    var DOCX_EXT = /\.docx$/i;
 
     function open(fileLink, title) {
         if (!modalEl) init();
@@ -114,6 +118,11 @@ window.DocViewer = (function () {
             target.src = fileLink;
             el('docv-zoom-out').disabled = el('docv-zoom-in').disabled = el('docv-zoom-reset').disabled = false;
             applyZoom();
+        } else if (DOCX_EXT.test(fileLink)) {
+            stage.classList.add('docv-empty');
+            stage.innerHTML = '<div class="text-white-50"><i class="ri-file-word-2-line fs-1 d-block text-center mb-2"></i>Word documents can\'t be previewed inline. Use Download or Open below.</div>';
+            target = null;
+            el('docv-zoom-out').disabled = el('docv-zoom-in').disabled = el('docv-zoom-reset').disabled = true;
         } else {
             stage.innerHTML = '<iframe id="docv-frame" title="Document preview"></iframe>';
             target = el('docv-frame');

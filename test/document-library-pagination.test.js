@@ -133,12 +133,16 @@ describe('Filters preserved — same dimensions, now applied server-side', () =>
 });
 
 describe('Role scoping is applied before pagination, not bypassed by it', () => {
-  test("a different Staff user's paginated fetch never includes this owner's documents", async () => {
+  // Shared Document Library (2026-11): Administrator/Staff are no longer own-uploads-scoped (see
+  // OWN_SCOPE_ROLES, cirl.js), so a different Staff user's paginated fetch now DOES include this
+  // owner's documents — Auth. Personnel/potential_partner remain own-uploads-only, covered separately
+  // in test/document-access.test.js.
+  test("a different Staff user's paginated fetch includes this owner's documents (shared library)", async () => {
     const otherAgent = request.agent(app);
     await loginAs(otherAgent, await createTestUser({ role: 'Staff' }));
     const res = await otherAgent.get('/api/documents?page=1&pageSize=50');
     expect(res.status).toBe(200);
-    expect(res.body.records.some((d) => d.uploadedByEmail === ownerEmail)).toBe(false);
-    expect(res.body.totalCount).toBe(0);
+    expect(res.body.records.some((d) => d.uploadedByEmail === ownerEmail)).toBe(true);
+    expect(res.body.totalCount).toBeGreaterThan(0);
   });
 });

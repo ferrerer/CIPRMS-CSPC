@@ -1466,7 +1466,7 @@ var ocrJobId = null;
 var ocrExtractedResult = null;
 var ocrPollTimer = null;
 var OCR_MAX_FILE_SIZE = 10 * 1024 * 1024;
-var OCR_ALLOWED_EXT = ['.pdf', '.jpg', '.jpeg', '.png'];
+var OCR_ALLOWED_EXT = ['.pdf', '.jpg', '.jpeg', '.png', '.docx'];
 
 function ocrShow(id, on) { var el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; }
 
@@ -1476,7 +1476,7 @@ function startOcrExtraction() {
   if (!file) { showToast('Choose a file first.'); return; }
 
   var ext = '.' + file.name.split('.').pop().toLowerCase();
-  if (OCR_ALLOWED_EXT.indexOf(ext) === -1) { showToast('Unsupported file type. Use PDF, JPG, JPEG, or PNG.'); return; }
+  if (OCR_ALLOWED_EXT.indexOf(ext) === -1) { showToast('Unsupported file type. Use PDF, JPG, PNG, or DOCX.'); return; }
   if (file.size > OCR_MAX_FILE_SIZE) { showToast('File is too large. Maximum size is 10MB.'); return; }
 
   // Replacing an earlier extraction that was never saved — discard its temp file server-side instead of
@@ -1581,7 +1581,6 @@ function ocrSucceed(result) {
   document.getElementById('ocr-confidence-badge').textContent = 'Confidence: ' + Math.round(result.confidence) + '%';
   document.getElementById('ocr-doctype-badge').textContent = 'Document type: ' + (result.documentType || 'Unrecognized');
   document.getElementById('ocr-raw-text').textContent = result.rawText;
-  ocrShow('ocr-warning-badge', !!result.warning);
   if (window.IDP) {
     IDP.renderResult('ocr-idp-panel', result, {
       onCancelDuplicate: function (documentId) {

@@ -91,11 +91,11 @@ describe('1. LAU can log in and reach the Partnership Monitoring dashboard', () 
     const res = await agent.get('/lau/monitoring');
     expect(res.status).toBe(200);
     expect(res.text).toContain('Partnership Monitoring');
-    // Note: a bare 'id="tab-dr"' substring also appears in this page's own <style> block as a CSS attribute
-    // selector (e.g. .section-tab[id="tab-dr"]:hover), present regardless of role — so the check has to
-    // target the actual rendered anchor element specifically, not just any occurrence of that substring.
-    expect(res.text).not.toContain('<a class="section-tab" id="tab-dr"');
-    expect(res.text).not.toContain('>Document Requests</span>');
+    // Tab anchor itself (2026-11: reports.ejs's nav-tabs-custom markup, replacing the old .section-tab
+    // cards) — a bare 'id="tab-dr"' substring check would be too loose if this markup ever gained its own
+    // CSS attribute selector referencing that id, so this targets the actual rendered anchor element.
+    expect(res.text).not.toContain('<a class="nav-link" id="tab-dr"');
+    expect(res.text).not.toContain('id="tab-cnt-dr"');
   });
 
   test('Administrator may also reach /lau/monitoring (dual-role convention shared with requirePersonnel/requireStaffAccess)', async () => {

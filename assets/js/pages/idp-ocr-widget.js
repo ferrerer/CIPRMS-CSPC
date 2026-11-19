@@ -86,9 +86,11 @@
       esc(label) + ': ' + Math.round(pct) + '%</span>';
   }
 
-  // confidence is optional — pass the field's <x>Confidence value when known
-  // so a low-confidence auto-filled value gets a persistent warning (border +
-  // small note) instead of just the "briefly, just filled" pulse.
+  // confidence is optional — pass the field's <x>Confidence value when known so a low-confidence
+  // auto-filled value still gets the persistent border highlight (ocr-low-confidence), not just the
+  // "briefly, just filled" pulse. The "Low confidence (NN%) — please verify this value." text label this
+  // used to insert next to the field was removed (2026-11) per request — the confidence value itself, and
+  // this border-highlight behavior that depends on it, are both unchanged.
   function markFilled(id, confidence) {
     injectStyleOnce();
     var el = document.getElementById(id);
@@ -97,24 +99,16 @@
     el.classList.add('ocr-autofilled');
     var pulseTimer = setTimeout(function () { el.classList.remove('ocr-autofilled'); }, AUTOFILL_PULSE_MS);
 
-    var warnId = id + '-ocr-conf-warn';
     var clear = function () {
       clearTimeout(pulseTimer);
       el.classList.remove('ocr-autofilled');
       el.classList.remove('ocr-low-confidence');
-      var warn = document.getElementById(warnId);
-      if (warn) warn.remove();
     };
     el.addEventListener('input', clear, { once: true });
     el.addEventListener('change', clear, { once: true });
 
-    if (confidence != null && confidence > 0 && confidence < LOW_CONFIDENCE_THRESHOLD && !document.getElementById(warnId)) {
+    if (confidence != null && confidence > 0 && confidence < LOW_CONFIDENCE_THRESHOLD) {
       el.classList.add('ocr-low-confidence');
-      var warn = document.createElement('small');
-      warn.id = warnId;
-      warn.className = 'ocr-conf-warn text-danger d-block mt-1';
-      warn.innerHTML = '<i class="ri-error-warning-line align-middle me-1"></i>Low confidence (' + Math.round(confidence) + '%) — please verify this value.';
-      el.insertAdjacentElement('afterend', warn);
     }
   }
 
@@ -157,7 +151,7 @@
     if (detectedType && DOC_TYPE_OPTIONS.indexOf(detectedType) === -1) {
       html += '<option value="' + esc(detectedType) + '" selected>' + esc(detectedType) + '</option>';
     }
-    html += '</select></div>' + (typeConf > 0 && typeConf < 60 ? '<div class="form-text text-warning fs-12">Low confidence — please verify or change the type above.</div>' : '') + '</div>';
+    html += '</select></div></div>';
 
     // ✓ Confidence Scores
     var confHtml = '';

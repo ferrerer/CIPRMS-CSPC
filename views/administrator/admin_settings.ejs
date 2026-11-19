@@ -202,7 +202,6 @@
   // The profile picture lives on the account now (it used to be kept in this browser only under this key).
   try { localStorage.removeItem('ciprms_admin_photo'); } catch (_) {}
   const INITIAL_AVATAR = <%- JSON.stringify(typeof userAvatarUrl !== 'undefined' ? userAvatarUrl : '/images/default-avatar.jpg').replace(/</g, '\\u003c') %>;
-
   function updateCard() {
     const name = document.getElementById('s-name').value.trim();
     const dept = document.getElementById('s-dept').value;
