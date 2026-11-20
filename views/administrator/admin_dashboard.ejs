@@ -303,27 +303,80 @@
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <!-- Expansion Opportunity -->
+                                                <!-- Yearly Target (2026-11, replaces Expansion Opportunity) -->
                                                 <div class="col-md-4">
                                                     <div class="card h-100 border-0 shadow-sm"
                                                         style="background: var(--vz-info-bg-subtle); border-left: 4px solid #299cdb !important;">
-                                                        <div class="card-body p-4">
+                                                        <div class="card-body p-4" id="yearly-target-card"
+                                                            data-year="<%= yearlyTargetYear %>"
+                                                            data-target-id="<%= (yearlyTarget && yearlyTarget.id) || '' %>"
+                                                            data-target-count="<%= (yearlyTarget && yearlyTarget.targetCount) || '' %>"
+                                                            data-notes="<%= (yearlyTarget && yearlyTarget.notes) || '' %>">
                                                             <div class="d-flex align-items-center mb-3">
                                                                 <div class="avatar-xs flex-shrink-0 me-2">
                                                                     <span
                                                                         class="avatar-title bg-info-subtle text-info rounded-circle fs-14">
-                                                                        <i class="ri-global-line"></i>
+                                                                        <i class="ri-flag-2-line"></i>
                                                                     </span>
                                                                 </div>
-                                                                <h6 class="card-title mb-0 text-info">Expansion
-                                                                    Opportunity</h6>
+                                                                <h6 class="card-title mb-0 text-info">Yearly Target
+                                                                    <%= yearlyTargetYear %>
+                                                                </h6>
                                                             </div>
-                                                            <p class="text-muted fs-14 mb-4" id="insight-expansion"><%=
-                                                                    insightExpansion %></p>
-                                                            <a href="<%= isStaffRole ? '/staff/requests' : '/partnership-requests' %>?status=Pending"
-                                                                class="btn btn-link text-info p-0 fw-medium">View Pending
-                                                                Requests <i
-                                                                    class="ri-arrow-right-line align-middle ms-1"></i></a>
+
+                                                            <% if (!yearlyTarget) { %>
+                                                                <p class="text-muted fs-14 mb-4">No target set for
+                                                                    <%= yearlyTargetYear %>.
+                                                                </p>
+                                                                <button type="button"
+                                                                    class="btn btn-link text-info p-0 fw-medium"
+                                                                    onclick="openTargetModal()">Set Target <i
+                                                                        class="ri-arrow-right-line align-middle ms-1"></i></button>
+                                                            <% } else { %>
+                                                                <p class="text-muted fs-14 mb-2">
+                                                                    <%= yearlyTargetProgress.current %> of
+                                                                    <%= yearlyTarget.targetCount %> new partnerships
+                                                                    (<%= yearlyTargetProgress.rawPercentage %>%)
+                                                                </p>
+                                                                <div class="progress mb-2" style="height: 6px;">
+                                                                    <div class="progress-bar bg-info"
+                                                                        style="width: <%= yearlyTargetProgress.percentage %>%"
+                                                                        role="progressbar"></div>
+                                                                </div>
+                                                                <p class="mb-2">
+                                                                    <span
+                                                                        class="badge <%= yearlyTargetStatus === 'Achieved' ? 'bg-success-subtle text-success' : (yearlyTargetStatus === 'On track' ? 'bg-info-subtle text-info' : 'bg-warning-subtle text-warning') %>">
+                                                                        <%= yearlyTargetStatus %>
+                                                                    </span>
+                                                                </p>
+                                                                <p class="text-muted fs-14 mb-3">
+                                                                    <% if (yearlyTargetStatus==='Achieved' ) { %>
+                                                                        Target achieved for
+                                                                        <%= yearlyTargetYear %>.
+                                                                    <% } else { %>
+                                                                        <%= yearlyTargetProgress.lacking %> more
+                                                                        needed ·
+                                                                        <%= yearlyTargetDays %> days left
+                                                                    <% } %>
+                                                                </p>
+
+                                                                <div id="yearly-target-ai-suggestion"
+                                                                    class="fs-13 fst-italic text-muted mb-2 d-none">
+                                                                </div>
+                                                                <div
+                                                                    class="d-flex gap-3 align-items-center flex-wrap">
+                                                                    <button type="button"
+                                                                        class="btn btn-link text-info p-0 fw-medium"
+                                                                        onclick="openTargetModal()">Edit Target <i
+                                                                            class="ri-arrow-right-line align-middle ms-1"></i></button>
+                                                                    <button type="button"
+                                                                        class="btn btn-link text-muted p-0 fw-medium fs-13"
+                                                                        id="yearly-target-ai-btn"
+                                                                        onclick="getTargetAiSuggestion(this)"><i
+                                                                            class="ri-sparkling-2-line align-middle me-1"></i>Get
+                                                                        AI suggestion</button>
+                                                                </div>
+                                                            <% } %>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -717,6 +770,40 @@
                     <button type="button" class="btn btn-danger" id="ach-del-confirm-btn" onclick="achConfirmDelete()">
                         <i class="ri-delete-bin-line me-1"></i>Yes, Delete It
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Yearly Target set/edit modal (2026-11) — saved through the existing /api/targets API, which already
+         enforces one target per period (year) via its unique index; this modal never duplicates that check,
+         it only surfaces whatever error the API returns. -->
+    <div class="modal fade" id="target-modal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="target-modal-title">Set Yearly Target</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div id="target-modal-error" class="alert alert-danger d-none"></div>
+                    <div class="mb-3">
+                        <label class="form-label" for="target-modal-year">Year</label>
+                        <input type="number" class="form-control" id="target-modal-year" min="2000" max="2100">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="target-modal-count">Target count (new partnerships)</label>
+                        <input type="number" class="form-control" id="target-modal-count" min="1">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="target-modal-notes">Notes (optional)</label>
+                        <textarea class="form-control" id="target-modal-notes" rows="2"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-info text-white" id="target-modal-save-btn"
+                        onclick="saveTargetModal()">Save Target</button>
                 </div>
             </div>
         </div>
@@ -1982,6 +2069,88 @@
                 CIPRMS.toast('Achievement deleted.', 'success');
                 ACH_DELETE_ID = null;
                 achLoadList();
+            });
+        }
+
+        // ── Yearly Target (Decision Support & Insights card, 2026-11) ───────────────────────────
+        // The card's own data-* attributes (set server-side by admin_dashboard.ejs from
+        // computeDashboardStats()) are the single source of truth for whether a target already
+        // exists for this year — the modal never guesses; it reads them fresh every time it opens.
+        function openTargetModal() {
+            var card = document.getElementById('yearly-target-card');
+            var year = card.getAttribute('data-year');
+            var targetId = card.getAttribute('data-target-id');
+            var count = card.getAttribute('data-target-count');
+            var notes = card.getAttribute('data-notes');
+
+            document.getElementById('target-modal-title').textContent = targetId ? 'Edit Yearly Target' : 'Set Yearly Target';
+            document.getElementById('target-modal-year').value = year;
+            document.getElementById('target-modal-count').value = count || '';
+            document.getElementById('target-modal-notes').value = notes || '';
+            var errEl = document.getElementById('target-modal-error');
+            errEl.classList.add('d-none');
+            errEl.textContent = '';
+            document.getElementById('target-modal-save-btn').setAttribute('data-editing-id', targetId || '');
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('target-modal')).show();
+        }
+
+        function saveTargetModal() {
+            var year = parseInt(document.getElementById('target-modal-year').value, 10);
+            var count = parseInt(document.getElementById('target-modal-count').value, 10);
+            var notes = document.getElementById('target-modal-notes').value.trim();
+            var errEl = document.getElementById('target-modal-error');
+            errEl.classList.add('d-none');
+            if (!Number.isInteger(year) || !Number.isInteger(count) || count < 1) {
+                errEl.textContent = 'Please enter a valid year and a target count of at least 1.';
+                errEl.classList.remove('d-none');
+                return;
+            }
+
+            var btn = document.getElementById('target-modal-save-btn');
+            var editingId = btn.getAttribute('data-editing-id');
+            var orig = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+
+            var url = editingId ? '/api/targets/' + editingId : '/api/targets';
+            var method = editingId ? 'PATCH' : 'POST';
+            var payload = editingId ? { targetCount: count, notes: notes } : { type: 'yearly', year: year, targetCount: count, notes: notes };
+
+            CIPRMS.api(url, { method: method, json: payload, quiet: true }).then(function (res) {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+                if (!res.ok) {
+                    errEl.textContent = (res.data && res.data.error) || res.error || 'Could not save the target.';
+                    errEl.classList.remove('d-none');
+                    return;
+                }
+                CIPRMS.toast(editingId ? 'Target updated.' : 'Target set.', 'success');
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('target-modal')).hide();
+                location.reload();
+            });
+        }
+
+        function getTargetAiSuggestion(linkEl) {
+            var card = document.getElementById('yearly-target-card');
+            var targetId = card.getAttribute('data-target-id');
+            if (!targetId) return;
+            var box = document.getElementById('yearly-target-ai-suggestion');
+            var orig = linkEl.innerHTML;
+            linkEl.disabled = true;
+            linkEl.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Thinking…';
+            CIPRMS.api('/api/targets/' + targetId + '/ai-suggestion', { method: 'POST', json: {}, quiet: true }).then(function (res) {
+                linkEl.disabled = false;
+                linkEl.innerHTML = orig;
+                var data = res.data || {};
+                // "Show nothing or a rule-based message" when AI is off or the call failed — never a dead end
+                // or a scary error, this is explicitly an optional enhancement, not a required part of the card.
+                if (!res.ok || data.aiBlocked || data.error || !data.suggestion) {
+                    linkEl.classList.add('d-none');
+                    return;
+                }
+                box.textContent = data.suggestion;
+                box.classList.remove('d-none');
+                linkEl.classList.add('d-none');
             });
         }
 

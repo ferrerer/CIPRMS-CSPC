@@ -373,6 +373,72 @@ async function getAiInsights(db, user, params = {}, deps = {}) {
   return generateAndCache(db, snapshot, cacheKey, scope, deps);
 }
 
+// ── Yearly Target card suggestion (2026-11) ──────────────────────────────────────────────────────
+// A separate, much smaller sibling of getAiInsights() above: one short free-text sentence about a
+// single target, not a validated multi-claim catalog about the whole institution. Reuses the same
+// approval gate, HTTP call primitive, retry wrapper and generic cache helpers as getAiInsights() —
+// it does NOT reuse buildIndicatorCatalog/buildPrompt/validateClaims, which are shaped specifically
+// around the claims schema those other routes need.
+const TARGET_SUGGESTION_SCHEMA = {
+  type: 'object',
+  properties: { suggestion: { type: 'string' } },
+  required: ['suggestion'],
+};
+const MAX_SUGGESTION_LENGTH = 320;
+
+function buildTargetSuggestionPrompt(figures) {
+  return {
+    systemInstruction: 'You are a strategic-analytics interpreter for a university research-partnerships office. '
+      + 'You are given a fixed set of pre-verified numeric figures about this year\'s partnership target. Write '
+      + 'ONE short, concrete suggestion (1-2 sentences, under 320 characters) on how to close the gap or where to '
+      + 'focus effort. Never invent a number not given to you. Never claim a trend, growth rate, or forecast.',
+    prompt: `Figures (JSON):\n${JSON.stringify(figures)}\n\nRespond with a JSON object: { "suggestion": "..." }`,
+  };
+}
+
+function hashFigures(figures) {
+  return crypto.createHash('sha256').update(JSON.stringify(figures)).digest('hex');
+}
+
+/**
+ * Figures must already be fully computed by the caller (target/progress/pace figures from cirl.js,
+ * a unit breakdown from strategicAnalyticsService) — this function never queries the database or
+ * computes anything itself; it only gates, prompts, caches and calls. Same gate-order rule as
+ * getAiInsights(): approval is checked before AND after the Gemini call.
+ */
+async function getTargetSuggestion(db, figures, deps = {}) {
+  if (!isRealDataApprovedForGemini()) {
+    return { suggestion: null, aiBlocked: true, geminiConfigured: isGeminiConfigured(), reason: blockedReason() };
+  }
+
+  const modelId = deps.modelId || process.env.GEMINI_MODEL || GEMINI_MODEL_DEFAULT;
+  const cacheKey = buildCacheKey({ scope: 'target_suggestion', dataFingerprint: hashFigures(figures), modelId, promptVersion: PROMPT_VERSION, schemaVersion: SCHEMA_VERSION });
+
+  const cached = await lookupCache(db, cacheKey);
+  if (cached && !deps.forceRefresh) return { suggestion: cached.ai.suggestion, cacheStatus: 'hit' };
+
+  const promptPayload = buildTargetSuggestionPrompt(figures);
+  let raw;
+  try {
+    const callGemini = deps.callGemini || defaultCallGemini;
+    raw = await callGeminiWithRetry(callGemini, promptPayload, TARGET_SUGGESTION_SCHEMA);
+  } catch (callErr) {
+    return { suggestion: null, error: errorMessageFor(callErr), errorClass: classifyGeminiError(callErr), cacheStatus: 'miss' };
+  }
+
+  // Re-check approval AFTER the call resolves, before storing or returning anything.
+  if (!isRealDataApprovedForGemini()) {
+    return { suggestion: null, aiBlocked: true, geminiConfigured: isGeminiConfigured(), reason: blockedReason() };
+  }
+
+  let suggestion = raw && typeof raw.suggestion === 'string' ? raw.suggestion.trim() : '';
+  if (!suggestion) return { suggestion: null, error: 'AI did not return a usable suggestion.', cacheStatus: 'miss' };
+  if (suggestion.length > MAX_SUGGESTION_LENGTH) suggestion = suggestion.slice(0, MAX_SUGGESTION_LENGTH - 1) + '…';
+
+  await storeCache(db, cacheKey, 'target_suggestion', { suggestion, modelId, generatedAt: new Date().toISOString() });
+  return { suggestion, cacheStatus: 'miss' };
+}
+
 module.exports = {
   GEMINI_MODEL_DEFAULT, PROMPT_VERSION, SCHEMA_VERSION, CACHE_TTL_MS,
   ALLOWED_INDICATOR_FIELDS, ALLOWED_CATEGORIES, MAX_LABEL_LENGTH, MAX_INDICATORS, MAX_PAYLOAD_BYTES,
@@ -392,5 +458,6 @@ module.exports = {
   lookupCache,
   storeCache,
   getAiInsights,
+  getTargetSuggestion,
   _inFlight: inFlight, // test-only visibility into the coalescing map, to assert cleanup after success/failure
 };

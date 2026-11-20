@@ -2834,7 +2834,6 @@ const DOCUMENT_TYPE_SUGGESTIONS = [
 // Head), not tied to whichever Staff/Administrator account processed the
 // request, so it is intentionally a constant rather than session data.
 const DR_APPROVER_NAME = 'Filmor J. Murillo';
-const DR_APPROVER_TITLE = 'Head, Center for International Relations and Linkages';
 
 // Document Request workflow (2026-09-04): the granular, ordered pipeline a
 // document request moves through after being submitted/received, replacing
@@ -3067,8 +3066,8 @@ app.patch('/api/document-requests/:id', requireStaffAccess, announce('documentRe
     const now = new Date().toISOString();
     // decidedBy/updatedAt track who last touched the status, for audit
     // purposes. The printable form's "Approved By" line is a fixed
-    // institutional signatory (DR_APPROVER_NAME/DR_APPROVER_TITLE, rendered
-    // in drFormFields below) and is never taken from this field.
+    // institutional signatory (DR_APPROVER_NAME, rendered in drFormFields
+    // below) and is never taken from this field.
     const setFields = { status, remark: remark || '', updatedAt: now, decidedBy: req.session.user.name };
     if (status === 'Approved') {
       setFields.approvedAt = now;
@@ -3416,7 +3415,6 @@ function drFormFields(r) {
   return {
     dateTimeStr, documentItems, fmtDate, isFulfilled,
     approverName: isFulfilled ? DR_APPROVER_NAME : '',
-    approverTitle: isFulfilled ? DR_APPROVER_TITLE : '',
     approvedDateStr: isFulfilled ? fmtDate(r.approvedAt || r.updatedAt) : '',
     approverSignaturePath,
     hasApproverSignature: !!approverSignaturePath
@@ -5186,7 +5184,7 @@ function renderDocumentRequestPdf(res, r) {
   res.on('error', (err) => console.error('❌ Document Request PDF response stream error:', err));
   doc.pipe(res);
 
-  const { dateTimeStr, documentItems, fmtDate, isFulfilled, approverName, approverTitle, approvedDateStr, approverSignaturePath } = drFormFields(r);
+  const { dateTimeStr, documentItems, fmtDate, isFulfilled, approverName, approvedDateStr, approverSignaturePath } = drFormFields(r);
   const left = doc.page.margins.left;
   const right = doc.page.width - doc.page.margins.right;
   const contentWidth = right - left;
@@ -5299,36 +5297,23 @@ function renderDocumentRequestPdf(res, r) {
   // handler above) and only appear once the request is truly Fulfilled.
   const colW = contentWidth / 3;
   const sigCols = [
-    { label: 'Approved By:', name: approverName, sub: approverTitle, date: approvedDateStr },
+    { label: 'Approved By:', name: approverName, date: approvedDateStr },
     { label: 'Released By:', name: r.releasedBy, date: fmtDate(r.releasedAt) },
     { label: 'Received By:', name: r.receivedBy, date: fmtDate(r.receivedAt) }
   ];
   // Layout per column (mirrors the browser print view): label, the signatory's
-  // NAME sitting on the signature line, the signatory's TITLE under the line, then
-  // the DATE under the title. The title used to be drawn at the same height as the
-  // line and the DATE, so the Approver's two-line title ("Head, Center for
-  // International Relations and Linkages") was struck through by the line and
-  // printed on top of "DATE:". The name is kept on one line (shrunk, then
-  // truncated, if it would not fit) so it can never wrap down onto the line.
+  // NAME sitting above the signature line, then the DATE under the line — all
+  // three columns use the exact same name/line/date positions, whether or not
+  // that column has a signature image. The signature (Approved By, Completed
+  // only) is drawn with absolute coordinates derived from the fixed nameY, so
+  // adding or removing it never shifts the name, line, or date of ANY column.
   const sigTop = doc.y;
   const sigW = colW - 20;
   const sigLineY = sigTop + 50;
+  const dateY = sigTop + 58;
   sigCols.forEach((col, i) => {
     const x = left + i * colW;
     doc.font('Helvetica').fontSize(9).text(col.label, x, sigTop, { width: sigW });
-
-    // The Head's actual e-signature (2026-11) only ever applies to the Approved By column, and only once
-    // drFormFields has already confirmed the request is Completed and a snapshot file exists on disk.
-    const hasSig = i === 0 && approverSignaturePath;
-    if (hasSig) {
-      try {
-        const imgH = 45; // 40-50px tall per spec; width follows the image's own aspect ratio (fit)
-        doc.image(approverSignaturePath, x, sigLineY - imgH + 8, { fit: [sigW, imgH], align: 'center', valign: 'bottom' });
-      } catch (e) {
-        // Corrupt/unreadable file on disk — print the form with no signature rather than fail the whole PDF.
-        console.error('❌ Document Request PDF signature image error:', e);
-      }
-    }
 
     let name = col.name || ' ';
     let nameSize = 10;
@@ -5336,28 +5321,25 @@ function renderDocumentRequestPdf(res, r) {
     while (nameSize > 7 && doc.fontSize(nameSize).widthOfString(name) > sigW) nameSize -= 0.5;
     doc.fontSize(nameSize);
     while (name.length > 1 && doc.widthOfString(name) > sigW) name = name.slice(0, -2) + '…';
+    const nameY = sigTop + 34 + (10 - nameSize);
 
-    doc.moveTo(x, sigLineY).lineTo(x + sigW, sigLineY).stroke();
-
-    if (hasSig) {
-      // With the signature image sitting on the line (above), the typed name moves below it, reading as
-      // the caption under a real signature rather than sitting on the line itself.
-      doc.text(name, x, sigLineY + 3, { width: sigW, align: 'center', lineBreak: false });
-      let cy = doc.y + 2;
-      if (col.sub) {
-        doc.font('Helvetica').fontSize(7.5).text(col.sub, x, cy, { width: sigW, align: 'center' });
-        cy = doc.y + 3;
+    // The Head's actual e-signature (2026-11) only ever applies to the Approved By column, and only once
+    // drFormFields has already confirmed the request is Completed and a snapshot file exists on disk.
+    // Positioned entirely from nameY, with its bottom edge overlapping the top of the name slightly, like
+    // a real signature sitting just above its printed caption.
+    if (i === 0 && approverSignaturePath) {
+      try {
+        const imgH = 45; // 40-50px tall per spec; width follows the image's own aspect ratio (fit)
+        doc.image(approverSignaturePath, x, nameY - imgH + 6, { fit: [sigW, imgH], align: 'center', valign: 'bottom' });
+      } catch (e) {
+        // Corrupt/unreadable file on disk — print the form with no signature rather than fail the whole PDF.
+        console.error('❌ Document Request PDF signature image error:', e);
       }
-      doc.font('Helvetica').fontSize(8).text('DATE: ' + (col.date || ''), x, cy, { width: sigW, align: 'center' });
-    } else {
-      doc.text(name, x, sigTop + 34 + (10 - nameSize), { width: sigW, align: 'center', lineBreak: false });
-      let dateY = sigTop + 54;
-      if (col.sub) {
-        doc.font('Helvetica').fontSize(7.5).text(col.sub, x, sigLineY + 3, { width: sigW, align: 'center' });
-        dateY = doc.y + 3;
-      }
-      doc.font('Helvetica').fontSize(8).text('DATE: ' + (col.date || ''), x, dateY, { width: sigW, align: 'center' });
     }
+
+    doc.font('Helvetica-Bold').fontSize(nameSize).text(name, x, nameY, { width: sigW, align: 'center', lineBreak: false });
+    doc.moveTo(x, sigLineY).lineTo(x + sigW, sigLineY).stroke();
+    doc.font('Helvetica').fontSize(8).text('DATE: ' + (col.date || ''), x, dateY, { width: sigW, align: 'center' });
   });
 
   // ── Footer ──
@@ -10743,6 +10725,29 @@ async function withTargetProgress(db, targets) {
   return Promise.all(targets.map(async (t) => ({ ...t, progress: await computeTargetAccomplishment(db, t) })));
 }
 
+// ── Yearly Target dashboard card helpers (2026-11, replaces "Expansion Opportunity") ───────────
+// Days remaining counts the WHOLE of today through Dec 31 (ceil), so it reads "42 days left" on the
+// morning of day 42, not 41 — matches how a person counts "days left in the year."
+function yearlyTargetDaysLeft(year, now = new Date()) {
+  const yearEnd = new Date(year, 11, 31, 23, 59, 59, 999);
+  return Math.max(0, Math.ceil((yearEnd - now) / 86400000));
+}
+
+// System-calculated (never the AI): compares actual progress against expected PACE — how much of the
+// year has elapsed — not against the raw percentage alone, so a target half-met halfway through the
+// year reads "On track" while the same half-met target with only a week left reads "Behind pace."
+// "Achieved" takes priority regardless of pace once the count is actually reached.
+function yearlyTargetStatusLabel(target, progress, now = new Date()) {
+  if (progress.current >= target.targetCount) return 'Achieved';
+  const yearStart = new Date(target.year, 0, 1);
+  const yearEndExclusive = new Date(target.year + 1, 0, 1);
+  const totalDays = (yearEndExclusive - yearStart) / 86400000;
+  const elapsedDays = Math.min(totalDays, Math.max(0, (now - yearStart) / 86400000));
+  const expectedFraction = totalDays > 0 ? elapsedDays / totalDays : 1;
+  const actualFraction = target.targetCount > 0 ? progress.current / target.targetCount : 0;
+  return actualFraction >= expectedFraction ? 'On track' : 'Behind pace';
+}
+
 function validateTargetInput(body) {
   const type = body.type;
   if (!TARGET_TYPES.includes(type)) return { error: 'type must be "monthly" or "yearly".' };
@@ -10767,13 +10772,24 @@ function validateTargetInput(body) {
     return { error: 'Please enter a target count of at least 1.' };
   }
 
-  return { value: { type, year, month, targetCount } };
+  const notes = sanitizeTargetNotes(body.notes);
+
+  return { value: { type, year, month, targetCount, notes } };
 }
 
-// Viewing is Administrator+Staff (full dashboard parity, matching every
-// other dashboard-adjacent read in this app) — Auth. Personnel and
-// potential_partner get no target-management visibility, unchanged from
-// their existing access policy. Mutations are requireAdmin-only below.
+// Optional, free-text context for a target (e.g. "focus on renewing CCS MOUs") — never interpreted
+// or validated beyond length/type, and never sent to Gemini (the AI suggestion route only ever sees
+// the deterministic figures it builds itself, not this field).
+const TARGET_NOTES_MAX_LENGTH = 500;
+function sanitizeTargetNotes(notes) {
+  return typeof notes === 'string' ? notes.trim().slice(0, TARGET_NOTES_MAX_LENGTH) : '';
+}
+
+// Viewing, creating and editing are all Administrator+Staff (full dashboard parity, matching every
+// other dashboard-adjacent read in this app, and confirmed 2026-11 for the Yearly Target dashboard
+// card specifically) — Auth. Personnel and potential_partner get no target-management visibility at
+// all. Deleting remains Administrator-only below: it is more destructive than the card ever asks
+// for, so its access was deliberately left unchanged rather than widened along with the others.
 app.get('/api/targets', requireStaffAccess, async (req, res) => {
   try {
     const db = getDb();
@@ -10785,7 +10801,7 @@ app.get('/api/targets', requireStaffAccess, async (req, res) => {
   }
 });
 
-app.post('/api/targets', requireAdmin, async (req, res) => {
+app.post('/api/targets', requireStaffAccess, async (req, res) => {
   const { error, value } = validateTargetInput(req.body);
   if (error) return res.status(400).json({ error });
   try {
@@ -10812,7 +10828,7 @@ app.post('/api/targets', requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/api/targets/:id', requireAdmin, async (req, res) => {
+app.patch('/api/targets/:id', requireStaffAccess, async (req, res) => {
   const id = parseInt(req.params.id);
   try {
     const db = getDb();
@@ -10823,11 +10839,12 @@ app.patch('/api/targets/:id', requireAdmin, async (req, res) => {
     if (!Number.isInteger(targetCount) || targetCount < 1) {
       return res.status(400).json({ error: 'Please enter a target count of at least 1.' });
     }
-    // Only targetCount (and active) are editable — type/year/month define the
+    // Only targetCount, notes and active are editable — type/year/month define the
     // record's identity and are covered by the unique index; changing them
     // would just be deleting one target and creating another.
     const setFields = { targetCount, updatedAt: new Date().toISOString() };
     if (req.body.active !== undefined) setFields.active = !!req.body.active;
+    if (req.body.notes !== undefined) setFields.notes = sanitizeTargetNotes(req.body.notes);
 
     await db.collection('targets').updateOne({ id }, { $set: setFields });
     const updated = await db.collection('targets').findOne({ id });
@@ -10958,11 +10975,48 @@ app.post('/api/ai-insights/ask', aiInsightsLimiter, requireStaffAccess, async (r
   }
 });
 
+// ── Yearly Target card: AI suggestion (2026-11) ─────────────────────────────────────────────────
+// Generated on demand ("Get AI suggestion" link), never on dashboard load — the dashboard route
+// itself never calls Gemini. Same RBAC/rate-limit gate as the routes above; figures passed to
+// aiInsightService.getTargetSuggestion are built entirely from functions that already exist
+// (computeTargetAccomplishment, the pace/days-left helpers below, and strategicAnalyticsService's
+// per-unit breakdown) — this route computes nothing new, it only assembles what's already computed.
+app.post('/api/targets/:id/ai-suggestion', aiInsightsLimiter, requireStaffAccess, async (req, res) => {
+  const id = parseInt(req.params.id);
+  try {
+    const db = getDb();
+    const target = await db.collection('targets').findOne({ id });
+    if (!target) return res.status(404).json({ error: 'Target not found.' });
+
+    const progress = await computeTargetAccomplishment(db, target);
+    const statusLabel = yearlyTargetStatusLabel(target, progress);
+    const daysLeft = yearlyTargetDaysLeft(target.year);
+    const breakdown = await strategicAnalyticsService.computeUnitPartnershipBreakdown(db);
+    const lowestActiveUnit = breakdown.length
+      ? breakdown.slice().sort((a, b) => a.active - b.active || a.unit.localeCompare(b.unit))[0]
+      : null;
+
+    const figures = {
+      year: target.year, targetCount: target.targetCount, current: progress.current,
+      lacking: progress.lacking, percentage: progress.rawPercentage, statusLabel, daysLeft,
+      lowestActiveUnit: lowestActiveUnit ? { unit: lowestActiveUnit.unit, active: lowestActiveUnit.active, total: lowestActiveUnit.total } : null
+    };
+    const result = await aiInsightService.getTargetSuggestion(db, figures, { forceRefresh: req.body.forceRefresh === true });
+
+    const outcome = result.aiBlocked ? 'blocked' : (result.error ? 'error' : (result.suggestion ? 'success' : 'cache_miss'));
+    await logActivity(db, req.session.user, 'AI_INSIGHT_REQUEST', `AI target suggestion requested for ${target.year} (${result.cacheStatus || 'n/a'})`, {
+      category: 'AI_INSIGHT', status: outcome,
+      details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('❌ Target AI suggestion error:', err);
+    res.status(500).json({ error: 'Unable to generate a suggestion right now. Please try again.' });
+  }
+});
+
 async function computeDashboardStats(db) {
-  const [allPartnerships, allRequests] = await Promise.all([
-    db.collection('partnerships').find({}).toArray(),
-    db.collection('requests').find({}).toArray()
-  ]);
+  const allPartnerships = await db.collection('partnerships').find({}).toArray();
 
   // Recompute each partnership's status live from its end date — the same pattern already used
   // by /api/partnerships/stats, computeCustomReportData, and the comparison-report builder. The
@@ -11015,17 +11069,16 @@ async function computeDashboardStats(db) {
     insightRenewal = 'No partnerships are currently expiring within the next 90 days.';
   }
 
-  // ── DSS: Expansion Opportunity ────────────────────────────────────────────
-  const pendingRequests = allRequests.filter(r => r.status === 'Pending');
-  let insightExpansion;
-  if (pendingRequests.length) {
-    const byCountry = {};
-    pendingRequests.forEach(r => { const c = r.country || 'an unspecified country'; byCountry[c] = (byCountry[c] || 0) + 1; });
-    const [topCountry, topCount] = Object.entries(byCountry).sort((a, b) => b[1] - a[1])[0];
-    insightExpansion = `${topCount} pending request${topCount > 1 ? 's' : ''} target${topCount > 1 ? '' : 's'} partnerships in ${topCountry}. Consider prioritizing this region for new agreements.`;
-  } else {
-    insightExpansion = 'No pending partnership requests at this time.';
-  }
+  // ── DSS: Yearly Target (2026-11, replaces "Expansion Opportunity") ──────────
+  // Only ONE target type/dimension exists here (org-wide yearly, no per-unit/MOA-vs-MOU split,
+  // confirmed 2026-11 for this card) — the exact same `targets` collection and
+  // computeTargetAccomplishment() the pre-existing Target Tracker API already uses, never a second
+  // schema or a second counting rule.
+  const yearlyTargetYear = new Date().getFullYear();
+  const yearlyTarget = await db.collection('targets').findOne({ type: 'yearly', year: yearlyTargetYear });
+  const yearlyTargetProgress = yearlyTarget ? await computeTargetAccomplishment(db, yearlyTarget) : null;
+  const yearlyTargetStatus = yearlyTarget ? yearlyTargetStatusLabel(yearlyTarget, yearlyTargetProgress) : null;
+  const yearlyTargetDays = yearlyTargetDaysLeft(yearlyTargetYear);
 
   // ── DSS: Resource Optimization ────────────────────────────────────────────
   const expiredList = allPartnerships.filter(p => p.status === 'Expired');
@@ -11036,7 +11089,10 @@ async function computeDashboardStats(db) {
     insightOptimization = 'No expired partnerships currently require review.';
   }
 
-  return { dashActive, dashExpiring, dashExpired, dashTotal, activePartnerships, insightRenewal, insightExpansion, insightOptimization };
+  return {
+    dashActive, dashExpiring, dashExpired, dashTotal, activePartnerships, insightRenewal, insightOptimization,
+    yearlyTargetYear, yearlyTarget, yearlyTargetProgress, yearlyTargetStatus, yearlyTargetDays
+  };
 }
 
 // ── ACHIEVEMENTS (2026-11) — institutional achievements (QS Rankings, TÜV Certifications, PQA,
@@ -11318,8 +11374,9 @@ app.get('/dashboard', requireAdmin, async (req, res) => {
       dashActive: 0, dashExpiring: 0, dashExpired: 0, dashTotal: 0,
       activePartnerships: [],
       insightRenewal: 'Could not load renewal data.',
-      insightExpansion: 'Could not load expansion data.',
-      insightOptimization: 'Could not load optimization data.'
+      insightOptimization: 'Could not load optimization data.',
+      yearlyTargetYear: new Date().getFullYear(), yearlyTarget: null, yearlyTargetProgress: null,
+      yearlyTargetStatus: null, yearlyTargetDays: null
     });
   }
 });
@@ -11532,8 +11589,9 @@ app.get('/staff/dashboard', requireStaffAccess, async (req, res) => {
       dashActive: 0, dashExpiring: 0, dashExpired: 0, dashTotal: 0,
       activePartnerships: [],
       insightRenewal: 'Could not load renewal data.',
-      insightExpansion: 'Could not load expansion data.',
-      insightOptimization: 'Could not load optimization data.'
+      insightOptimization: 'Could not load optimization data.',
+      yearlyTargetYear: new Date().getFullYear(), yearlyTarget: null, yearlyTargetProgress: null,
+      yearlyTargetStatus: null, yearlyTargetDays: null
     });
   }
 });

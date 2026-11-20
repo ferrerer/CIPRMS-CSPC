@@ -67,14 +67,17 @@ describe('RBAC', () => {
     createdTargetIds.push(res.body.target.id);
   });
 
-  test('Test 2 — non-admin roles cannot create a target (redirected, matching existing requireAdmin convention)', async () => {
+  test('Test 2 — Staff can also create a target (2026-11, confirmed for the Yearly Target dashboard card); Auth. Personnel and potential_partner still cannot', async () => {
     const staffRes = await staffAgent.post('/api/targets').send({ type: 'yearly', year: 2032, targetCount: 10 });
-    expect(staffRes.status).toBe(302);
-    const personnelRes = await personnelAgent.post('/api/targets').send({ type: 'yearly', year: 2032, targetCount: 10 });
+    expect(staffRes.status).toBe(200);
+    expect(staffRes.body.target.createdBy).toBe('jesttest Staff');
+    createdTargetIds.push(staffRes.body.target.id);
+
+    const personnelRes = await personnelAgent.post('/api/targets').send({ type: 'yearly', year: 2034, targetCount: 10 });
     expect(personnelRes.status).toBe(302);
-    const partnerRes = await partnerAgent.post('/api/targets').send({ type: 'yearly', year: 2032, targetCount: 10 });
+    const partnerRes = await partnerAgent.post('/api/targets').send({ type: 'yearly', year: 2034, targetCount: 10 });
     expect(partnerRes.status).toBe(302);
-    const created = await db.collection('targets').findOne({ type: 'yearly', year: 2032 });
+    const created = await db.collection('targets').findOne({ type: 'yearly', year: 2034 });
     expect(created).toBeNull();
   });
 
@@ -98,12 +101,17 @@ describe('RBAC', () => {
     expect(res.body.target.targetCount).toBe(75);
   });
 
-  test('Test 4 — non-admin cannot update a target', async () => {
+  test('Test 4 — Staff can also update a target; Auth. Personnel still cannot', async () => {
     const target = await db.collection('targets').findOne({ type: 'yearly', year: 2031 });
-    const res = await staffAgent.patch(`/api/targets/${target.id}`).send({ targetCount: 999 });
-    expect(res.status).toBe(302);
+    const staffRes = await staffAgent.patch(`/api/targets/${target.id}`).send({ targetCount: 80, notes: 'jesttest note' });
+    expect(staffRes.status).toBe(200);
+    expect(staffRes.body.target.targetCount).toBe(80);
+    expect(staffRes.body.target.notes).toBe('jesttest note');
+
+    const personnelRes = await personnelAgent.patch(`/api/targets/${target.id}`).send({ targetCount: 999 });
+    expect(personnelRes.status).toBe(302);
     const unchanged = await db.collection('targets').findOne({ id: target.id });
-    expect(unchanged.targetCount).toBe(75);
+    expect(unchanged.targetCount).toBe(80);
   });
 });
 

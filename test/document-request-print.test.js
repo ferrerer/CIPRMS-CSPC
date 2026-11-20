@@ -144,7 +144,6 @@ test('Advancing to Approved shows the fixed CIRL Head signatory on the printable
 
   const printRes = await personnelAgent.get(`/document-requests/${requestId}/print`);
   expect(printRes.text).toContain('Filmor J. Murillo');
-  expect(printRes.text).toContain('Head, Center for International Relations and Linkages');
 });
 
 test('Advancing to Release: Released By is always the actual actor (never client-supplied)', async () => {
@@ -172,7 +171,6 @@ test('Advancing to Completed: Received By honors an explicit override; full sign
   const printRes = await personnelAgent.get(`/document-requests/${requestId}/print`);
   // Approved By is the fixed institutional signatory, not the processing admin.
   expect(printRes.text).toContain('Filmor J. Murillo');
-  expect(printRes.text).toContain('Head, Center for International Relations and Linkages');
   expect(printRes.text).not.toContain('Someone Else Entirely');
   expect(printRes.text).toContain('jesttest Administrator');
   expect(printRes.text).toContain('jesttest Override Receiver');

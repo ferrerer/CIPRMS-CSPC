@@ -143,21 +143,55 @@ describe('the overlap detector itself', () => {
 });
 
 describe('Document Request PDF layout (the real download route)', () => {
-  test('an ordinary Completed request: the Approver name and title are on the page, the title under the signature line, and nothing overlaps', async () => {
+  test('an ordinary Completed request: the Approver name sits above the line, the DATE is under the line, and nothing overlaps', async () => {
     const id = await completedRequest({ receivedBy: 'jesttest Receiver' });
     const geometry = await recordGeometry(() => downloadPdf(id));
     const name = geometry.texts.find(t => t.text === APPROVER);
-    const title = geometry.texts.find(t => t.text === APPROVER_TITLE);
     expect(name).toBeTruthy();
-    expect(title).toBeTruthy();
     // the signature line of the Approved By column (the horizontal rule spanning the name)
     const line = geometry.hlines.filter(l => l.x1 <= name.x + 1 && l.x2 >= name.x + name.w - 1 && l.y >= name.y && l.y <= name.y + 30).sort((a, b) => a.y - b.y)[0];
     expect(line).toBeTruthy();
-    expect(name.y + name.h).toBeLessThanOrEqual(line.y + 0.5);   // name sits on the line
-    expect(title.y).toBeGreaterThanOrEqual(line.y);              // title is under it
+    expect(name.y + name.h).toBeLessThanOrEqual(line.y + 0.5);   // name sits above the line
     const date = geometry.texts.find(t => t.text.startsWith('DATE:') && t.x === name.x);
-    expect(date.y).toBeGreaterThanOrEqual(title.y + title.h - 0.5); // and the DATE is under the title
+    expect(date.y).toBeGreaterThanOrEqual(line.y);               // and the DATE is under the line
     expect(overlaps(geometry)).toEqual([]);
+  });
+
+  test('Approved By aligns exactly with Released By/Received By — same name, line, and date heights — whether or not it carries a signature', async () => {
+    // One Completed (and signed) request, one request still in progress (no Approved By text at all,
+    // but Released By/Received By geometry to compare the OTHER two columns' baseline against).
+    const signedId = await completedRequest({ receivedBy: 'jesttest Receiver' });
+    const signedGeometry = await recordGeometry(() => downloadPdf(signedId));
+    const approvedName = signedGeometry.texts.find(t => t.text === APPROVER);
+    const releasedName = signedGeometry.texts.find(t => t.text === 'jesttest Administrator');
+    const receivedName = signedGeometry.texts.find(t => t.text === 'jesttest Receiver');
+    expect(approvedName && releasedName && receivedName).toBeTruthy();
+    // None of these three names are wide enough to trigger the column's shrink-to-fit, so all three sit
+    // at the exact same baseline — this is the bug the task fixed (the signature used to push Approved
+    // By's name below the line while the other two stayed above it).
+    expect(approvedName.y).toBe(releasedName.y);
+    expect(approvedName.y).toBe(receivedName.y);
+
+    const lineAt = (col) => signedGeometry.hlines.filter(l => l.x1 <= col.x + 1 && l.x2 >= col.x + col.w - 1 && l.y >= col.y).sort((a, b) => a.y - b.y)[0];
+    const approvedLine = lineAt(approvedName), releasedLine = lineAt(releasedName), receivedLine = lineAt(receivedName);
+    expect(approvedLine.y).toBe(releasedLine.y);
+    expect(approvedLine.y).toBe(receivedLine.y);
+
+    const dateAt = (col) => signedGeometry.texts.find(t => t.text.startsWith('DATE:') && t.x === col.x);
+    expect(dateAt(approvedName).y).toBe(dateAt(releasedName).y);
+    expect(dateAt(approvedName).y).toBe(dateAt(receivedName).y);
+    expect(overlaps(signedGeometry)).toEqual([]);
+
+    // A request not yet Completed has no Approved By signature (and no Approved By text at all yet,
+    // since it never reached Approved) — the label itself must still land at the exact same height as
+    // it did on the signed request above (the signature must never push the whole column down).
+    const created = await partnerAgent.post('/api/document-requests').send({ institution: 'jesttest Office', documentTypes: ['jesttest doc'], notes: 'jesttest' });
+    requestIds.push(created.body.request.id);
+    const blankGeometry = await recordGeometry(() => downloadPdf(created.body.request.id));
+    const blankLabel = blankGeometry.texts.find(t => t.text === 'Approved By:');
+    const signedLabel = signedGeometry.texts.find(t => t.text === 'Approved By:');
+    expect(blankLabel.y).toBe(signedLabel.y);
+    expect(overlaps(blankGeometry)).toEqual([]);
   });
 
   test('long values (institution, purpose with an unbroken word, e-mail, a long Received By) grow their rows instead of running into the next one', async () => {
