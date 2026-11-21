@@ -209,6 +209,15 @@
                                         <button type="button" class="btn btn-sm btn-light ms-2" onclick="applyOcrToForm()">Re-apply suggested values</button>
                                         <div id="ocr-idp-panel" class="mt-3" style="display:none"></div>
                                     </div>
+                                    <!-- 2026-11 (first-upload-goes-missing fix): POST /api/ocr/confirm holds the file instead of
+                                         archiving it when findPossibleDuplicates matches something — previously `res.ok && res.data`
+                                         was true for this response shape too, so fileLink/documentId were silently left undefined. -->
+                                    <div id="ocr-duplicate-box" class="alert alert-warning mt-3 mb-0 py-2 fs-13" style="display:none">
+                                        <div class="fw-semibold mb-1"><i class="ri-error-warning-line me-1"></i><span id="ocr-duplicate-heading"></span></div>
+                                        <div id="ocr-duplicate-matches" class="mb-2"></div>
+                                        <button type="button" class="btn btn-sm btn-warning" onclick="acknowledgeOcrDuplicateAndContinue()">Upload Anyway</button>
+                                        <button type="button" class="btn btn-sm btn-light" onclick="cancelOcrDuplicateUpload()">Cancel — Don't Attach</button>
+                                    </div>
                                     <div id="ocr-error-box" class="alert alert-danger mt-3 mb-0 py-2 fs-13" style="display:none"></div>
                                 </div>
                             </div>
@@ -320,6 +329,16 @@
                                                 <input type="file" class="form-control" id="dr-f-file" accept=".pdf,.jpg,.jpeg,.png,.docx">
                                             </div>
                                             <small class="text-muted d-block">PDF, JPG, PNG, or DOCX — max 10MB. You can submit notes only, a file/image only, or both.</small>
+                                            <!-- 2026-11 (first-upload-goes-missing fix): POST /api/requests/:id/documents holds the file
+                                                 (duplicateWarningGate) instead of attaching it when findPossibleDuplicates matches something
+                                                 — previously only res.ok was checked (still true on a held response), so this showed "Submission
+                                                 sent!" while the file silently never made it into the submission at all. -->
+                                            <div id="dr-duplicate-box" class="alert alert-warning mt-2 mb-0 py-2 fs-13" style="display:none">
+                                                <div class="fw-semibold mb-1"><i class="ri-error-warning-line me-1"></i><span id="dr-duplicate-heading"></span></div>
+                                                <div id="dr-duplicate-matches" class="mb-2"></div>
+                                                <button type="button" class="btn btn-sm btn-warning" onclick="acknowledgeMoaDuplicateAndContinue()">Upload Anyway</button>
+                                                <button type="button" class="btn btn-sm btn-light" onclick="cancelMoaDuplicateUpload()">Cancel</button>
+                                            </div>
                                         </div>
                                     </div>
                                     <div class="dr-row">
@@ -396,6 +415,7 @@
     var myRequests = [];
     var editingId = null;
     var ocrExtractedResult = null;
+    var ocrConfirmJobId = null; // held for "Upload Anyway"/"Cancel" when /api/ocr/confirm reports duplicateFound
 
     function loadHistory() {
         return CIPRMS.api('/api/requests/mine', { quiet: true }).then(function (res) {
@@ -410,11 +430,18 @@
         document.getElementById('f-start').value = '';
         document.getElementById('f-end').value = '';
         document.getElementById('f-country').classList.remove('is-invalid');
+        // A duplicate held from a previous open of this form that was never resolved (closed/reset
+        // without "Upload Anyway"/"Cancel") would otherwise just leak until its own job TTL.
+        if (ocrConfirmJobId) {
+            fetch('/api/ocr/discard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: ocrConfirmJobId }) }).catch(function () {});
+        }
         ocrExtractedResult = null;
+        ocrConfirmJobId = null;
         document.getElementById('ocr-file-input').value = '';
         if (window._partnerOcrDropzone && typeof window._partnerOcrDropzone.reset === 'function') window._partnerOcrDropzone.reset();
         document.getElementById('ocr-progress-wrap').style.display = 'none';
         document.getElementById('ocr-result-box').style.display = 'none';
+        document.getElementById('ocr-duplicate-box').style.display = 'none';
         document.getElementById('ocr-error-box').style.display = 'none';
         document.getElementById('ocr-idp-panel').style.display = 'none';
         document.getElementById('f-type-warn').style.display = 'none';
@@ -472,6 +499,12 @@
     // One submission at a time (CIPRMS.busy ignores a double click while the first is in flight), and a draft is only
     // submitted once its edit has actually been saved.
     function submitRequest(btn) {
+        // The user must explicitly resolve a duplicate warning (Upload Anyway / Cancel) before
+        // submitting — otherwise the attachment is silently left off the request with no indication why.
+        if (document.getElementById('ocr-duplicate-box').style.display !== 'none') {
+            showToast('Resolve the duplicate-document warning above before submitting.');
+            return;
+        }
         var payload = collectFormData();
         if (!payload.institution || !payload.country || !payload.type || !payload.nature) {
             showToast('Institution, country, agreement type, and nature are required to submit.');
@@ -560,13 +593,29 @@
     // logic, no duplicated archiving code) and keep its fileLink/documentId on ocrExtractedResult.
     function ocrSucceed(jobId, result) {
         ocrExtractedResult = result;
+        ocrConfirmJobId = jobId;
         applyOcrToForm();
         document.getElementById('ocr-stage-text').textContent = 'Saving to Document Library…';
+        confirmOcrUpload(jobId, false, result);
+    }
+
+    // 2026-11 (first-upload-goes-missing fix): /api/ocr/confirm holds the file (archives nothing, returns
+    // duplicateFound instead) when findPossibleDuplicates matches something — `res.ok && res.data` is still
+    // true for that response shape, so it used to fall straight into the "success" branch with fileLink/
+    // documentId left undefined, and collectFormData() would submit with no attachment at all. Split out
+    // of ocrSucceed so "Upload Anyway" can re-call this exact step with acknowledgeDuplicate.
+    function confirmOcrUpload(jobId, acknowledgeDuplicate, result) {
         CIPRMS.api('/api/ocr/confirm', {
             method: 'POST', quiet: true,
-            json: { jobId: jobId, documentType: document.getElementById('f-type').value || undefined }
+            json: { jobId: jobId, documentType: document.getElementById('f-type').value || undefined, acknowledgeDuplicate: !!acknowledgeDuplicate }
         }).then(function (res) {
             document.getElementById('ocr-progress-wrap').style.display = 'none';
+            if (res.ok && res.data && res.data.duplicateFound) {
+                document.getElementById('ocr-result-box').style.display = 'none';
+                renderOcrDuplicateWarning(res.data);
+                return;
+            }
+            document.getElementById('ocr-duplicate-box').style.display = 'none';
             document.getElementById('ocr-result-box').style.display = '';
             if (res.ok && res.data) {
                 ocrExtractedResult.fileLink = res.data.fileLink;
@@ -588,6 +637,31 @@
                 });
             }
         });
+    }
+
+    function renderOcrDuplicateWarning(data) {
+        document.getElementById('ocr-duplicate-heading').textContent = data.matchLevel === 'exact'
+            ? 'This file already exists in the Document Library.' : 'This document looks similar to existing documents.';
+        var list = document.getElementById('ocr-duplicate-matches');
+        list.innerHTML = (data.genericOnly || !data.matches || !data.matches.length)
+            ? '<span class="text-muted">A similar document may already exist.</span>'
+            : data.matches.map(function (m) { return '<div>• ' + escapeHtml(m.title || 'Untitled Document') + (m.institution ? ' — ' + escapeHtml(m.institution) : '') + '</div>'; }).join('');
+        document.getElementById('ocr-duplicate-box').style.display = '';
+    }
+
+    function acknowledgeOcrDuplicateAndContinue() {
+        if (!ocrConfirmJobId) return;
+        confirmOcrUpload(ocrConfirmJobId, true, ocrExtractedResult);
+    }
+
+    function cancelOcrDuplicateUpload() {
+        if (ocrConfirmJobId) {
+            fetch('/api/ocr/discard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: ocrConfirmJobId }) }).catch(function () {});
+        }
+        ocrConfirmJobId = null;
+        if (ocrExtractedResult) { ocrExtractedResult.fileLink = undefined; ocrExtractedResult.documentId = undefined; }
+        document.getElementById('ocr-duplicate-box').style.display = 'none';
+        showToast('Upload cancelled — nothing was attached.');
     }
 
     function ocrIsoDate(str) {
@@ -706,6 +780,7 @@
        Accepted: notes only, a file/image only, or both. */
     var MOA_MAX_BYTES = 10 * 1024 * 1024;
     var moaPendingId = null; // a submission that was created but whose file upload failed — Submit then retries ONLY the upload
+    var moaDuplicatePendingId = null; // a held duplicate (duplicateWarningGate) awaiting "Upload Anyway"/"Cancel" — distinct from moaPendingId above
 
     function resetDocRequestForm() {
         document.getElementById('dr-f-inst').value = drAutoInst;
@@ -713,7 +788,45 @@
         document.getElementById('dr-f-file').value = '';
         if (window._partnerDrDropzone && typeof window._partnerDrDropzone.reset === 'function') window._partnerDrDropzone.reset();
         moaPendingId = null;
+        if (moaDuplicatePendingId) {
+            CIPRMS.api('/api/uploads/pending/' + moaDuplicatePendingId + '/cancel', { method: 'POST', quiet: true }).catch(function () {});
+            moaDuplicatePendingId = null;
+        }
+        document.getElementById('dr-duplicate-box').style.display = 'none';
         document.querySelectorAll('#panel-dr .is-invalid').forEach(function (el) { el.classList.remove('is-invalid'); });
+    }
+
+    function renderMoaDuplicateWarning(data) {
+        moaDuplicatePendingId = data.pendingId;
+        document.getElementById('dr-duplicate-heading').textContent = data.matchLevel === 'exact'
+            ? 'This file already exists in the Document Library.' : 'This document looks similar to existing documents.';
+        var list = document.getElementById('dr-duplicate-matches');
+        list.innerHTML = (data.genericOnly || !data.matches || !data.matches.length)
+            ? '<span class="text-muted">A similar document may already exist.</span>'
+            : data.matches.map(function (m) { return '<div>• ' + escapeHtml(m.title || 'Untitled Document') + (m.institution ? ' — ' + escapeHtml(m.institution) : '') + '</div>'; }).join('');
+        document.getElementById('dr-duplicate-box').style.display = '';
+    }
+
+    function acknowledgeMoaDuplicateAndContinue() {
+        if (!moaDuplicatePendingId) return;
+        var pendingId = moaDuplicatePendingId;
+        moaDuplicatePendingId = null;
+        document.getElementById('dr-duplicate-box').style.display = 'none';
+        CIPRMS.api('/api/uploads/pending/' + pendingId + '/accept', { method: 'POST', quiet: true }).then(function (res) {
+            if (!res.ok) { showToast(res.error || 'Upload failed.'); return; }
+            showToast('Submission sent to CSPC-CIRL!', 'success');
+            resetDocRequestForm();
+        });
+    }
+
+    function cancelMoaDuplicateUpload() {
+        if (moaDuplicatePendingId) {
+            CIPRMS.api('/api/uploads/pending/' + moaDuplicatePendingId + '/cancel', { method: 'POST', quiet: true }).catch(function () {});
+            moaDuplicatePendingId = null;
+        }
+        document.getElementById('dr-duplicate-box').style.display = 'none';
+        showToast('Your notes were received; the file was not attached.', 'success');
+        resetDocRequestForm();
     }
 
     function moaFileProblem(file) {
@@ -756,9 +869,18 @@
             fd.append('initial', '1');
             return CIPRMS.api('/api/requests/' + id + '/documents', { method: 'POST', body: fd, quiet: true }).then(function (res) {
                 if (!res.ok) { var err = new Error(res.error || 'Upload failed.'); err.uploadStep = true; err.requestId = id; throw err; }
+                if (res.data.duplicateFound) {
+                    // Not a failure — the submission itself exists; only its file is on hold pending a
+                    // decision. Remember the request id the same way a real upload failure does, so a
+                    // "Cancel" or page reload can still retry the file step later if needed.
+                    moaPendingId = id;
+                    renderMoaDuplicateWarning(res.data);
+                    return 'DUPLICATE_HELD';
+                }
                 return id;
             });
-        }).then(function () {
+        }).then(function (result) {
+            if (result === 'DUPLICATE_HELD') return;
             showToast('Submission sent to CSPC-CIRL!', 'success');
             resetDocRequestForm();
         }).catch(function (e) {

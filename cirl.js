@@ -2365,6 +2365,18 @@ app.post('/api/requests/:id/submit', requireRequester, denyCollegeStaffPartnersh
         type: updated.type, submittedBy: updated.requestedBy, submittedByEmail: updated.submittedByEmail
       });
     }
+    // 2026-11 (first-upload-goes-missing fix): a draft's attachmentLink is set at CREATION time (OCR-
+    // confirmed before the request had an id, so its Document Library entry is still untagged — see
+    // POST /api/requests' own identical step) and this route — submitting that SAME draft later — never
+    // retro-tagged it, unlike POST /api/requests (brand-new, non-draft submission) and PATCH
+    // /api/requests/:id/edit (attachmentLink changed) both already do. A draft submitted without ever
+    // being edited fell through every one of those three paths and stayed untagged forever.
+    if (updated.attachmentLink) {
+      await db.collection('documents').updateOne(
+        { fileLink: updated.attachmentLink, requestId: { $exists: false } },
+        { $set: { requestId: id, requestType: 'partnership' } }
+      );
+    }
 
     res.json({ success: true, request: scopeLauReviewsForViewer(updated, req.session.user) });
   } catch (err) {
@@ -4559,7 +4571,11 @@ app.post('/api/uploads/pending/:pendingId/accept', requireAuth, async (req, res)
     if (!archived) {
       return res.status(404).json({ error: 'This upload is no longer pending — it may have already been resolved or expired. Please re-upload.' });
     }
-    res.json({ success: true, documentId: archived.documentId, fileLink: archived.fileLink });
+    // 2026-11 (first-upload-goes-missing fix): pass through whatever the originating route's own
+    // finishUpload() closure returned — e.g. `updated` (the request, with its now-pushed
+    // supportingDocuments entry) for /api/requests/:id/documents — not just documentId/fileLink, so a
+    // caller that accepted a held duplicate can refresh its own view without a full page reload.
+    res.json({ success: true, ...archived });
   } catch (err) {
     console.error('❌ Pending upload accept error:', err);
     res.status(500).json({ error: 'Unable to save the uploaded document right now. Please try again.' });

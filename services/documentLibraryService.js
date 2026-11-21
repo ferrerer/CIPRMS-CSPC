@@ -415,10 +415,19 @@ async function updateDocument(id, updates) {
 // not — stays fully downloadable via its own unchanged fileLink, exactly as the request's timeline
 // expects. Call this AFTER archiving the new version, passing its id, so the new document is never the
 // one that gets marked superseded by its own call.
+// 2026-11 (first-upload-goes-missing investigation): this used to match every OTHER document tagged with
+// this {requestId, requestType} regardless of its own `type` — so uploading a genuinely different document
+// to the same request (e.g. an Accreditation added after an MOA) marked the MOA superseded too, hiding it
+// from Document Library browsing even though it was never actually replaced. Only a document sharing the
+// SAME `type` as the new one is a version of it; a different type is a different document and must never
+// be touched here. The current document's own type is looked up rather than passed in, so none of this
+// function's existing callers need to change.
 async function supersedePreviousRequestDocuments(db, requestId, requestType, currentDocumentId) {
   if (requestId == null || !requestType || currentDocumentId == null) return;
+  const current = await db.collection('documents').findOne({ id: currentDocumentId }, { projection: { type: 1 } });
+  if (!current) return;
   await db.collection('documents').updateMany(
-    { requestId, requestType, id: { $ne: currentDocumentId }, superseded: { $ne: true } },
+    { requestId, requestType, type: current.type, id: { $ne: currentDocumentId }, superseded: { $ne: true } },
     { $set: { superseded: true, supersededBy: currentDocumentId, supersededAt: new Date().toISOString() } }
   );
 }
