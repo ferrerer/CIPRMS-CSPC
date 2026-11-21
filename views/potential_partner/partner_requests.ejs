@@ -354,7 +354,8 @@
 </div>
 
 <!-- Toast (shared by both panels) -->
-<div id="reg-toast" style="display:none;position:fixed;bottom:20px;right:20px;z-index:9999" class="alert alert-dark shadow-lg align-items-center">
+<div id="reg-toast" role="status" aria-live="polite" style="display:none;position:fixed;bottom:20px;right:20px;z-index:9999;max-width:420px;background:#15803d;color:#fff;border:0;font-weight:500" class="alert shadow-lg align-items-center mb-0">
+    <i id="reg-toast-icon" class="ri-checkbox-circle-fill fs-18 me-2"></i>
     <span id="reg-toast-msg"></span>
 </div>
 
@@ -374,11 +375,17 @@
         document.getElementById('tab-dr').classList.toggle('active', sec === 'dr');
     }
 
-    function showToast(msg) {
+    // kind: 'success' → solid green; anything else (validation/errors) → solid red. Both use white text so
+    // the toast is readable in light and dark mode (the old alert-dark style was barely visible).
+    function showToast(msg, kind) {
         var t = document.getElementById('reg-toast');
+        var ok = kind === 'success';
+        t.style.background = ok ? '#15803d' : '#dc2626';
+        document.getElementById('reg-toast-icon').className = (ok ? 'ri-checkbox-circle-fill' : 'ri-error-warning-fill') + ' fs-18 me-2';
         document.getElementById('reg-toast-msg').textContent = msg;
         t.style.display = 'flex';
-        setTimeout(function () { t.style.display = 'none'; }, 3500);
+        clearTimeout(t._to);
+        t._to = setTimeout(function () { t.style.display = 'none'; }, 3500);
     }
 
     /* ═══════════════════════════════════════════════════
@@ -492,7 +499,7 @@
                 step = CIPRMS.api('/api/requests', { method: 'POST', json: payload, quiet: true });
             }
             return step.then(function (res) {
-                if (res.ok) { showToast('Request submitted.'); openNewRequestForm(); return loadHistory(); }
+                if (res.ok) { showToast('Request submitted.', 'success'); openNewRequestForm(); return loadHistory(); }
                 showToast(res.error || 'Failed to submit request.');
             });
         }, 'Submitting…');
@@ -575,7 +582,7 @@
                         if (!documentId) return;
                         fetch('/api/documents/' + documentId + '/organize', {
                             method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true })
-                        }).then(function () { showToast('Upload archived — removed from the active Document Library.'); });
+                        }).then(function () { showToast('Upload archived — removed from the active Document Library.', 'success'); });
                     },
                     onViewDuplicate: function (fileLink) { window.open(fileLink, '_blank'); }
                 });
@@ -642,7 +649,7 @@
             var firstEl = document.getElementById(filled[0].id);
             if (firstEl) firstEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-        showToast('Suggested values applied — please review before saving.');
+        showToast('Suggested values applied — please review before saving.', 'success');
     }
 
     // Clicking "Requests" should land straight in the Partnership Request
@@ -752,7 +759,7 @@
                 return id;
             });
         }).then(function () {
-            showToast('Submission sent to CSPC-CIRL!');
+            showToast('Submission sent to CSPC-CIRL!', 'success');
             resetDocRequestForm();
         }).catch(function (e) {
             if (e && e.uploadStep) {

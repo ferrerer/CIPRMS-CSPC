@@ -211,13 +211,12 @@ describe('Agreement Type: MOA / MOU only', () => {
 });
 
 describe('Partner Monitoring: Approval Progress', () => {
-  test('the panel is labelled Pending / In Progress / Approved / Closed — the old "Rejected" tile that stood in for Pending is gone', async () => {
+  test('the Approval Progress panel was removed (it repeated the stat cards); the counters still use requestBuckets', async () => {
     const html = (await agents.partnerA.get('/partner/monitoring')).text;
     expect(html).toContain('function requestBuckets(list)');
-    for (const label of ['In Progress', 'Pending', 'Approved', 'Closed']) expect(html).toContain(`<small class="text-muted">${label}</small>`);
+    expect(html).not.toContain('id="approval-progress-body"');
     expect(html).not.toContain('<small class="text-muted">Rejected</small>');
-    expect(html).toContain('data-bucket="pending"');
-    // the counters and the panel read the same buckets
+    // the counters read the buckets
     expect(html).toContain("setCount('cnt-progress', b.review);");
     expect(html).toContain("setCount('cnt-approved', b.approved);");
   });
