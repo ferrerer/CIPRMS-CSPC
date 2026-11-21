@@ -29,16 +29,6 @@
         [data-bs-theme="dark"] .cr-country-option { color: #d3d5db; }
         [data-bs-theme="dark"] .cr-country-option:hover { background: #363c4c; color: #a9bcf5; }
 
-        /* ── Section Switcher Tabs (same convention as administrator/partnership_requests.ejs) ── */
-        .section-tabs { display: flex; gap: .5rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
-        .section-tab {
-            padding: .45rem 1.15rem; border-radius: 20px; font-size: .82rem; font-weight: 600;
-            cursor: pointer; border: 2px solid transparent; transition: all .18s;
-            display: flex; align-items: center; gap: .4rem; background: #f3f4fa; color: #495057;
-        }
-        .section-tab:hover { background: #e8eaf6; color: #405189; }
-        .section-tab.active { background: #405189; color: #fff; border-color: #405189; }
-
         /* ── CSPC-F-CIRL-04 "Documents Request Form" — styled to resemble the
            official paper form (bordered label/value rows) instead of a generic
            Bootstrap two-column grid. ── */
@@ -124,8 +114,6 @@
            [data-bs-theme="dark"] treatment as the doc-combo classes above,
            so they stayed hardcoded light. Same dark surface/border/text
            tones used throughout the rest of the app's dark-mode CSS. ── */
-        [data-bs-theme="dark"] .section-tab { background: #262d3d; color: #ced4da; }
-        [data-bs-theme="dark"] .section-tab:hover { background: #2f3749; color: #7094f5; }
         [data-bs-theme="dark"] .dr-form-header { border-bottom-color: #5a72d4; }
         [data-bs-theme="dark"] .dr-form-header .dr-form-title,
         [data-bs-theme="dark"] .dr-form-header .dr-form-code { color: #7094f5; }
@@ -172,14 +160,19 @@
 
                 <!-- Section switcher — Partnership Request / Submission Of MOA/MOU share this page but
                      remain fully independent forms; only one panel is visible at a time. -->
-                <div class="section-tabs">
-                    <a class="section-tab active" id="tab-pr" href="#" onclick="switchSection('pr');return false;">
-                        <i class="ri-building-4-line"></i> Partnership Request
-                    </a>
-                    <a class="section-tab" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
-                        <i class="ri-file-upload-line"></i> Submission Of MOA/MOU
-                    </a>
-                </div>
+                <!-- Plain underline tabs — same nav-tabs-custom markup as the Administrator Requests page. -->
+                <ul class="nav nav-tabs nav-tabs-custom mb-3" role="tablist">
+                    <li class="nav-item">
+                        <a class="nav-link active" id="tab-pr" href="#" onclick="switchSection('pr');return false;">
+                            <i class="ri-building-4-line me-1"></i> Partnership Request
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
+                            <i class="ri-file-upload-line me-1"></i> Submission Of MOA/MOU
+                        </a>
+                    </li>
+                </ul>
 
                 <!-- ═══════════ PANEL: PARTNERSHIP REQUEST ═══════════ -->
                 <div id="panel-pr">

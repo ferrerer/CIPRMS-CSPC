@@ -200,14 +200,16 @@ describe('Document Request print view', () => {
 });
 
 describe('Document Library — Type Filter', () => {
-  test.each(Object.entries(ADMIN_STAFF_PAGES('documents')))('%s: the Type Filter offers All / MOA / MOU / Other and no Accreditation', async (_role, { agent, url }) => {
+  test.each(Object.entries(ADMIN_STAFF_PAGES('documents')))('%s: the left-side Type Filter is gone (2026-11-21); Partner Activities is offered in the Nature dropdown instead, and there is no Accreditation filter', async (_role, { agent, url }) => {
     const res = await agent().get(url);
     expect(res.status).toBe(200);
-    const group = res.text.match(/id="type-filter-group"[\s\S]*?<\/div>/)[0];
-    const labels = [...group.matchAll(/onclick="filterType\('([^']+)'/g)].map(m => m[1]);
-    expect(labels).toEqual(['All', 'MOA', 'MOU', 'Other']);
-    expect(group).not.toMatch(/accreditation/i);
+    expect(res.text).not.toContain('id="type-filter-group"');
+    expect(res.text).not.toContain('filterType(');
+    expect(res.text).toContain('id="nature-filter"');
+    expect(res.text).toContain('Partner Activities</option>');
     expect(res.text).not.toContain("filterType('Accreditation'");
+    // the Acknowledged-duplicates checkbox moved to the toolbar, it was not removed
+    expect(res.text).toContain('id="acknowledged-only-toggle"');
   });
 
   test('existing Accreditation records are untouched: still stored, still returned by the API, still rendered under "All"', async () => {

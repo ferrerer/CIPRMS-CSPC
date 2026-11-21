@@ -5,7 +5,8 @@
 <head>
   <meta charset="utf-8" />
   <%- include('../partials/ui-state-init') %>
-  <title>Requests | CIPRMS-CSPC-CIRL</title>
+  <% var pageLabel = (typeof user !== 'undefined' && user && user.role === 'LAU') ? 'Monitoring' : 'Requests'; %>
+  <title><%= pageLabel %> | CIPRMS-CSPC-CIRL</title>
   <meta name="description" content="Manage Partnership Requests and Document Requests for CIPRMS CSPC-CIRL">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="shortcut icon" href="/images/cirl-logo.jpg">
@@ -85,194 +86,20 @@
       flex: 0 0 auto;
     }
 
-    /* ── Section Switcher Cards (restored 2026-11-20 — large clickable cards, one per table) ── */
-    .section-tabs {
-      display: flex;
-      gap: .75rem;
-      margin-bottom: 1.5rem;
-      flex-wrap: wrap;
-      align-items: stretch; /* every card the same height */
-    }
-    .section-tab {
-      flex: 1 1 0;          /* every card the same width */
-      min-width: 180px;
-      max-width: 300px;
-      padding: 1rem 1.2rem;
-      border-radius: 12px;
-      font-size: .84rem;
-      font-weight: 600;
-      cursor: pointer;
-      border: 2px solid #e9ecef;
-      transition: all .2s ease;
-      display: flex;
-      align-items: center;
-      gap: .75rem;
-      text-decoration: none;
-      color: #495057;
-      background: #fff;
-      box-shadow: 0 1px 4px rgba(0,0,0,.05);
-    }
-    .section-tab:hover {
-      border-color: #405189;
-      background: #f0f3ff;
-      color: #405189;
-      transform: translateY(-2px);
-      box-shadow: 0 4px 14px rgba(64,81,137,.12);
-    }
-    .section-tab.active {
-      border-color: #405189;
-      background: var(--vz-card-bg, #fff);
-      color: #405189;
-      box-shadow: 0 4px 14px rgba(64,81,137,.18);
-    }
-    .section-tab.active .tab-count {
-      background: #405189;
-      color: #fff;
-    }
-    .section-tab-icon {
-      width: 42px;
-      height: 42px;
-      border-radius: 10px;
-      background: rgba(255,255,255,.2);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 1.3rem;
-      flex-shrink: 0;
-      transition: background .2s;
-    }
-    .section-tab:not(.active) .section-tab-icon {
-      background: #eef1fb;
-      color: #405189;
-    }
-    .section-tab.active .section-tab-icon {
-      background: #405189;
-      color: #fff;
-    }
-    /* DR variant accent */
-    .section-tab[id="tab-dr"]:not(.active):hover {
-      border-color: #0ab39c;
-      background: #f0fdf4;
-      color: #0ab39c;
-    }
-    .section-tab[id="tab-dr"]:not(.active):hover .section-tab-icon {
-      background: #d1fae5;
-      color: #0ab39c;
-    }
-    .section-tab[id="tab-dr"].active {
-      background: var(--vz-card-bg, #fff);
-      color: #0ab39c;
-      border-color: #0ab39c;
-      box-shadow: 0 4px 14px rgba(10,179,156,.18);
-    }
-    .section-tab[id="tab-dr"].active .section-tab-icon,
-    .section-tab[id="tab-dr"].active .tab-count {
-      background: #0ab39c;
-      color: #fff;
-    }
-    .section-tab-body {
-      display: flex;
-      flex-direction: column;
-    }
-    .section-tab-title {
-      font-size: .88rem;
-      font-weight: 700;
-      line-height: 1.2;
-    }
-    .section-tab-desc {
-      font-size: .72rem;
-      font-weight: 400;
-      opacity: .75;
-      margin-top: 1px;
-    }
-    .section-tab .tab-count {
-      margin-left: auto;
-      background: rgba(255,255,255,.25);
-      border-radius: 20px;
-      padding: 2px 9px;
-      font-size: .75rem;
-      font-weight: 700;
-      flex-shrink: 0;
-    }
-    .section-tab:not(.active) .tab-count {
-      background: #e2e7f8;
-      color: #405189;
-    }
-    .section-tab[id="tab-dr"]:not(.active) .tab-count {
-      background: #d1fae5;
-      color: #0ab39c;
-    }
-    /* CDR (College Requests) variant accent */
-    .section-tab[id="tab-cdr"]:not(.active):hover {
-      border-color: #6f42c1;
-      background: #f5f0fc;
-      color: #6f42c1;
-    }
-    .section-tab[id="tab-cdr"]:not(.active):hover .section-tab-icon {
-      background: #e8d9f7;
-      color: #6f42c1;
-    }
-    .section-tab[id="tab-cdr"].active {
-      background: var(--vz-card-bg, #fff);
-      color: #6f42c1;
-      border-color: #6f42c1;
-      box-shadow: 0 4px 14px rgba(111,66,193,.18);
-    }
-    .section-tab[id="tab-cdr"].active .section-tab-icon,
-    .section-tab[id="tab-cdr"].active .tab-count {
-      background: #6f42c1;
-      color: #fff;
-    }
-    .section-tab[id="tab-cdr"]:not(.active) .tab-count {
-      background: #e8d9f7;
-      color: #6f42c1;
-    }
-    /* Dark mode for the section cards */
-    [data-bs-theme="dark"] .section-tab {
-      background: #1e2533;
-      color: #ced4da;
-      border-color: rgba(255, 255, 255, .12);
-    }
-    [data-bs-theme="dark"] .section-tab.active {
-      background: #1e2533;
-      color: #7094f5;
-      border-color: #405189;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-dr"].active {
-      color: #3bc2b0;
-      border-color: #0ab39c;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-cdr"].active {
-      color: #b18cf0;
-      border-color: #6f42c1;
-    }
-    [data-bs-theme="dark"] .section-tab:hover {
-      background: #262d3d;
-      color: #7094f5;
-    }
-    [data-bs-theme="dark"] .section-tab:not(.active) .section-tab-icon {
-      background: rgba(112, 148, 245, .15);
-      color: #7094f5;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active):hover {
-      background: rgba(10, 179, 156, .12);
-      color: #3bc2b0;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active):hover .section-tab-icon {
-      background: rgba(10, 179, 156, .18);
-      color: #3bc2b0;
-    }
-    [data-bs-theme="dark"] .section-tab:not(.active) .tab-count {
-      background: rgba(112, 148, 245, .18);
-      color: #7094f5;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active) .tab-count {
-      background: rgba(10, 179, 156, .18);
-      color: #3bc2b0;
-    }
-    [data-bs-theme="dark"] .section-tab[id="tab-cdr"]:not(.active) .tab-count {
-      background: rgba(111, 66, 193, .22);
-      color: #b18cf0;
+    /* Tabs scroll horizontally on mobile instead of wrapping (2026-11) — nav-tabs-custom's underlying
+       .nav is a plain flex-wrap row, which on a narrow viewport would stack three tabs into a tall column
+       instead of the compact single-row bar the rest of this layout matches (reports.ejs's own 3 tabs
+       happen to fit without needing this, but this page's slightly longer labels don't). Scoped to this
+       page's own card-header-tabs only, not nav-tabs-custom generally. */
+    @media (max-width: 575.98px) {
+      .card-header-tabs.nav-tabs-custom {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .card-header-tabs.nav-tabs-custom .nav-item {
+        flex: 0 0 auto;
+      }
     }
 
     /* Target Partner searchable combobox (2026-11) — same visual pattern as the Country combobox used
@@ -499,6 +326,22 @@
        Coloured with the same classes as the status badges (statusClasses), so it reads as the same status, with a
        visible caret and a hover ring so it is obvious it can be changed. Compact: a long name such as "Awaiting for
        Approval" is cut with an ellipsis inside the control instead of stretching the table. */
+    /* Requests tables: fixed column widths (set by each table's <colgroup>) so columns don't shift when
+       changing pages — long text wraps inside its cell instead of widening the column. On narrow
+       screens the table keeps a sensible minimum width and scrolls sideways inside .table-responsive. */
+    .req-fixed-cols { table-layout: fixed; width: 100%; min-width: 860px; }
+    /* Text that doesn't fit wraps onto extra lines inside its cell (between words; a single very long word
+       is broken only as a last resort) — including badges, which normally never wrap. */
+    .req-fixed-cols td, .req-fixed-cols th { white-space: normal; overflow-wrap: break-word; word-break: normal; }
+    .req-fixed-cols td .badge { white-space: normal; text-align: left; line-height: 1.35; max-width: 100%; }
+    /* "+N more" tag in Document Type: hover shows the other types in a tooltip. */
+    .dr-more-btn { cursor: help; font-size: .73rem; font-weight: 600; }
+    .dr-more-btn:hover, .dr-more-btn:focus { background: var(--vz-secondary-bg-subtle, #e9ecef) !important; color: var(--vz-body-color, #212529) !important; outline: none; }
+    .req-fixed-cols .dr-status-select { max-width: 100%; }
+    /* Larger status badges (Pending, Under Review, Approved, …) in the Requests tables. */
+    .req-status-cell .badge { font-size: .8125rem; padding: .4em .75em; }
+    /* Document Requests' Status dropdown: same larger text as the status badges above. */
+    .req-fixed-cols .dr-status-select { font-size: .8125rem; padding-top: .3rem; padding-bottom: .3rem; }
     .dr-status-select {
       width: 100%; min-width: 150px; max-width: 200px; padding: .2rem 1.6rem .2rem .6rem;
       font-size: .75rem; font-weight: 600; line-height: 1.4; cursor: pointer;
@@ -602,12 +445,12 @@
                   <div
                     class="page-title-box d-sm-flex align-items-center justify-content-between bg-galaxy-transparent">
                     <h4 class="mb-sm-0">
-                      <i class="ri-handshake-line me-2 text-primary"></i>Requests
+                      <i class="ri-handshake-line me-2 text-primary"></i><%= pageLabel %>
                     </h4>
                     <div class="page-title-right d-flex align-items-center gap-2">
                       <ol class="breadcrumb m-0" id="page-breadcrumb">
                         <li class="breadcrumb-item"><a href="<%= typeof homeHref !== 'undefined' ? homeHref : '/dashboard' %>">CIPRMS</a></li>
-                        <li class="breadcrumb-item active">Requests</li>
+                        <li class="breadcrumb-item active"><%= pageLabel %></li>
                       </ol>
                     </div>
                   </div>
@@ -699,41 +542,37 @@
               <div class="row">
                 <div class="col-12">
                   <div class="card border-0 shadow-sm">
-                    <div class="card-header border-bottom bg-transparent pt-3 pb-0">
-                      <!-- Section switcher cards (restored 2026-11-20) — one large clickable card per table
-                           (Partnership / Document / College Requests). Keeps the tab-pr/tab-dr/tab-cdr and
-                           tab-cnt-* ids that switchSection()/updateStats() depend on. -->
-                      <div class="section-tabs">
-                        <a class="section-tab active" id="tab-pr" href="#" onclick="switchSection('pr');return false;">
-                          <div class="section-tab-icon"><i class="ri-building-4-line"></i></div>
-                          <div class="section-tab-body">
-                            <span class="section-tab-title">Partnership Requests</span>
-                            <span class="section-tab-desc">Partnership requests / submissions</span>
-                          </div>
-                          <span class="tab-count" id="tab-cnt-pr">0</span>
-                        </a>
+                    <div class="card-header border-0">
+                      <!-- Section switcher (2026-11) — same nav-tabs-custom markup/classes as Reports &
+                           Analytics' own tabs (views/administrator/reports.ejs), reused as-is rather than
+                           styled separately. Counts keep the existing tab-cnt-* ids switchSection()/
+                           updateStats() already depend on; they're now a plain, light badge instead of the
+                           old per-tab-colored pill, to stay visually consistent with this simpler tab style. -->
+                      <ul class="nav nav-tabs-custom rounded card-header-tabs border-bottom-0" role="tablist">
+                        <li class="nav-item">
+                          <a class="nav-link active" id="tab-pr" href="#" onclick="switchSection('pr');return false;">
+                            <i class="ri-building-4-line me-1"></i> Partnership Requests
+                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-pr">0</span>
+                          </a>
+                        </li>
                         <% if (typeof user === 'undefined' || !user || user.role !== 'LAU') { %>
-                        <a class="section-tab" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
-                          <div class="section-tab-icon"><i class="ri-file-shield-2-line"></i></div>
-                          <div class="section-tab-body">
-                            <span class="section-tab-title">Document Requests</span>
-                            <span class="section-tab-desc">Official document processing</span>
-                          </div>
-                          <span class="tab-count" id="tab-cnt-dr">0</span>
-                        </a>
+                        <li class="nav-item">
+                          <a class="nav-link" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
+                            <i class="ri-file-shield-2-line me-1"></i> Document Requests
+                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-dr">0</span>
+                          </a>
+                        </li>
                         <!-- College Requests (2026-11) — MOA/MOU/Accreditation requests Administrator/Staff assign to a
                              specific College Dean. Same requireAdmin/requireStaffAccess-gated audience as Document
                              Requests above, so it shares that tab's LAU exclusion rather than needing its own. -->
-                        <a class="section-tab" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
-                          <div class="section-tab-icon"><i class="ri-award-line"></i></div>
-                          <div class="section-tab-body">
-                            <span class="section-tab-title">College Requests</span>
-                            <span class="section-tab-desc">MOA / MOU / Accreditation</span>
-                          </div>
-                          <span class="tab-count" id="tab-cnt-cdr">0</span>
-                        </a>
+                        <li class="nav-item">
+                          <a class="nav-link" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
+                            <i class="ri-award-line me-1"></i> College Requests
+                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-cdr">0</span>
+                          </a>
+                        </li>
                         <% } %>
-                      </div>
+                      </ul>
                     </div>
 
                     <div class="card-body pt-3">
@@ -745,6 +584,15 @@
                             <input class="form-control form-control-sm" id="pr-search" oninput="prCurrentPage=1; renderPR()">
                             <i class="ri-search-line search-icon"></i>
                           </div>
+                          <!-- Status filter (Partnership Request statuses) — same search + "All Status" layout as the
+                               Document Requests and College Requests tabs. -->
+                          <select class="form-select form-select-sm" id="pr-status" style="width:170px;"
+                            onchange="setPRStatusFilter(this.value)">
+                            <option value="">All Status</option>
+                            <option>Pending</option>
+                            <option>Under Review</option>
+                            <option>Approved</option>
+                          </select>
                           <span class="text-muted fs-12 ms-auto" id="pr-count"></span>
                           <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
                           <button type="button" class="btn btn-sm btn-primary" id="pr-initiate-btn" onclick="openPRInitiateModal()">
@@ -753,22 +601,9 @@
                           <% } %>
                         </div>
 
-                        <!-- Status quick-filter pills (2026-11: only the #pr-status dropdown was removed —
-                             these pills stay, and are now the sole status-filter UI; renderPR() reads
-                             _prStatusFilter directly) -->
-                        <div class="d-flex gap-2 flex-wrap mb-3" id="pr-filter-tabs">
-                          <button class="btn btn-sm btn-soft-primary active"
-                            onclick="setPRStatusFilter('',this)">All</button>
-                          <button class="btn btn-sm btn-soft-warning"
-                            onclick="setPRStatusFilter('Pending',this)">Pending</button>
-                          <button class="btn btn-sm btn-soft-info"
-                            onclick="setPRStatusFilter('Under Review',this)">Under Review</button>
-                          <button class="btn btn-sm btn-soft-success"
-                            onclick="setPRStatusFilter('Approved',this)">Approved</button>
-                        </div>
-
                         <div class="table-responsive">
-                          <table class="table table-hover align-middle mb-0">
+                          <table class="table table-hover req-fixed-cols table-bordered align-middle mb-0">
+                            <colgroup><col style="width:4%"><col style="width:10%"><col style="width:17%"><col style="width:16%"><col style="width:10%"><col style="width:13%"><col style="width:10%"><col style="width:10%"><col style="width:10%"></colgroup>
                             <thead class="table-light">
                               <tr>
                                 <th>#</th>
@@ -779,15 +614,14 @@
                                 <th>Type</th>
                                 <th>Date</th>
                                 <th>Status</th>
-                                <th>Actions</th>
+                                <th class="text-center">Actions</th>
                               </tr>
                             </thead>
                             <tbody id="pr-tbody"></tbody>
                           </table>
                         </div>
-                        <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 px-3">
-                          <div id="pr-page-size"></div>
-                          <div id="pr-pagination" class="py-3"></div>
+                        <div class="d-flex justify-content-end pt-3">
+                          <div id="pr-pagination"></div>
                         </div>
                       </div>
 
@@ -821,7 +655,8 @@
                         </div>
 
                         <div class="table-responsive">
-                          <table class="table table-hover align-middle mb-0">
+                          <table class="table table-hover req-fixed-cols table-bordered align-middle mb-0">
+                            <colgroup><col style="width:4%"><col style="width:18%"><col style="width:28%"><col style="width:16%"><col style="width:10%"><col style="width:15%"><col style="width:9%"></colgroup>
                             <thead class="table-light">
                               <tr>
                                 <th>#</th>
@@ -830,15 +665,14 @@
                                 <th>Requested By</th>
                                 <th>Date</th>
                                 <th>Status</th>
-                                <th>Actions</th>
+                                <th class="text-center">Actions</th>
                               </tr>
                             </thead>
                             <tbody id="dr-tbody"></tbody>
                           </table>
                         </div>
-                        <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 px-3">
-                          <div id="dr-page-size"></div>
-                          <div id="dr-pagination" class="py-3"></div>
+                        <div class="d-flex justify-content-end pt-3">
+                          <div id="dr-pagination"></div>
                         </div>
                       </div>
 
@@ -846,13 +680,19 @@
                       <% if (typeof user === 'undefined' || !user || user.role !== 'LAU') { %>
                       <div id="panel-cdr" style="display:none;">
                         <div class="filter-row">
-                          <div class="d-flex gap-2 flex-wrap" id="cdr-filter-tabs">
-                            <button class="btn btn-sm btn-soft-primary active" onclick="cdrFilterBy('', this)">All</button>
-                            <button class="btn btn-sm btn-soft-secondary" onclick="cdrFilterBy('Pending', this)">Pending</button>
-                            <button class="btn btn-sm btn-soft-info" onclick="cdrFilterBy('Submitted', this)">Submitted</button>
-                            <button class="btn btn-sm btn-soft-warning" onclick="cdrFilterBy('Returned for Revision', this)">Returned for Revision</button>
-                            <button class="btn btn-sm btn-soft-success" onclick="cdrFilterBy('Completed', this)">Completed</button>
+                          <div class="search-box" style="width:210px;">
+                            <input class="form-control form-control-sm" id="cdr-search" oninput="cdrSearchChanged()">
+                            <i class="ri-search-line search-icon"></i>
                           </div>
+                          <!-- Status filter (College Request statuses) -->
+                          <select class="form-select form-select-sm" id="cdr-status" style="width:190px;"
+                            onchange="cdrFilterBy(this.value)">
+                            <option value="">All Status</option>
+                            <option>Pending</option>
+                            <option>Submitted</option>
+                            <option>Returned for Revision</option>
+                            <option>Completed</option>
+                          </select>
                           <span class="text-muted fs-12 ms-auto me-2" id="cdr-count"></span>
                           <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#cdr-create-modal">
                             <i class="ri-add-line align-bottom me-1"></i> New Request
@@ -860,7 +700,8 @@
                         </div>
 
                         <div class="table-responsive">
-                          <table class="table table-hover align-middle mb-0">
+                          <table class="table table-hover req-fixed-cols table-bordered align-middle mb-0">
+                            <colgroup><col style="width:24%"><col style="width:12%"><col style="width:18%"><col style="width:14%"><col style="width:10%"><col style="width:12%"><col style="width:10%"></colgroup>
                             <thead class="table-light">
                               <tr>
                                 <th>Title</th>
@@ -869,7 +710,7 @@
                                 <th>College</th>
                                 <th>Deadline</th>
                                 <th>Status</th>
-                                <th>Actions</th>
+                                <th class="text-center">Actions</th>
                               </tr>
                             </thead>
                             <tbody id="cdr-tbody"></tbody>
@@ -877,10 +718,7 @@
                         </div>
                         <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3">
                           <div class="fs-12 text-muted" id="cdr-page-summary"></div>
-                          <div class="d-flex align-items-center gap-3">
-                            <div id="cdr-page-size"></div>
-                            <div id="cdr-pagination"></div>
-                          </div>
+                          <div id="cdr-pagination"></div>
                         </div>
                       </div>
                       <% } %>
@@ -1579,9 +1417,21 @@
       const items = drDocTypeItems(r);
       if (!items.length) return '<span class="badge badge-type bg-secondary-subtle text-secondary border border-secondary-subtle">—</span>';
       const first = `<span class="badge badge-type bg-secondary-subtle text-secondary border border-secondary-subtle" title="${escapeHtml(items.join(', '))}">${escapeHtml(items[0])}</span>`;
-      const more = items.length > 1 ? ` <span class="badge bg-light text-muted border">+${items.length - 1} more</span>` : '';
+      // "+N more": hovering (or keyboard focus) shows the other document types in a tooltip; it disappears
+      // again when the pointer moves away. The tooltip text is escaped, one type per line.
+      const rest = items.slice(1);
+      const tip = rest.map(t => escapeHtml(t)).join(';<br>');   // ";" after every type except the last
+      const more = rest.length
+        ? ` <span class="badge bg-light text-muted border dr-more-btn" tabindex="0" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title="${escapeHtml(tip)}">+${rest.length} more</span>`
+        : '';
       return first + more;
     }
+    // One delegated tooltip handler covers every "+N more" tag, including rows rendered later (paging, filters, live updates).
+    document.addEventListener('DOMContentLoaded', function () {
+      if (window.bootstrap && bootstrap.Tooltip) {
+        new bootstrap.Tooltip(document.body, { selector: '.dr-more-btn', trigger: 'hover focus', container: 'body' });
+      }
+    });
     function drDocTypeList(r) {
       const items = drDocTypeItems(r);
       if (!items.length) return '—';
@@ -1620,19 +1470,6 @@
     var prCurrentPage = 1, prItemsPerPage = 10;
     var drCurrentPage = 1, drItemsPerPage = 10;
 
-    function buildPageList(current, total) {
-        var maxVisible = 5;
-        if (total <= maxVisible + 2) return Array.from({length: total}, function(_, i){ return i + 1; });
-        var start = Math.max(1, current - Math.floor(maxVisible / 2));
-        var end = start + maxVisible - 1;
-        if (end > total) { end = total; start = Math.max(1, end - maxVisible + 1); }
-        var pages = [];
-        for (var i = start; i <= end; i++) pages.push(i);
-        if (start > 1) { pages.unshift('...'); pages.unshift(1); }
-        if (end < total) { pages.push('...'); pages.push(total); }
-        return pages;
-    }
-
     function buildPaginationHtml(current, total, onClickFn) {
         if (total <= 1) return '';
         var pageItem = function(label, page, opts) {
@@ -1644,14 +1481,10 @@
             var click = opts.disabled || opts.ellipsis ? '' : 'onclick="' + onClickFn + '(' + page + ')"';
             return '<li class="page-item' + disabled + active + isEllipsis + '"><a class="page-link' + isPrevNext + '" href="javascript:void(0)" ' + click + '>' + label + '</a></li>';
         };
+        // Previous / Next only (no numbered page buttons), same pagination-custom style as before.
         var html = pageItem('&lsaquo; Previous', current - 1, { disabled: current === 1, isPrev: true });
-        buildPageList(current, total).forEach(function(p) {
-            html += (p === '...')
-                ? pageItem('&hellip;', null, { ellipsis: true, disabled: true })
-                : pageItem(p, p, { active: p === current });
-        });
         html += pageItem('Next &rsaquo;', current + 1, { disabled: current === total, isNext: true });
-        return '<div class="d-flex justify-content-end mb-3"><ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul></div>';
+        return '<ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul>';
     }
 
     function goToPRPage(p) { prCurrentPage = p; renderPR(); }
@@ -1714,10 +1547,11 @@
       return ' <span class="badge bg-light text-muted" title="Submitted directly by the partner">Partner</span>';
     }
 
-    function setPRStatusFilter(val, btn) {
-      _prStatusFilter = val;
-      document.querySelectorAll('#pr-filter-tabs .btn').forEach(b => b.classList.remove('active'));
-      if (btn) btn.classList.add('active');
+    // Status filter for Partnership Requests — driven by the #pr-status "All Status" dropdown.
+    function setPRStatusFilter(val) {
+      _prStatusFilter = val || '';
+      var sel = document.getElementById('pr-status');
+      if (sel && sel.value !== _prStatusFilter) sel.value = _prStatusFilter;
       prCurrentPage = 1;
       renderPR();
     }
@@ -2095,13 +1929,6 @@
       const paged = prFiltered.slice(startIdx, startIdx + prItemsPerPage);
 
       document.getElementById('pr-pagination').innerHTML = buildPaginationHtml(prCurrentPage, totalPages, 'goToPRPage');
-      if (window.CIPRMSPagination) {
-        CIPRMSPagination.renderPageSizeSelector('pr-page-size', prItemsPerPage, [10, 25, 50], function (newSize) {
-          prItemsPerPage = newSize;
-          prCurrentPage = 1;
-          renderPR();
-        });
-      }
 
       tbody.innerHTML = paged.map((r, mappedIndex) => {
         const i = startIdx + mappedIndex;
@@ -2123,11 +1950,11 @@
           <td class="fw-medium fs-13">${by}${submittedByBadge(r)}</td>
           <td><span class="fw-semibold fs-13">${inst}</span></td>
           <td class="text-muted fs-13">${country}</td>
-          <td><span class="badge badge-type bg-primary-subtle text-primary border border-primary-subtle">${type}</span>${r.isRenewal ? ' <span class="badge bg-info-subtle text-info">Renewal</span>' : ''}${r.isCollegeReport ? ' <span class="badge bg-success-subtle text-success" title="A college sent CIRL a copy of an MOA/MOU it already signed">College Report</span>' : ''}</td>
+          <td><span class="fs-13">${type}</span>${r.isRenewal ? ' <span class="badge bg-info-subtle text-info">Renewal</span>' : ''}${r.isCollegeReport ? ' <span class="badge bg-success-subtle text-success" title="A college sent CIRL a copy of an MOA/MOU it already signed">College Report</span>' : ''}</td>
           <td class="text-muted fs-13">${date}</td>
-          <td>${statusBadge(status)}</td>
+          <td class="req-status-cell">${statusBadge(status)}</td>
           <td>
-            <div class="hstack gap-1">
+            <div class="hstack gap-1 justify-content-center">
               <button class="btn btn-sm btn-soft-primary" onclick="openPRDetail('${uid}')">
                 <i class="ri-${canAct ? 'search-eye' : 'eye'}-line me-1"></i>${canAct ? 'Review' : 'View'}
               </button>
@@ -2269,7 +2096,7 @@
             <i class="ri-check-line me-1"></i>${r.isCollegeReport ? 'Record in Registry' : 'Approve'}</button>
         ` : ''}`;
 
-      setBreadcrumb(['Requests', 'Partnership Request', prRequestLabel(r)]);
+      setBreadcrumb([PAGE_LABEL, 'Partnership Request', prRequestLabel(r)]);
       modalInstance('pr-modal').show();
       if (IS_ADMIN) loadPRGoogleDocs(r.id);
     }
@@ -2397,6 +2224,8 @@
     // Requests, e.g. CIPRMS > Requests > Partnership Request > <institution — #id>
     // [> Draft Collaboration]. Reused via MODAL_REOPEN below: reopening pr-modal/
     // dr-modal through openPRDetail/openDRDetail already re-sets it correctly. ──
+    // LAU sees this page as "Monitoring" (read-only), everyone else as "Requests".
+    var PAGE_LABEL = <%- JSON.stringify(pageLabel) %>;
     var HOME_HREF = '<%= typeof homeHref !== "undefined" ? homeHref : "/dashboard" %>';
     function setBreadcrumb(labels) {
       var ol = document.getElementById('page-breadcrumb');
@@ -2410,7 +2239,7 @@
       });
       ol.innerHTML = html;
     }
-    function resetBreadcrumb() { setBreadcrumb(['Requests']); }
+    function resetBreadcrumb() { setBreadcrumb([PAGE_LABEL]); }
     function prRequestLabel(r) { return (r.institution || r.inst || ('Request #' + r.id)) + ' — #REQ-' + String(r.id).padStart(3, '0'); }
     function drRequestLabel(r) { return (r.institution || ('Document Request #' + r.id)) + ' — #' + r.id; }
 
@@ -2692,7 +2521,7 @@
       document.getElementById('dr-draft-note').value = '';
       drLinkedDocumentIds = [];
       renderDrLinkedChips();
-      setBreadcrumb(['Requests', 'Document Request', drRequestLabel(r), 'Draft Collaboration']);
+      setBreadcrumb([PAGE_LABEL, 'Document Request', drRequestLabel(r), 'Draft Collaboration']);
       swapToModal('dr-draft-modal', 'dr-modal');
     }
 
@@ -2842,7 +2671,7 @@
       document.getElementById('pr-lau-note').value = '';
       document.getElementById('pr-lau-status').value = '';
 
-      setBreadcrumb(['Requests', 'Partnership Request', prRequestLabel(r), 'Draft Collaboration']);
+      setBreadcrumb([PAGE_LABEL, 'Partnership Request', prRequestLabel(r), 'Draft Collaboration']);
       swapToModal('pr-draft-modal', 'pr-modal');
     }
 
@@ -3085,13 +2914,6 @@
       const paged = drFiltered.slice(startIdx, startIdx + drItemsPerPage);
 
       document.getElementById('dr-pagination').innerHTML = buildPaginationHtml(drCurrentPage, totalPages, 'goToDRPage');
-      if (window.CIPRMSPagination) {
-        CIPRMSPagination.renderPageSizeSelector('dr-page-size', drItemsPerPage, [10, 25, 50], function (newSize) {
-          drItemsPerPage = newSize;
-          drCurrentPage = 1;
-          renderDR();
-        });
-      }
 
       tbody.innerHTML = paged.map((r, mappedIndex) => {
         const i = startIdx + mappedIndex;
@@ -3105,7 +2927,7 @@
           <td class="text-muted fs-13">${r.date || '—'}</td>
           <td class="dr-status-cell">${drStatusSelectHtml(r)}</td>
           <td>
-            <div class="hstack gap-1">
+            <div class="hstack gap-1 justify-content-center">
               <button class="btn btn-sm btn-soft-secondary" onclick="openDRDetail(${r.id})">
                 <i class="ri-eye-line me-1"></i>${canAct ? 'Review' : 'View'}
               </button>
@@ -3189,7 +3011,7 @@
         <a href="/api/document-requests/${id}/pdf" class="btn btn-primary">
           <i class="ri-download-2-line me-1"></i>Download Request</a>`;
 
-      setBreadcrumb(['Requests', 'Document Request', drRequestLabel(r)]);
+      setBreadcrumb([PAGE_LABEL, 'Document Request', drRequestLabel(r)]);
       modalInstance('dr-modal').show();
     }
 
@@ -3459,7 +3281,7 @@
     var CDR_ACTIVE_FILTER = '';
     // Pagination (2026-11 panel recommendation) — server-side.
     var CDR_PAGE = 1;
-    var CDR_PAGE_SIZE = 25;
+    var CDR_PAGE_SIZE = 10;   // fixed 10 per page, same as the other two tabs
     var CDR_TOTAL_COUNT = 0;
     var CDR_DEANS = [];
     var CDR_BADGE = {
@@ -3596,13 +3418,8 @@
       if (!body) return;
       document.getElementById('cdr-count').textContent = CIPRMSPagination.summaryText(CDR_PAGE, CDR_PAGE_SIZE, CDR_TOTAL_COUNT);
       var totalPages = Math.max(1, Math.ceil(CDR_TOTAL_COUNT / CDR_PAGE_SIZE));
-      document.getElementById('cdr-pagination').innerHTML = CIPRMSPagination.buildPaginationHtml(CDR_PAGE, totalPages, 'cdrGoToPage');
+      document.getElementById('cdr-pagination').innerHTML = buildPaginationHtml(CDR_PAGE, totalPages, 'cdrGoToPage');
       document.getElementById('cdr-page-summary').textContent = CIPRMSPagination.summaryText(CDR_PAGE, CDR_PAGE_SIZE, CDR_TOTAL_COUNT);
-      CIPRMSPagination.renderPageSizeSelector('cdr-page-size', CDR_PAGE_SIZE, [10, 25, 50], function (newSize) {
-        CDR_PAGE_SIZE = newSize;
-        CDR_PAGE = 1;
-        cdrLoadList();
-      });
       if (!rows.length) {
           body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No college requests found.</td></tr>';
           return;
@@ -3617,18 +3434,29 @@
               '<td>' + escapeHtml(deanNames) + '</td>' +
               '<td>' + escapeHtml(deanColleges || '—') + '</td>' +
               '<td>' + (r.deadline ? fmtDate(r.deadline) : '<span class="text-muted">—</span>') + '</td>' +
-              '<td>' + cdrBadge(r.status) + '</td>' +
-              '<td class="text-end"><button class="btn btn-sm btn-soft-primary" onclick="cdrOpenDetail(' + r.id + ')"><i class="ri-eye-line"></i> View</button></td>' +
+              '<td class="req-status-cell">' + cdrBadge(r.status) + '</td>' +
+              '<td class="text-center"><button class="btn btn-sm btn-soft-primary" onclick="cdrOpenDetail(' + r.id + ')"><i class="ri-eye-line"></i> View</button></td>' +
               '</tr>';
       }).join('');
     }
 
-    function cdrFilterBy(status, btn) {
-      CDR_ACTIVE_FILTER = status;
+    // Status filter for College Requests — driven by the #cdr-status "All Status" dropdown.
+    function cdrFilterBy(status) {
+      CDR_ACTIVE_FILTER = status || '';
       CDR_PAGE = 1;
-      document.querySelectorAll('#cdr-filter-tabs .btn').forEach(function (b) { b.classList.remove('active'); });
-      if (btn) btn.classList.add('active');
+      var sel = document.getElementById('cdr-status');
+      if (sel && sel.value !== CDR_ACTIVE_FILTER) sel.value = CDR_ACTIVE_FILTER;
       cdrLoadList();
+    }
+    // Search box: the list is paged on the server, so the text is sent as ?q= (debounced while typing).
+    var CDR_SEARCH = '', _cdrSearchTimer = null;
+    function cdrSearchChanged() {
+      clearTimeout(_cdrSearchTimer);
+      _cdrSearchTimer = setTimeout(function () {
+        CDR_SEARCH = (document.getElementById('cdr-search').value || '').trim();
+        CDR_PAGE = 1;
+        cdrLoadList();
+      }, 300);
     }
 
     function cdrGoToPage(p) {
@@ -3642,6 +3470,7 @@
       if (IS_LAU) { CDR_ALL = []; CDR_TOTAL_COUNT = 0; cdrRenderTable(); return Promise.resolve(); }
       var params = new URLSearchParams({ page: CDR_PAGE, pageSize: CDR_PAGE_SIZE });
       if (CDR_ACTIVE_FILTER) params.set('status', CDR_ACTIVE_FILTER);
+      if (CDR_SEARCH) params.set('q', CDR_SEARCH);
       return fetch('/api/college-requests?' + params.toString(), { headers: { 'X-Requested-With': 'ciprms' } })
           .then(function (r) { return r.json(); })
           .then(function (data) {
@@ -3653,7 +3482,7 @@
               // The nav-tab badge always shows the grand total across every status — only meaningful while
               // "All" is the active filter (the one time this fetch's totalCount IS the grand total),
               // exactly matching the one-time-per-load semantics this badge already had.
-              if (!CDR_ACTIVE_FILTER && document.getElementById('tab-cnt-cdr')) document.getElementById('tab-cnt-cdr').textContent = CDR_TOTAL_COUNT;
+              if (!CDR_ACTIVE_FILTER && !CDR_SEARCH && document.getElementById('tab-cnt-cdr')) document.getElementById('tab-cnt-cdr').textContent = CDR_TOTAL_COUNT;
           })
           .catch(function () {
               var body = document.getElementById('cdr-tbody');
@@ -3828,17 +3657,14 @@
     }
 
     // Status pre-filter from the URL, e.g. the dashboard's Expansion Opportunity card links to
-    // /partnership-requests?status=Pending. The status filter UI (dropdown + quick-filter pills) was
-    // removed (2026-11) — this now just lands on the unfiltered list, same as any other visit here.
-    // Status pre-filter from the URL, e.g. the dashboard's Expansion Opportunity card links to
-    // /partnership-requests?status=Pending. Only known statuses apply.
+    // /partnership-requests?status=Pending. Only statuses the #pr-status dropdown offers apply.
     function applyStatusFromQuery() {
       const status = new URLSearchParams(window.location.search).get('status');
-      if (!status) return;
-      const btn = Array.from(document.querySelectorAll('#pr-filter-tabs .btn')).find(b => b.textContent.trim() === status);
-      if (!btn) return;
+      const sel = document.getElementById('pr-status');
+      if (!status || !sel) return;
+      if (!Array.from(sel.options).some(o => o.value === status)) return;
       switchSection('pr');
-      setPRStatusFilter(status, btn);
+      setPRStatusFilter(status);
     }
 
     /* ─── LIVE UPDATES ───

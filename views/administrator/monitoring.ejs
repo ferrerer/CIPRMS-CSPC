@@ -111,6 +111,31 @@
          or any of its click/keyboard-nav behavior. */
       #ac-dropdown, #e-ac-dropdown { max-height: 260px; overflow-y: auto; border-radius: 8px; box-shadow: 0 10px 28px rgba(20,25,45,.14); }
       [data-bs-theme="dark"] #ac-dropdown, [data-bs-theme="dark"] #e-ac-dropdown { box-shadow: 0 10px 28px rgba(0,0,0,.4); }
+
+      /* Filter Partnerships: compact search box + all filters on one row, sharing the remaining width. */
+      .mon-filter-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-end; }
+      /* Compact, fixed-width filters on the left; the search box sits at the right end and takes the rest. */
+      .mon-filter-search { flex: 1 1 170px; min-width: 170px; max-width: 280px; order: 99; margin-left: auto; }   /* grows into any spare room */
+      /* "Search" label sits to the LEFT of the search box (same line), not above it. */
+      .mon-filter-search { display: flex; align-items: center; gap: .4rem; }
+      .mon-filter-search > .form-label { margin-bottom: 0 !important; white-space: nowrap; }
+      .mon-filter-search > .search-box { flex: 1 1 auto; min-width: 0; }
+      .mon-filter-clear { flex: 0 0 auto; }
+      .mon-filter-clear .btn { padding-top: .28rem; padding-bottom: .28rem; font-size: .8125rem; }
+      /* Plain black "Clear" text (no button background); underline on hover so it still reads as clickable. */
+      /* Boxed like the filter dropdowns beside it (same border, radius and height), black text. */
+      .mon-clear-link { color: #000; text-decoration: none; padding-left: .75rem; padding-right: .75rem;
+        border: 1px solid #adb5bd; border-radius: var(--vz-border-radius-sm, .2rem);
+        background: #e9ecef; font-weight: 500; }
+      .mon-clear-link:hover, .mon-clear-link:focus { color: #000; text-decoration: none; background: #dee2e6; border-color: #868e96; }
+      [data-bs-theme="dark"] .mon-clear-link { background: #3a4252; border-color: #5c6577; }
+      [data-bs-theme="dark"] .mon-clear-link, [data-bs-theme="dark"] .mon-clear-link:hover { color: #fff; }
+      .mon-filter-item { flex: 0 0 98px; width: 98px; }
+      .mon-filter-item.mon-filter-wide { flex-basis: 120px; width: 120px; }   /* Type, Category: longer options ("International") */
+      .mon-filter-row .form-select-sm, .mon-filter-row .form-control-sm { font-size: .8125rem; padding-top: .28rem; padding-bottom: .28rem; }
+      .mon-filter-row .search-box .form-control-sm { padding-left: 1.9rem; }
+      .mon-filter-row .search-box .search-icon { font-size: .8rem; }
+      @media (max-width: 575.98px) { .mon-filter-search { flex: 1 1 100%; } }
     </style>
 
 </head>
@@ -221,72 +246,9 @@
        "Monitoring Insights" card, so it no longer takes any of this initial horizontal/vertical space). -->
   <div class="col-12">
 
-    <!-- Filters -->
-    <div class="card">
-      <div class="card-header align-items-center d-flex">
-        <h4 class="card-title mb-0 flex-grow-1"><i class="ri-filter-3-line me-1"></i>Filter Partnerships</h4>
-        <button class="btn btn-soft-primary btn-sm" onclick="monitoringGenerateReport()" title="Preview a report with these same filters, right here"><i class="ri-file-chart-2-line me-1"></i>Generate Report</button>
-        <button class="btn btn-soft-danger btn-sm" onclick="clearFilters()"><i class="ri-refresh-line me-1"></i>Clear</button>
-      </div>
-      <div class="card-body py-3">
-        <div class="row g-2 align-items-end mb-2">
-          <div class="col-md-5">
-            <label class="form-label fs-12 mb-1">Search</label>
-            <div class="search-box">
-              <input type="text" class="form-control" id="reg-search" oninput="applyFilter()">
-              <i class="ri-search-line search-icon"></i>
-            </div>
-          </div>
-        </div>
-        <div class="row g-2 align-items-end">
-          <div class="col-md-2">
-            <label class="form-label fs-12 mb-1">Type</label>
-            <select class="form-select form-select-sm" id="reg-type" onchange="applyFilter()">
-              <option value="">All Types</option><option>MOA</option><option>MOU</option><option>Other</option>
-            </select>
-          </div>
-          <div class="col-md-2">
-            <label class="form-label fs-12 mb-1">Category</label>
-            <select class="form-select form-select-sm" id="reg-cat" onchange="applyFilter()">
-              <option value="">All</option><option>International</option><option>Local</option>
-            </select>
-          </div>
-          <div class="col-md-2">
-            <label class="form-label fs-12 mb-1">Status</label>
-            <select class="form-select form-select-sm" id="reg-status" onchange="applyFilter()">
-              <option value="">All</option><option>Active</option><option>Expiring Soon</option><option>Expired</option>
-            </select>
-          </div>
-          <div class="col-md-2">
-            <label class="form-label fs-12 mb-1">Region</label>
-            <select class="form-select form-select-sm" id="reg-region" onchange="applyFilter()">
-              <option value="">All</option><option>Asia</option><option>Africa</option><option>North America</option><option>South America</option><option>Antarctica</option><option>Europe</option><option>Oceania</option>
-            </select>
-          </div>
-          <div class="col-md-2">
-            <label class="form-label fs-12 mb-1">Unit</label>
-            <select class="form-select form-select-sm" id="reg-unit" onchange="applyFilter()">
-              <option value="">All</option><option>CCS</option><option>CILS</option><option>CETE</option><option>CNAS</option><option>CAMS</option><option>CIRL</option>
-            </select>
-          </div>
-          <div class="col-md-1">
-            <label class="form-label fs-12 mb-1">Yr Signed</label>
-            <select class="form-select form-select-sm" id="reg-yr-signed" onchange="applyFilter()">
-              <option value="">All</option><option>2019</option><option>2020</option><option>2021</option><option>2022</option><option>2023</option><option>2024</option><option>2025</option><option>2026</option>
-            </select>
-          </div>
-          <div class="col-md-1">
-            <label class="form-label fs-12 mb-1">Yr Expiry</label>
-            <select class="form-select form-select-sm" id="reg-yr-exp" onchange="applyFilter()">
-              <option value="">All</option><option>2024</option><option>2025</option><option>2026</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Partnership Registry — the one consolidated table (replaces the old
-         separate "Agreement Validity Tracker" and "All Partnerships" tables) -->
+    <!-- Partnership Registry — one card: the filters (formerly their own "Filter Partnerships" card) sit right
+         above the consolidated table (which replaced the old separate "Agreement Validity Tracker" and
+         "All Partnerships" tables). -->
     <div class="card">
       <div class="card-header border-0">
         <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
@@ -294,8 +256,9 @@
             <h4 class="card-title mb-0">Partnership Registry</h4>
             <p class="text-muted fs-12 mb-0 mt-1">Manage and monitor all registered partnerships.</p>
           </div>
-          <div class="d-flex align-items-center gap-2">
+          <div class="d-flex align-items-center flex-wrap gap-2">
             <span class="text-muted fs-12" id="reg-count"></span>
+            <button class="btn btn-soft-primary btn-sm" onclick="monitoringGenerateReport()" title="Preview a report with these same filters, right here"><i class="ri-file-chart-2-line me-1"></i>Generate Report</button>
             <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
             <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addPartnershipModal">
               <i class="ri-add-line align-bottom me-1"></i>Add New Partnership
@@ -305,6 +268,63 @@
         </div>
       </div>
       <div class="card-body pt-0">
+        <div class="mb-3">
+        <!-- One row: a compact search box, then every filter sharing the rest of the width (wraps on small screens). -->
+        <div class="mon-filter-row">
+          <div class="mon-filter-search">
+            <label class="form-label fs-12 mb-1">Search</label>
+            <div class="search-box">
+              <input type="text" class="form-control form-control-sm" id="reg-search" oninput="applyFilter()">
+              <i class="ri-search-line search-icon"></i>
+            </div>
+          </div>
+          <div class="mon-filter-item mon-filter-wide">
+            <label class="form-label fs-12 mb-1">Type</label>
+            <select class="form-select form-select-sm" id="reg-type" onchange="applyFilter()">
+              <option value="">All Types</option><option>MOA</option><option>MOU</option><option>Other</option>
+            </select>
+          </div>
+          <div class="mon-filter-item mon-filter-wide">
+            <label class="form-label fs-12 mb-1">Category</label>
+            <select class="form-select form-select-sm" id="reg-cat" onchange="applyFilter()">
+              <option value="">All</option><option>International</option><option>Local</option>
+            </select>
+          </div>
+          <div class="mon-filter-item">
+            <label class="form-label fs-12 mb-1">Status</label>
+            <select class="form-select form-select-sm" id="reg-status" onchange="applyFilter()">
+              <option value="">All</option><option>Active</option><option>Expiring Soon</option><option>Expired</option>
+            </select>
+          </div>
+          <div class="mon-filter-item">
+            <label class="form-label fs-12 mb-1">Region</label>
+            <select class="form-select form-select-sm" id="reg-region" onchange="applyFilter()">
+              <option value="">All</option><option>Asia</option><option>Africa</option><option>North America</option><option>South America</option><option>Antarctica</option><option>Europe</option><option>Oceania</option>
+            </select>
+          </div>
+          <div class="mon-filter-item">
+            <label class="form-label fs-12 mb-1">Unit</label>
+            <select class="form-select form-select-sm" id="reg-unit" onchange="applyFilter()">
+              <option value="">All</option><option>CCS</option><option>CILS</option><option>CETE</option><option>CNAS</option><option>CAMS</option><option>CIRL</option>
+            </select>
+          </div>
+          <div class="mon-filter-item">
+            <label class="form-label fs-12 mb-1">Yr Signed</label>
+            <select class="form-select form-select-sm" id="reg-yr-signed" onchange="applyFilter()">
+              <option value="">All</option><option>2019</option><option>2020</option><option>2021</option><option>2022</option><option>2023</option><option>2024</option><option>2025</option><option>2026</option>
+            </select>
+          </div>
+          <div class="mon-filter-item">
+            <label class="form-label fs-12 mb-1">Yr Expiry</label>
+            <select class="form-select form-select-sm" id="reg-yr-exp" onchange="applyFilter()">
+              <option value="">All</option><option>2024</option><option>2025</option><option>2026</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option>
+            </select>
+          </div>
+          <div class="mon-filter-clear">
+            <button type="button" class="btn btn-link btn-sm mon-clear-link" onclick="clearFilters()" title="Clear all filters">Clear</button>
+          </div>
+        </div>
+        </div>
         <div id="reg-grid">
           <div class="table-loading"><span class="spinner-border spinner-border-sm text-primary"></span>Loading partnerships&hellip;</div>
         </div>
@@ -313,13 +333,8 @@
           <p class="text-muted fs-13 mb-3" id="reg-empty-text">No partnership matches the selected filters. Try changing or clearing the filters.</p>
           <button type="button" class="btn btn-soft-primary btn-sm" id="reg-empty-clear" onclick="clearFilters()"><i class="ri-refresh-line me-1"></i>Clear Filters</button>
         </div>
-        <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 px-3">
-          <div id="reg-page-size"></div>
-          <div id="reg-pagination" class="py-3"></div>
-        </div>
-      </div>
-      <!-- Legend -->
-      <div class="card-footer border-top-0 bg-transparent">
+        <!-- Legend (left) and Previous / Next (right) on one line under the table. -->
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 pt-3">
         <div class="d-flex flex-wrap gap-3 align-items-center">
           <span class="text-muted fs-12 fw-semibold text-uppercase me-1">Legend:</span>
           <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-success-subtle text-success">Active</span> Valid &amp; in effect</span>
@@ -328,6 +343,8 @@
           <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-danger-subtle text-danger">Expired</span> Needs renewal</span>
           <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-primary-subtle text-primary">MOA</span> Memorandum of Agreement</span>
           <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-info-subtle text-info">MOU</span> Memorandum of Understanding</span>
+        </div>
+        <div id="reg-pagination" class="ms-auto"></div>
         </div>
       </div>
     </div>
@@ -1137,7 +1154,7 @@
 <script src="/velzon/assets/js/shared/status-colors.js?v=20261121b"></script>
 <!-- gridjs init — same script the standalone Registry page used; Monitoring
      is now this page's only home, see docs/SYSTEM_AUDIT_2026-07-16.md -->
-<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261121c"></script>
+<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261121e"></script>
 <!-- App js -->
 <script src="/velzon/assets/js/app.js"></script>
 <script src="/js/ciprms-uploader.js"></script>

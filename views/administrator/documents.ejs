@@ -187,7 +187,13 @@
         [data-bs-theme="dark"] #uploadModal .card.border-primary-subtle { background-color: #1e2533 !important; border-color: rgba(112, 148, 245, 0.25) !important; }
         [data-bs-theme="dark"] #uploadModal #res-file-name { color: #f1f3f5 !important; }
         [data-bs-theme="dark"] #uploadModal .duplicate-match-card { background-color: #1a1d21 !important; border-color: #3b3323 !important; }
-    </style>
+        /* Document Library list view: fixed column widths (see its <colgroup>) so columns don't shift between pages;
+       long names wrap onto extra lines instead of being cut with "…". */
+    .doc-list-table { table-layout: fixed; width: 100%; min-width: 960px; }
+    .doc-list-table td, .doc-list-table th { white-space: normal; overflow-wrap: break-word; }
+    .doc-list-table td.text-nowrap, .doc-list-table th.text-nowrap { white-space: nowrap; }
+    .doc-list-table .form-select-sm { font-size: .75rem; padding-right: 1.6rem; }
+</style>
 </head>
 
 <body>
@@ -247,33 +253,6 @@
                             </div>
                         </div>
 
-                        <!-- Type Filter -->
-                        <div class="card">
-                            <div class="card-body">
-                                <p class="text-muted text-uppercase fw-semibold fs-11 mb-3">Type Filter</p>
-                                <div class="btn-group w-100 flex-wrap" role="group" id="type-filter-group">
-                                    <button type="button" class="btn btn-outline-primary btn-sm active" onclick="filterType('All', this)">All</button>
-                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('MOA', this)">MOA</button>
-                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('MOU', this)">MOU</button>
-                                    <!-- Partner Activities (2026-11) — the "List of Activities" PDF exported from Monitoring (see
-                                         archivePartnerActivitiesPdf in cirl.js), one per partnership. Its own filter button, same
-                                         pattern as MOA/MOU above, so it is never only reachable via "All". -->
-                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Partner Activities', this)">Partner Activities</button>
-                                    <!-- Achievements (2026-11) — a certificate archived from the Dashboard's Institutional
-                                         Achievements section (see POST/PATCH /api/achievements in cirl.js). Same pattern as
-                                         Partner Activities above: its own filter button, never only reachable via "All". -->
-                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Achievements', this)">Achievements</button>
-                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Other', this)">Other</button>
-                                </div>
-                                <!-- Acknowledged duplicates (2026-11 duplicate-warning follow-up): review every document
-                                     someone chose "Upload anyway" on despite a match — see the badge on each card/row. -->
-                                <div class="form-check mt-3">
-                                    <input class="form-check-input" type="checkbox" id="acknowledged-only-toggle" onchange="toggleAcknowledgedFilter(this.checked)">
-                                    <label class="form-check-label fs-13" for="acknowledged-only-toggle">Acknowledged duplicates only</label>
-                                </div>
-                            </div>
-                        </div>
-
                         <!-- Folders -->
                         <div class="card">
                             <div class="card-header align-items-center d-flex">
@@ -293,14 +272,8 @@
                         <div class="card">
                             <div class="card-header border-0 pb-0">
                                 <div class="row align-items-center g-3">
-                                    <div class="col-md-3">
-                                        <h4 class="card-title mb-0"><i class="ri-file-list-3-line me-2"></i>Documents</h4>
-                                    </div>
                                     <div class="col-md">
-                                        <div class="search-box">
-                                            <input type="text" class="form-control" id="searchLibrary">
-                                            <i class="ri-search-line search-icon"></i>
-                                        </div>
+                                        <h4 class="card-title mb-0"><i class="ri-file-list-3-line me-2"></i>Documents</h4>
                                     </div>
                                     <div class="col-md-auto">
                                         <div class="btn-group" role="group" aria-label="Grid or List view">
@@ -321,9 +294,42 @@
                                     <% } %>
                                 </div>
 
-                                <!-- Nature of Partnership filters — rebuilt from the actual MOA/MOU records on every
-                                     load/refresh by renderNaturePills() below; see that function for why. -->
-                                <div class="tag-pills-container mt-4 mb-2" id="nature-pills-container"></div>
+                                <!-- Filter row, on its own line under the "Documents" title: search, Nature, Acknowledged duplicates. -->
+                                <div class="row align-items-center g-2 mt-1">
+                                    <!-- Search: first in the filter row, 320px wide. -->
+                                    <div class="col-md-auto">
+                                        <div class="search-box" style="width:320px;max-width:100%;">
+                                            <input type="text" class="form-control" id="searchLibrary">
+                                            <i class="ri-search-line search-icon"></i>
+                                        </div>
+                                    </div>
+                                    <!-- Nature of Partnership filter — same search + "All …" dropdown layout as the Requests
+                                         page. Options are rebuilt from the actual MOA/MOU records by renderNaturePills(). -->
+                                    <div class="col-md-auto">
+                                        <select class="form-select" id="nature-filter" style="width:160px;" onchange="filterTag(this.value)">
+                                            <option value="All">All Nature</option>
+                                        </select>
+                                    </div>
+                                    <!-- MOA / MOU type filter — beside Nature; works together with it (e.g. MOU + Research). -->
+                                    <div class="col-md-auto">
+                                        <select class="form-select" id="type-filter" style="width:140px;" onchange="filterDocType(this.value)">
+                                            <option value="All">All Types</option>
+                                            <option value="MOA">MOA</option>
+                                            <option value="MOU">MOU</option>
+                                        </select>
+                                    </div>
+                                    <!-- Acknowledged duplicates (2026-11 duplicate-warning follow-up): review every document
+                                         someone chose "Upload anyway" on despite a match — moved here from the removed
+                                         left-side Type Filter card. -->
+                                    <div class="col-md-auto">
+                                        <div class="form-check mb-0">
+                                            <input class="form-check-input" type="checkbox" id="acknowledged-only-toggle" onchange="toggleAcknowledgedFilter(this.checked)">
+                                            <label class="form-check-label fs-13" for="acknowledged-only-toggle">Acknowledged duplicates only</label>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="mb-2"></div>
                             </div>
                             <div class="card-body">
                                 <div class="row" id="document-grid">
@@ -336,18 +342,19 @@
 
                                 <!-- List View (hidden unless selected) -->
                                 <div class="table-responsive" id="document-list" style="display:none">
-                                    <table class="table table-hover align-middle mb-0">
+                                    <table class="table table-hover table-bordered align-middle mb-0 doc-list-table">
+                                        <colgroup><col style="width:5%"><col style="width:21%"><col style="width:14%"><col style="width:11%"><col style="width:11%"><col style="width:10%"><col style="width:7%"><col style="width:10%"><col style="width:11%"></colgroup>
                                         <thead class="table-light">
                                             <tr>
-                                                <th style="width:48px"></th>
+                                                <th></th>
                                                 <th>Document Name</th>
                                                 <th>Institution</th>
                                                 <th>Document Type</th>
                                                 <th>Nature</th>
-                                                <th>Upload Date</th>
+                                                <th class="text-nowrap">Upload Date</th>
                                                 <th>Status</th>
                                                 <th>Folder</th>
-                                                <th class="text-end">Actions</th>
+                                                <th class="text-center">Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody id="document-list-body">
@@ -365,10 +372,7 @@
                                      views since both render the same current page. -->
                                 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3 pt-3 border-top">
                                     <div class="fs-12 text-muted" id="doc-page-summary"></div>
-                                    <div class="d-flex align-items-center gap-3">
-                                        <div id="doc-page-size"></div>
-                                        <div id="doc-pagination"></div>
-                                    </div>
+                                    <div id="doc-pagination"></div>
                                 </div>
                             </div>
                         </div>
@@ -563,7 +567,7 @@
     // Pagination (2026-11 panel recommendation) — server-side; the grid/list only ever render the current
     // page's `records`, never the full allDocs array.
     let docPage = 1;
-    let docPageSize = 15; // default 15 files per page (user can also pick 30)
+    let docPageSize = 9; // fixed 9 files per page (the Show selector was removed)
     let docTotalCount = 0;
     let docSearchDebounce = null;
 
@@ -677,13 +681,13 @@
     function renderDocPagination() {
         const totalPages = Math.max(1, Math.ceil(docTotalCount / docPageSize));
         if (docPage > totalPages) docPage = totalPages;
-        document.getElementById('doc-pagination').innerHTML = CIPRMSPagination.buildPaginationHtml(docPage, totalPages, 'goToDocPage');
+        // Previous / Next only (no numbered pages, no "Show N" selector — always 9 per page).
+        const item = (label, page, disabled, cls) => '<li class="page-item' + (disabled ? ' disabled' : '') + '"><a class="page-link ' + cls + '" href="javascript:void(0)"' + (disabled ? '' : ' onclick="goToDocPage(' + page + ')"') + '>' + label + '</a></li>';
+        document.getElementById('doc-pagination').innerHTML = totalPages <= 1 ? '' :
+            '<ul class="pagination pagination-custom align-items-center m-0">' +
+            item('&lsaquo; Previous', docPage - 1, docPage === 1, 'page-link-prev') +
+            item('Next &rsaquo;', docPage + 1, docPage === totalPages, 'page-link-next') + '</ul>';
         document.getElementById('doc-page-summary').textContent = CIPRMSPagination.summaryText(docPage, docPageSize, docTotalCount);
-        CIPRMSPagination.renderPageSizeSelector('doc-page-size', docPageSize, [15, 30], function (newSize) {
-            docPageSize = newSize;
-            docPage = 1;
-            loadPage();
-        });
     }
 
     function goToDocPage(p) {
@@ -726,13 +730,6 @@
         document.getElementById('document-list').style.display = currentView === 'list' ? '' : 'none';
     }
 
-    function filterType(type, el) {
-        currentType = type;
-        docPage = 1;
-        document.querySelectorAll('#type-filter-group .btn').forEach(btn => btn.classList.remove('active'));
-        el.classList.add('active');
-        loadPage();
-    }
 
     function toggleAcknowledgedFilter(checked) {
         acknowledgedOnly = checked;
@@ -740,12 +737,43 @@
         loadPage();
     }
 
-    function filterTag(tag, el) {
-        currentTag = tag;
+    const PARTNER_ACTIVITIES_OPTION = '__partner_activities';
+    // Achievements (2026-11) — a certificate archived from the Dashboard's Institutional Achievements
+    // section (see POST/PATCH /api/achievements in cirl.js). Same reasoning and mechanism as Partner
+    // Activities above: it's a document type, not a MOA/MOU nature, so it rides along in this same
+    // dropdown as its own sentinel option rather than needing a separate filter control.
+    const ACHIEVEMENTS_OPTION = '__achievements';
+    function filterTag(tag) {
+        // "Partner Activities"/"Achievements" are document types, not a nature: filter by type and clear
+        // the nature filter.
+        if (tag === PARTNER_ACTIVITIES_OPTION) { currentType = 'Partner Activities'; currentTag = 'All'; }
+        else if (tag === ACHIEVEMENTS_OPTION) { currentType = 'Achievements'; currentTag = 'All'; }
+        else {
+            // Keep an MOA/MOU choice from the Type dropdown; only drop a Partner Activities/Achievements type.
+            if (currentType === 'Partner Activities' || currentType === 'Achievements') currentType = 'All';
+            currentTag = tag || 'All';
+        }
+        syncTypeSelect();
         docPage = 1;
-        document.querySelectorAll('#nature-pills-container .btn').forEach(btn => btn.classList.remove('active'));
-        if (el) el.classList.add('active');
+        const sel = document.getElementById('nature-filter');
+        const want = currentType === 'Partner Activities' ? PARTNER_ACTIVITIES_OPTION
+            : currentType === 'Achievements' ? ACHIEVEMENTS_OPTION : currentTag;
+        if (sel && sel.value !== want) sel.value = want;
         loadPage();
+    }
+
+    // MOA / MOU Type dropdown. Combines with the Nature dropdown; picking MOA/MOU clears a
+    // "Partner Activities"/"Achievements" choice there (those are document types too, so they can't both apply).
+    function filterDocType(type) {
+        currentType = (type === 'MOA' || type === 'MOU') ? type : 'All';
+        const sel = document.getElementById('nature-filter');
+        if (sel && (sel.value === PARTNER_ACTIVITIES_OPTION || sel.value === ACHIEVEMENTS_OPTION)) sel.value = 'All';
+        docPage = 1;
+        loadPage();
+    }
+    function syncTypeSelect() {
+        const t = document.getElementById('type-filter');
+        if (t) t.value = (currentType === 'MOA' || currentType === 'MOU') ? currentType : 'All';
     }
 
     // Nature of Partnership filter pills — built from the ACTUAL nature values present on real MOA/MOU records
@@ -753,9 +781,10 @@
     // A pill only exists when at least one MOA/MOU document currently has that nature; "All" is always shown, and
     // "Other" covers an MOA/MOU whose nature could not be confidently determined (never a reason to hide the
     // document itself elsewhere in the library — only this refinement filter).
-    const NATURE_PILL_COLORS = ['btn-soft-info', 'btn-soft-success', 'btn-soft-warning', 'btn-soft-danger', 'btn-soft-primary', 'btn-soft-dark'];
+    // Same options as the Partnership Request form's "Nature of Partnership" field.
+    const REQUEST_NATURES = ['Research', 'Student Exchange', 'Joint Program', 'Faculty Development', 'Technology Transfer', 'Community Outreach', 'Other'];
     function renderNaturePills() {
-        const container = document.getElementById('nature-pills-container');
+        const container = document.getElementById('nature-filter');
         if (!container) return;
         const counts = new Map();
         allDocs.forEach(doc => {
@@ -764,17 +793,29 @@
             const nature = doc.nature || 'Other';
             counts.set(nature, (counts.get(nature) || 0) + 1);
         });
-        const natures = [...counts.keys()].sort((a, b) => a === 'Other' ? 1 : b === 'Other' ? -1 : a.localeCompare(b));
+        // Always offer every Nature of Partnership the Partnership Request form uses, plus any other nature
+        // actually found on a document (e.g. one OCR extraction inferred), so the list is complete either way.
+        REQUEST_NATURES.forEach(n => { if (!counts.has(n)) counts.set(n, 0); });
+        // Same order as the Partnership Request form; any extra nature found on a document goes after those
+        // (alphabetically), and "Other" always stays last.
+        const rank = n => n === 'Other' ? 1e6 : (REQUEST_NATURES.indexOf(n) !== -1 ? REQUEST_NATURES.indexOf(n) : 1000);
+        const natures = [...counts.keys()].sort((a, b) => (rank(a) - rank(b)) || a.localeCompare(b));
         // If the currently-selected nature pill no longer has any matching document (e.g. the last one was removed,
         // reclassified, or archived), fall back to "All" rather than silently showing an empty grid with no visible
         // active filter to explain why.
         if (currentTag !== 'All' && !natures.includes(currentTag)) currentTag = 'All';
-        let html = `<button class="btn btn-sm btn-soft-primary rounded-pill px-3${currentTag === 'All' ? ' active' : ''}" onclick="filterTag('All', this)">All</button>`;
-        natures.forEach((nature, i) => {
-            const color = NATURE_PILL_COLORS[i % NATURE_PILL_COLORS.length];
-            html += `<button class="btn btn-sm ${color} rounded-pill px-3${currentTag === nature ? ' active' : ''}" onclick="filterTag('${nature.replace(/'/g, "\\'")}', this)">${escHtml(nature)} <span class="badge bg-white text-dark ms-1">${counts.get(nature)}</span></button>`;
+        // Dropdown options (was a row of colored pills): "All Nature" plus one option per nature.
+        let html = '<option value="All">All Nature</option>';
+        const paOption = '<option value="' + PARTNER_ACTIVITIES_OPTION + '">Partner Activities</option>';
+        const achOption = '<option value="' + ACHIEVEMENTS_OPTION + '">Achievements</option>';
+        natures.forEach(nature => {
+            if (nature === 'Other') html += paOption + achOption;   // Partner Activities/Achievements sit just before "Other"
+            html += `<option value="${escHtml(nature)}">${escHtml(nature)}</option>`;
         });
+        if (!natures.includes('Other')) html += paOption + achOption;
         container.innerHTML = html;
+        container.value = currentType === 'Partner Activities' ? PARTNER_ACTIVITIES_OPTION
+            : currentType === 'Achievements' ? ACHIEVEMENTS_OPTION : currentTag;
     }
 
     // ── Folders — real, per-owner, backed by /api/document-folders* ─────────────
@@ -933,10 +974,8 @@
                          doc.type === 'Partner Activities' ? 'ri-calendar-check-line text-success' :
                          doc.type === 'Achievements' ? 'ri-trophy-line text-warning' :
                          'ri-file-paper-2-line text-secondary';
-            const nature = doc.tags && doc.tags.length > 0 ? doc.tags[0] : 'Research';
-            const natureBadge = nature === 'Research' ? 'bg-info-subtle text-info' :
-                               nature === 'Student Exchange' ? 'bg-success-subtle text-success' :
-                               nature === 'Foreign Exchange' ? 'bg-primary-subtle text-primary' : 'bg-light text-muted';
+            const nature = docNatureLabel(doc);
+            const natureBadge = docNatureBadge(nature);
 
             const rightLabel = isAccred ? 'Issuing Body:' : 'Nature:';
             const rightValue = isAccred
@@ -993,6 +1032,24 @@
 
     // List View — same document data and same action buttons as the grid,
     // laid out as a responsive Bootstrap table instead of cards.
+    // The Nature shown on a document card/row — same rule the Nature filter uses.
+    function docNatureLabel(doc) {
+        if (doc.type === 'MOA' || doc.type === 'MOU') return doc.nature || 'Other';
+        if (doc.type === 'Partner Activities') return 'Partner Activities';
+        return '—';
+    }
+    function docNatureBadge(nature) {
+        return ({
+            'Research': 'bg-info-subtle text-info',
+            'Student Exchange': 'bg-success-subtle text-success',
+            'Joint Program': 'bg-primary-subtle text-primary',
+            'Faculty Development': 'bg-warning-subtle text-warning',
+            'Technology Transfer': 'bg-secondary-subtle text-secondary',
+            'Community Outreach': 'bg-danger-subtle text-danger',
+            'Partner Activities': 'bg-success-subtle text-success'
+        })[nature] || 'bg-light text-muted';
+    }
+
     function renderList(filtered) {
         const tbody = document.getElementById('document-list-body');
         if (filtered.length === 0) {
@@ -1008,27 +1065,25 @@
                          doc.type === 'Partner Activities' ? 'ri-calendar-check-line text-success' :
                          doc.type === 'Achievements' ? 'ri-trophy-line text-warning' :
                          'ri-file-paper-2-line text-secondary';
-            const nature = doc.tags && doc.tags.length > 0 ? doc.tags[0] : 'Research';
-            const natureBadge = nature === 'Research' ? 'bg-info-subtle text-info' :
-                               nature === 'Student Exchange' ? 'bg-success-subtle text-success' :
-                               nature === 'Foreign Exchange' ? 'bg-primary-subtle text-primary' : 'bg-light text-muted';
+            const nature = docNatureLabel(doc);
+            const natureBadge = docNatureBadge(nature);
             const statusBadge = doc.status === 'Needs Review' ? 'bg-warning-subtle text-warning' : 'bg-success-subtle text-success';
 
             return `
                 <tr>
                     <td><span class="avatar-title bg-light rounded fs-4" style="width:36px;height:36px;display:inline-flex"><i class="${icon}"></i></span></td>
-                    <td class="text-truncate" style="max-width:240px" title="${escHtml(doc.title)}">${escHtml(doc.title)}${doc.duplicateAcknowledged ? ' <span class="badge bg-warning-subtle text-warning fs-10" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line"></i></span>' : ''}</td>
-                    <td class="text-truncate" style="max-width:180px">${escHtml(doc.institution || doc.partner || '—')}</td>
-                    <td class="text-truncate" style="max-width:180px" title="${escHtml(doc.type || '')}">${escHtml(doc.type)}</td>
+                    <td title="${escHtml(doc.title)}">${escHtml(doc.title)}${doc.duplicateAcknowledged ? ' <span class="badge bg-warning-subtle text-warning fs-10" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line"></i></span>' : ''}</td>
+                    <td>${escHtml(doc.institution || doc.partner || '—')}</td>
+                    <td>${escHtml(doc.type)}</td>
                     <td><span class="badge ${natureBadge} fs-10">${escHtml(nature)}</span></td>
-                    <td>${escHtml(doc.date || '—')}</td>
+                    <td class="text-nowrap">${escHtml(doc.date || '—')}</td>
                     <td><span class="badge ${statusBadge} fs-10">${escHtml(doc.status || '—')}</span></td>
-                    <td style="min-width:140px">
+                    <td>
                         <select class="form-select form-select-sm" title="Move to folder" onchange="moveDocument(${doc.id}, this.value)">
                             ${folderOptionsHtml(doc)}
                         </select>
                     </td>
-                    <td class="text-end">
+                    <td class="text-center">
                         <div class="btn-group btn-group-sm">
                             <button type="button" class="btn btn-soft-primary" title="Preview" onclick="openDocPreview(${doc.id})"><i class="ri-eye-line"></i></button>
                             <a class="btn btn-soft-success" href="${doc.fileLink || '#'}" download title="Download"><i class="ri-download-2-line"></i></a>

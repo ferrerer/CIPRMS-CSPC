@@ -16,6 +16,10 @@
 .bg-expiring { background-color: var(--ciprms-expiring) !important; color: #fff !important; }
 .bg-expiring-subtle { background-color: var(--ciprms-expiring-subtle) !important; }
 
+/* Table column headers: the Grid.js sort-arrow icon is hidden on every page and for every role.
+   Clicking a sortable column header still sorts it. */
+.gridjs-sort, button.gridjs-sort { display: none !important; }
+
 /* Larger Days Left / Status badges in the partnership tables (Monitoring registry, partner Renewal Status). */
 /* Same text size and weight as the other cells (Nature, Start, End); only a light tint/padding remains. */
 .badge.table-pill { font-family: inherit; font-size: 0.75rem; font-weight: 400; line-height: inherit; letter-spacing: normal; text-transform: none; padding: 0.15em 0.5em; }

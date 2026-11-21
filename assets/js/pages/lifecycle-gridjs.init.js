@@ -176,7 +176,7 @@ function buildGrid() {
         data: data,
         search: false,
         pagination: false,
-        sort: true,
+        sort: false,   // column sorting is off for every table
         className: {
             table:  'table table-hover align-middle mb-0',
             thead:  'table-light'

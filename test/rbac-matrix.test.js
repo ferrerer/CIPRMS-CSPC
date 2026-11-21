@@ -49,7 +49,7 @@ describe('the matrix as rendered', () => {
   test('lists the current features, every cell has a level, and every row has a note', () => {
     expect(Object.keys(matrix)).toEqual([
       'Dashboard', 'Calendar', 'Meetings (invitations & attendance)', 'Monitoring', 'Registry (inside Monitoring)', 'Document Library',
-      'User Management', 'Partnership Requests', 'Document Requests', 'Notifications', 'Reports & Analytics', 'Settings (own account)',
+      'User Management', 'Partnership Requests', 'Document Requests', 'Notifications', 'Reports & Analytics', 'Settings (personal account)',
       'Google Calendar connection (Admin Settings)'
     ]);
     for (const row of Object.values(matrix)) {
@@ -78,11 +78,11 @@ describe('the matrix as rendered', () => {
     expect(matrix['Dashboard'].partner.level).toBe('none');
     expect(matrix['Document Library'].college.level).toBe('none');
     expect(matrix['Document Library'].partner.level).toBe('none');
-    expect(matrix['Notifications'].college.text).toBe('Own Only');   // bell + its own Notifications page (reopened 2026-09-26)
-    expect(matrix['Notifications'].partner.text).toBe('Bell Only (own)');
+    expect(matrix['Notifications'].college.text).toBe('Personal Only');   // bell + its own Notifications page (reopened 2026-09-26)
+    expect(matrix['Notifications'].partner.text).toBe('Bell Only (Personal)');
     expect(matrix['Document Requests'].partner.text).toBe('Submit MOA/MOU Only');
     expect(matrix['User Management'].staff.text).toBe('Full (except Administrator accounts)');
-    expect(matrix['Reports & Analytics'].staff.text).toBe('Full, Own Audit Trail Only');
+    expect(matrix['Reports & Analytics'].staff.text).toBe('Full, Personal Audit Trail Only');
     expect(matrix['Google Calendar connection (Admin Settings)'].staff.level).toBe('none');
   });
 });
@@ -101,7 +101,7 @@ describe('every row agrees with what the routes really do', () => {
   test('Document Library (page)', expectAccess('Document Library', (k) => pageOpens(k, { admin: '/documents', college: '/personnel/documents', partner: '/partner/documents', staff: '/staff/documents' })));
   test('User Management (page)', expectAccess('User Management', (k) => pageOpens(k, { admin: '/users', college: '/users', partner: '/users', staff: '/staff/users' })));
   test('Reports & Analytics (page)', expectAccess('Reports & Analytics', (k) => pageOpens(k, { admin: '/reports', college: '/reports', partner: '/reports', staff: '/staff/reports' })));
-  test('Settings (own account)', expectAccess('Settings (own account)', (k) => pageOpens(k, { admin: '/admin/settings', college: '/personnel/settings', partner: '/partner/settings', staff: '/staff/settings' })));
+  test('Settings (personal account)', expectAccess('Settings (personal account)', (k) => pageOpens(k, { admin: '/admin/settings', college: '/personnel/settings', partner: '/partner/settings', staff: '/staff/settings' })));
   test('Google Calendar connection', expectAccess('Google Calendar connection (Admin Settings)', async (k) => (await agents[k].get('/api/google-calendar/status')).status === 200));
   test('Registry (add/edit/delete partnerships)', expectAccess('Registry (inside Monitoring)', async (k) => (await agents[k].patch('/api/partnerships/99999999').send({ notes: 'jesttest' })).status !== 302));
 
@@ -149,7 +149,7 @@ describe('every row agrees with what the routes really do', () => {
     expect(await pageOpens('staff', { staff: '/staff/notifications' })).toBe(true);
     expect(await pageOpens('college', { college: '/personnel/notifications' })).toBe(true);
     expect(await pageOpens('partner', { partner: '/partner/notifications' })).toBe(false);
-    expect(matrix['Notifications'].college.text).toMatch(/Own Only/);
+    expect(matrix['Notifications'].college.text).toMatch(/Personal Only/);
     expect(matrix['Notifications'].partner.text).toMatch(/Bell/);
   });
 });

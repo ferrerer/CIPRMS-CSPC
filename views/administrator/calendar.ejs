@@ -88,7 +88,7 @@
 
                 <div class="row">
                     <div class="col-12">
-                        <div class="row">
+                        <div class="row" id="cal-fit-row">
 
                             <!-- col-xl-3 sidebar — exact from apps-calendar.html -->
                             <% var canManageCalendar = typeof user !== 'undefined' && user && (user.role === 'Administrator' || user.role === 'Staff'); %>
@@ -135,23 +135,6 @@
                                 </div>
                                 <% } %>
 
-                                <div class="card">
-                                    <div class="card-body bg-info-subtle">
-                                        <div class="d-flex">
-                                            <div class="flex-shrink-0">
-                                                <i data-feather="calendar" class="text-info icon-dual-info"></i>
-                                            </div>
-                                            <div class="flex-grow-1 ms-3">
-                                                <h6 class="fs-15">Partnership Calendar</h6>
-                                                <% if (canManageCalendar) { %>
-                                                <p class="text-muted mb-0">Click a date or drag an event type onto the calendar. Click events to view, edit, or delete.</p>
-                                                <% } else { %>
-                                                <p class="text-muted mb-0">Click an event to view its details.</p>
-                                                <% } %>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div><!-- end col-xl-3 -->
 
                             <!-- col-xl-9 main calendar — exact from apps-calendar.html -->
@@ -1049,6 +1032,31 @@ document.addEventListener('DOMContentLoaded', function(){
     allUsers = Array.isArray(users) ? users : [];   // feeds the shared Add/Edit step-2 recipient search
   }).catch(function(){ /* Auth. Personnel: no individual-user list, role options still work */ });
 
+  // One-page calendar (no page scrolling) on desktop widths: the calendar row is sized to exactly the space
+  // left in the window (below the page title, above the footer); the calendar takes that height and the
+  // left column scrolls inside itself only if its cards don't fit. Below 1200px the stacked layout stays.
+  function fitCalendarToWindow(){
+    var row = document.getElementById('cal-fit-row');
+    if (!row || !cal) return;
+    var side = row.querySelector('.cal-side');
+    if (window.innerWidth < 1200) {
+      row.style.height = '';
+      if (side) { side.style.maxHeight = ''; side.style.overflowY = ''; }
+      cal.setOption('height', 'auto');
+      return;
+    }
+    var footer = document.querySelector('.footer');
+    var footerH = footer ? footer.offsetHeight : 60;
+    var top = row.getBoundingClientRect().top + window.scrollY;
+    var avail = Math.max(420, window.innerHeight - top - footerH - 4);
+    row.style.height = avail + 'px';
+    if (side) { side.style.maxHeight = avail + 'px'; side.style.overflowY = 'auto'; }
+    var notice = document.getElementById('cal-notice');
+    var noticeH = notice ? notice.offsetHeight : 0;
+    // card margin-bottom (1.5rem) + card-body padding (2 × 1rem)
+    cal.setOption('height', Math.max(360, avail - noticeH - 24 - 32));
+  }
+
   cal = new FullCalendar.Calendar(calEl, {
     timeZone:    'local',
     headerToolbar: { left:'prev,next today', center:'title', right:'dayGridMonth,timeGridWeek,listMonth' },
@@ -1068,6 +1076,7 @@ document.addEventListener('DOMContentLoaded', function(){
       var w = window.innerWidth;
       cal.setOption('aspectRatio', calendarAspect(w));
       cal.changeView(w < 768 ? 'listMonth' : w < 1200 ? 'timeGridWeek' : 'dayGridMonth');
+      fitCalendarToWindow();
     },
     // Creating from a calendar cell: days before today are not selectable (the cell just tells the person why).
     // Viewing or navigating to earlier months, and clicking an existing event there, are untouched.
@@ -1114,6 +1123,7 @@ document.addEventListener('DOMContentLoaded', function(){
   });
 
   cal.render();
+  fitCalendarToWindow();
   calendarLive(cal, function(){ return calWrites; });
 
   // Draggable external events (Administrator/Staff only — the palette isn't rendered otherwise)

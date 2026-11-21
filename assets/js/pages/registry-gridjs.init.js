@@ -3,22 +3,7 @@
 var partnerships = [];
 var filtered = [];
 var regCurrentPage = 1;
-var regPageSize = 10; // selectable (2026-11 panel recommendation) — was a hardcoded 6
-
-function buildPageList(current, total) {
-    var maxVisible = 5;
-    if (total <= maxVisible + 2) {
-        return Array.from({ length: total }, function (_, i) { return i + 1; });
-    }
-    var start = Math.max(1, current - Math.floor(maxVisible / 2));
-    var end = start + maxVisible - 1;
-    if (end > total) { end = total; start = Math.max(1, end - maxVisible + 1); }
-    var pages = [];
-    for (var i = start; i <= end; i++) pages.push(i);
-    if (start > 1) { pages.unshift('...'); pages.unshift(1); }
-    if (end < total) { pages.push('...'); pages.push(total); }
-    return pages;
-}
+var regPageSize = 10; // fixed 10 per page (the Show selector was removed)
 
 function buildPaginationHtml(current, total, onClickFn) {
     if (total <= 1) return '';
@@ -31,14 +16,10 @@ function buildPaginationHtml(current, total, onClickFn) {
         var click = opts.disabled || opts.ellipsis ? '' : 'onclick="' + onClickFn + '(' + page + ')"';
         return '<li class="page-item' + disabled + active + isEllipsis + '"><a class="page-link' + isPrevNext + '" href="javascript:void(0)" ' + click + '>' + label + '</a></li>';
     };
+    // Previous / Next only (no numbered page buttons), same pagination-custom style as before.
     var html = pageItem('&lsaquo; Previous', current - 1, { disabled: current === 1, isPrev: true });
-    buildPageList(current, total).forEach(function(p) {
-        html += (p === '...')
-            ? pageItem('&hellip;', null, { ellipsis: true, disabled: true })
-            : pageItem(p, p, { active: p === current });
-    });
     html += pageItem('Next &rsaquo;', current + 1, { disabled: current === total, isNext: true });
-    return '<div class="d-flex justify-content-end mb-3"><ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul></div>';
+    return '<ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul>';
 }
 
 function goToRegPage(p) {
@@ -1110,15 +1091,7 @@ function buildGrid() {
 
   var pagEl = document.getElementById('reg-pagination');
   if (pagEl) pagEl.innerHTML = buildPaginationHtml(regCurrentPage, totalPages, 'goToRegPage');
-  // Page-size selector (2026-11 panel recommendation) — the shared helper from ciprms-pagination.js;
-  // the Previous/Next/numbered renderer above stays this file's own (identical logic either way).
-  if (window.CIPRMSPagination) {
-    window.CIPRMSPagination.renderPageSizeSelector('reg-page-size', regPageSize, [10, 25, 50], function (newSize) {
-      regPageSize = newSize;
-      regCurrentPage = 1;
-      buildGrid();
-    });
-  }
+  // (The "Show N" page-size selector was removed — the registry always shows 10 per page.)
 
   // Empty state: shown under the table header when the current filters match nothing.
   var emptyEl = document.getElementById('reg-empty');
@@ -1139,38 +1112,15 @@ function buildGrid() {
   if (window._regGrid) { window._regGrid.updateConfig({data:pageData}).forceRender(); return; }
   var regGridEl = document.getElementById('reg-grid');
   if (regGridEl) regGridEl.innerHTML = ''; // clear the template's loading placeholder — Grid.js requires an empty container on first render
-  // Sort helpers: html cells (gridjs.html) are objects, which Grid.js's default compare can't order,
-  // so sort on their visible text instead; dates sort chronologically, not alphabetically.
-  function cellText(v) {
-    if (v == null) return '';
-    if (typeof v === 'string' || typeof v === 'number') return String(v);
-    var content = v.props && v.props.content;
-    if (typeof content !== 'string') return '';
-    var div = document.createElement('div');
-    div.innerHTML = content;
-    var first = div.firstChild;
-    // Institution/Country cells: name first, then a sub-line div — sort on the name only.
-    return (first && first.nodeType === 3 ? first.textContent : div.textContent).trim();
-  }
-  function textCompare(a, b) {
-    return cellText(a).localeCompare(cellText(b), undefined, { sensitivity: 'base', numeric: true });
-  }
-  function dateCompare(a, b) {
-    var ta = Date.parse(cellText(a)), tb = Date.parse(cellText(b));
-    if (isNaN(ta) && isNaN(tb)) return 0;
-    if (isNaN(ta)) return 1;
-    if (isNaN(tb)) return -1;
-    // Must return -1/0/1: Grid.js combines results with a bitwise OR, which overflows on raw ms differences.
-    return ta < tb ? -1 : ta > tb ? 1 : 0;
-  }
+  // Column sorting is turned off for every table (no sort arrows, header clicks do nothing).
   regGridEl && (window._regGrid = new gridjs.Grid({
     columns:[
-      {name:'Institution',width:'23%',sort:{compare:textCompare}},{name:'Country/Region',width:'14%',sort:{compare:textCompare}},
-      {name:'Nature',width:'11%',sort:{compare:textCompare}},{name:'Start',width:'10%',sort:{compare:dateCompare}},
-      {name:'End',width:'11%',sort:{compare:dateCompare}},{name:'Days Left',width:'11%',sort:false},
-      {name:'Status',width:'10%',sort:false},{name:'Actions',width:'10%',sort:false}
+      {name:'Institution',width:'23%'},{name:'Country/Region',width:'14%'},
+      {name:'Nature',width:'11%'},{name:'Start',width:'10%'},
+      {name:'End',width:'11%'},{name:'Days Left',width:'11%'},
+      {name:'Status',width:'10%'},{name:'Actions',width:'10%'}
     ],
-    data:pageData, search:false, pagination:false, sort:true,
+    data:pageData, search:false, pagination:false, sort:false,
     className:{table:'table table-hover align-middle mb-0',thead:'table-light'}
   }).render(document.getElementById('reg-grid')));
 }

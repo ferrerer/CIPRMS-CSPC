@@ -1344,6 +1344,11 @@ app.post('/api/activate', requireAuth, async (req, res) => {
     }
     if (contact.error) return res.status(400).json({ error: contact.error });
     if (!contact.value) return res.status(400).json({ error: 'Contact number is required.' });
+    // Optional school / institution website: blank is allowed; otherwise it must be an http(s) address
+    // ("https://" is added when the scheme was left out). Stored as typed, never fetched by the server.
+    const site = parseWebsite(req.body.website === undefined ? '' : req.body.website);
+    if (site.error) return res.status(400).json({ error: site.error });
+    const website = site.value || '';
 
     const db = getDb();
     const userDoc = await db.collection('users').findOne({ id: req.session.user.id }, { projection: { password: 0 } });
@@ -1352,7 +1357,7 @@ app.post('/api/activate', requireAuth, async (req, res) => {
 
     await db.collection('users').updateOne(
       { id: userDoc.id },
-      { $set: { unit, institution, position, contactNumber: contact.value, activated: true, activatedAt: new Date() } }
+      { $set: { unit, institution, position, contactNumber: contact.value, website, activated: true, activatedAt: new Date() } }
     );
     req.session.user.unit = unit;
     req.session.user.activated = true;
@@ -3952,6 +3957,16 @@ app.get('/api/college-requests', requireAuth, async (req, res) => {
     }
     const safeCdrStatus = safeQueryString(req.query.status, CDR_STATUSES);
     if (safeCdrStatus) filter.status = safeCdrStatus;
+    // Optional search box text (Requests page → College Requests tab): matched, case-insensitive, against
+    // title, type and the assigned Dean's name/college. Escaped, so it is always a literal substring match.
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
+    if (q) {
+      const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      const searchOr = [{ title: rx }, { requestType: rx }, { assignedDeanName: rx }, { assignedCollege: rx },
+        { 'assignedDeans.name': rx }, { 'assignedDeans.college': rx }];
+      if (filter.$or) { filter.$and = [{ $or: filter.$or }, { $or: searchOr }]; delete filter.$or; }
+      else filter.$or = searchOr;
+    }
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = [10, 25, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 25;
     const totalCount = await db.collection('collegedeanrequests').countDocuments(filter);
@@ -4336,7 +4351,7 @@ app.get('/api/documents', requireUploader, async (req, res) => {
     }
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const pageSize = [10, 12, 15, 25, 30, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 15;
+    const pageSize = [9, 10, 12, 15, 25, 30, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 9;
     const filter = { ...roleFilter };
 
     // Folder/archived — doc.archived/doc.folderId are plain fields on each record, queried here exactly
@@ -4358,7 +4373,9 @@ app.get('/api/documents', requireUploader, async (req, res) => {
     // "Other" means an MOA/MOU with no confidently-extracted nature (missing, null, or empty string).
     const safeTag = safeQueryString(req.query.tag);
     if (safeTag && safeTag !== 'All') {
-      filter.type = { $in: ['MOA', 'MOU'] };
+      // A specific MOA or MOU already picked in the Type dropdown (safeDocType, computed above) narrows
+      // further; anything else → both.
+      filter.type = (safeDocType === 'MOA' || safeDocType === 'MOU') ? safeDocType : { $in: ['MOA', 'MOU'] };
       filter.nature = safeTag === 'Other' ? { $in: [null, ''] } : safeTag;
     }
     const search = (req.query.search || '').trim();
@@ -8127,10 +8144,11 @@ app.post('/api/users', requireStaffAccess, async (req, res) => {
       icon: 'ri-user-star-line',
       color: 'primary',
       title: 'Welcome to CIPRMS',
-      desc: `Hello ${entry.name}, your CIPRMS account has been created with the role "${entry.role}". Sign in `
+      desc: `Hello ${entry.name}, your CIPRMS account has been created with the role "${displayRoleName(entry.role)}". Sign in `
         + `with Google using this e-mail address (${entry.email}) to get started. If you don't have Google `
         + `access for this address, or run into trouble signing in, please contact the CIRL office for assistance.`,
-      link: '/activate'
+      link: '/activate',
+      showSystemUrl: true   // the e-mail also prints the CIPRMS web address as visible text (APP_BASE_URL)
     });
     // The account is already created at this point regardless of what happens below — a failed e-mail
     // never rolls it back. Awaited (not fire-and-forget, unlike emailSubmissionReceipt) so the admin can
@@ -8223,6 +8241,13 @@ app.patch('/api/users/:id', requireStaffAccess, async (req, res) => {
       const contact = parseContactNumber(updateData.contactNumber);
       if (contact.error) return res.status(400).json({ error: contact.error });
       if (contact.value === undefined) delete updateData.contactNumber; else updateData.contactNumber = contact.value;
+    }
+
+    // Optional school / institution website — same rule as the activation form.
+    if (updateData.website !== undefined) {
+      const site = parseWebsite(updateData.website);
+      if (site.error) return res.status(400).json({ error: site.error });
+      updateData.website = site.value;
     }
 
     // Never let an admin lock everyone out: block deactivating your own account,
@@ -10473,13 +10498,27 @@ function registeredProfile(userDoc) {
   return {
     name: userDoc.name || '', email: userDoc.email || '',
     dept: userDoc.unit || '', position: userDoc.position || '', institution: userDoc.institution || '',
-    contactNumber: userDoc.contactNumber || ''
+    contactNumber: userDoc.contactNumber || '', website: userDoc.website || ''
   };
 }
 
 // The contact number entered when an account is registered / edited in User Management. Digits and the usual phone
 // punctuation only, at least 7 digits when one is given; empty clears it. Returns { value } (undefined = not sent, so
 // the stored number is left alone) or { error }.
+// Optional school / institution website (account activation form and Edit User). Blank clears it; otherwise it must
+// be an http(s) address with a real host ("https://" is added when the scheme was left out). Stored as text only —
+// the server never fetches it. Returns { value } (undefined = not sent) or { error }.
+function parseWebsite(raw) {
+  if (raw === undefined) return { value: undefined };
+  let website = typeof raw === 'string' ? raw.trim().slice(0, 300) : '';
+  if (!website) return { value: '' };
+  if (!/^https?:\/\//i.test(website)) website = 'https://' + website;
+  try {
+    const u = new URL(website);
+    if ((u.protocol === 'http:' || u.protocol === 'https:') && u.hostname.includes('.')) return { value: website };
+  } catch (_) { /* not a valid URL */ }
+  return { error: 'Enter a valid website address (for example: https://www.cspc.edu.ph), or leave it blank.' };
+}
 const CONTACT_NUMBER_RE = /^[0-9+()\-\s]{1,25}$/;
 function parseContactNumber(raw) {
   if (typeof raw !== 'string') return { value: undefined };

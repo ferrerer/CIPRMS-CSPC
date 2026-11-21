@@ -45,6 +45,9 @@ describe('Welcome e-mail on new account creation', () => {
     expect(mail).toBeDefined();
     expect(mail.text).toContain('jesttest Welcome');
     expect(mail.text).toContain('Staff');
+    // the system's own web address is printed as visible text (not only behind the button)
+    expect(mail.text).toContain('CIPRMS web address: ');
+    expect(mail.html).toContain('CIPRMS web address:');
     // Never the temp password the response hands the admin out-of-band — not the raw value, not the word.
     expect(mail.text).not.toContain(res.body.tempPassword);
     expect(mail.text.toLowerCase()).not.toContain('password');
