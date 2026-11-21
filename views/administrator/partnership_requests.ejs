@@ -2668,7 +2668,10 @@
       return CIPRMS.busy(button, async () => {
         const res = await CIPRMS.api('/api/requests/' + r.id, { method: 'PATCH', json: payload, quiet: true });
         if (!res.ok) {
-          showToast('<i class="ri-error-warning-line me-1"></i>' + res.error, '#f06548');
+          // 2026-11 Batch 1 follow-up: a 409 means someone else's decision won the race (see cirl.js's
+          // conditional updateOne) — the server's own error text is accurate but generic ("already been
+          // updated"), so this shows the specific, friendlier wording the audit asked for instead.
+          showToast('<i class="ri-error-warning-line me-1"></i>' + (res.status === 409 ? 'This request was already updated by someone else. Refreshing…' : res.error), '#f06548');
           if (res.status === 400 || res.status === 404 || res.status === 409) { await refreshLive(); refreshOpenModals(); }
           return false;
         }
@@ -2890,7 +2893,9 @@
       try {
         const res = await CIPRMS.api('/api/document-requests/' + id, { method: 'PATCH', json: body, quiet: true });
         if (!res.ok) {
-          showToast('<i class="ri-error-warning-line me-1"></i>' + res.error, '#f06548');
+          // 2026-11 Batch 1 follow-up: see the identical note in applyPRStatus() above — a 409 here gets
+          // the same specific, friendlier wording instead of the server's generic "already updated" text.
+          showToast('<i class="ri-error-warning-line me-1"></i>' + (res.status === 409 ? 'This request was already updated by someone else. Refreshing…' : res.error), '#f06548');
           // when the server says the request has moved on / is gone, re-read the list; the row is rebuilt below either way
           if (res.status === 400 || res.status === 404 || res.status === 409) { await refreshLive(); refreshOpenModals(); }
           return;

@@ -97,6 +97,21 @@ describe('1. Administrator/Staff creation and assignment', () => {
     expect((await createRequest(partnerAgent, dean.id)).status).toBe(403);
     expect((await createRequest(lauAgent, dean.id)).status).toBe(403);
   });
+
+  // 2026-11 audit fix (Critical #2): collegedeanrequests was missing from db.js's unique-id-index loops,
+  // so insertWithNextId's existing retry-on-11000 logic was silently inert for this one collection —
+  // concurrent creates could read the same "next id" and both insert it. Now that the index exists,
+  // concurrent submissions must come out with distinct ids.
+  test('10 concurrent submissions all receive distinct ids (unique index + insertWithNextId retry)', async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { user: dean } = await agentFor('Auth. Personnel');
+    const results = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => createRequest(adminAgent, dean.id, { title: `jesttest Concurrent Create ${i}-${Date.now()}-${Math.random()}` }))
+    );
+    for (const res of results) expect(res.status).toBe(200);
+    const ids = results.map((r) => r.body.request.id);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
 });
 
 describe('2. College Dean access restrictions', () => {
@@ -279,6 +294,37 @@ describe('5. Accept and return-for-revision workflow', () => {
 
     const res = await adminAgent.patch('/api/college-requests/' + r.body.request.id).set('X-Requested-With', 'ciprms').send({ action: 'accept' });
     expect(res.status).toBe(400);
+  });
+
+  // 2026-11 audit fix (Critical #1): the updateOne filter is now conditioned on target.status === 'Submitted'
+  // (the exact value the pre-check validated), so the loser of a race gets matchedCount 0 -> 409 instead of
+  // both an accept and a return silently both applying to the same submission.
+  test('a simultaneous accept and return-for-revision on the same submission: exactly one succeeds (200), the other gets 409, and only one notification/log entry is recorded', async () => {
+    const { agent: adminAgent } = await agentFor('Administrator');
+    const { agent: deanAgent, user: dean } = await agentFor('Auth. Personnel');
+    const r = await createRequest(adminAgent, dean.id);
+    await deanAgent.post('/api/college-requests/' + r.body.request.id + '/documents').set('X-Requested-With', 'ciprms').field('note', 'submission');
+
+    const [a, b] = await Promise.all([
+      adminAgent.patch('/api/college-requests/' + r.body.request.id).set('X-Requested-With', 'ciprms').send({ action: 'accept' }),
+      adminAgent.patch('/api/college-requests/' + r.body.request.id).set('X-Requested-With', 'ciprms').send({ action: 'return', remark: 'jesttest race' })
+    ]);
+    // Exactly one must win; the other is rejected either by the race guard itself (409, if both
+    // requests' findOne genuinely interleaved) or by the pre-existing "only a Submitted request can be
+    // decided" pre-check (400, if the loser's own findOne ran after the winner had already committed) —
+    // both are correct outcomes of the same fix; which one fires is a timing detail, not a contract.
+    const winner = a.status === 200 ? a : b;
+    const loser = a.status === 200 ? b : a;
+    expect(winner.status).toBe(200);
+    expect([400, 409]).toContain(loser.status);
+
+    const stored = await db.collection('collegedeanrequests').findOne({ id: r.body.request.id });
+    expect(['Completed', 'Returned for Revision']).toContain(stored.status);
+    // Filtered to the DECISION notification specifically (title matches "accepted"/"returned") — the
+    // dean also got an unrelated "assigned a new request" notification at creation time, same tag,
+    // which this must not count (same disambiguation test #3's "notifies the assigned Dean" already uses).
+    const notifs = await db.collection('notifications').find({ targetEmail: dean.email, tag: 'College Request', title: { $regex: /accepted|returned/i } }).toArray();
+    expect(notifs.length).toBe(1);
   });
 });
 

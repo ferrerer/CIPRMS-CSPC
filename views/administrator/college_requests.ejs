@@ -387,8 +387,8 @@
                       '<div class="w-100">' +
                       '<textarea class="form-control mb-2" id="cdr-return-remark" rows="2" placeholder="Comment (required if returning for revision)"></textarea>' +
                       '<div class="d-flex justify-content-end gap-2">' +
-                      '<button class="btn btn-warning" onclick="cdrDecide(' + r.id + ', \\'return\\')"><i class="ri-arrow-go-back-line"></i> Return for Revision</button>' +
-                      '<button class="btn btn-success" onclick="cdrDecide(' + r.id + ', \\'accept\\')"><i class="ri-checkbox-circle-line"></i> Accept</button>' +
+                      '<button class="btn btn-warning" onclick="cdrDecide(' + r.id + ', \'return\')"><i class="ri-arrow-go-back-line"></i> Return for Revision</button>' +
+                      '<button class="btn btn-success" onclick="cdrDecide(' + r.id + ', \'accept\')"><i class="ri-checkbox-circle-line"></i> Accept</button>' +
                       '</div></div>';
               } else {
                   footer.innerHTML = '<button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>';
@@ -423,9 +423,21 @@
           headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'ciprms' },
           body: JSON.stringify({ action: action, remark: remark })
       })
-      .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, body: body }; }); })
+      .then(function (r) { return r.json().then(function (body) { return { ok: r.ok, status: r.status, body: body }; }); })
       .then(function (res) {
-          if (!res.ok) { showToast(res.body.error || 'Unable to update this request.', '#f44336'); return; }
+          if (!res.ok) {
+              // 2026-11 Batch 1 follow-up: a 409 means someone else's decision won the race (see cirl.js's
+              // conditional updateOne) — the modal is showing stale data at that point, so it's closed and
+              // the list reloaded, same as the other two request types' identical handling.
+              if (res.status === 409) {
+                  showToast('This request was already updated by someone else. Refreshing…', '#f44336');
+                  bootstrap.Modal.getInstance(document.getElementById('cdr-detail-modal')).hide();
+                  cdrLoadList();
+                  return;
+              }
+              showToast(res.body.error || 'Unable to update this request.', '#f44336');
+              return;
+          }
           showToast(action === 'accept' ? 'Request accepted.' : 'Returned for revision.', '#4caf50');
           bootstrap.Modal.getInstance(document.getElementById('cdr-detail-modal')).hide();
           cdrLoadList();

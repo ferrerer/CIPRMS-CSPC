@@ -16,6 +16,7 @@ const passport = require('passport');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
+const { Binary } = require('mongodb');
 const PDFDocument = require('pdfkit');
 const ExcelJS = require('exceljs');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
@@ -2410,10 +2411,19 @@ app.patch('/api/requests/:id', requireStaffAccess, announce('request'), async (r
     if (!UNDECIDED_REQUEST_STATUSES.includes(current.status)) {
       return res.status(400).json({ error: `This request has already been decided (current status: ${current.status}) and cannot be changed.` });
     }
-    await db.collection('requests').updateOne(
-      { id },
+    // Race fix (2026-11 audit, Critical #1): the filter is conditioned on the EXACT status just read above,
+    // not merely "still undecided" — two concurrent decisions both pass the pre-check with the same stale
+    // `current.status`, but only the first one's updateOne can still match it; the loser's matchedCount is
+    // 0 and every side effect below (renewal extension, notifications, Document Library marking) never
+    // runs for it. This is the same optimistic-concurrency pattern the `targets` collection already gets
+    // for free from its unique index — this route has no such index to lean on, so the filter does the job.
+    const updateResult = await db.collection('requests').updateOne(
+      { id, status: current.status },
       { $set: { status, notes: notes || '', updatedAt: new Date().toISOString(), decidedBy: req.session.user.name } }
     );
+    if (updateResult.matchedCount === 0) {
+      return res.status(409).json({ error: 'This request was already updated. Please refresh.' });
+    }
     const updated = await db.collection('requests').findOne({ id });
     if (!updated) return res.status(404).json({ error: 'Request not found.' });
     const action = status === 'Approved' ? 'APPROVE' : status === 'Rejected' ? 'REJECT' : 'EDIT';
@@ -3103,10 +3113,19 @@ app.patch('/api/document-requests/:id', requireStaffAccess, announce('documentRe
     // always reconstructable straight from the request document itself.
     const historyEntry = { from: current.status, to: status, at: now, by: req.session.user.name, byEmail: req.session.user.email, remark: remark || '' };
 
-    await db.collection('documentrequests').updateOne(
-      { id },
+    // Race fix (2026-11 audit, Critical #1): conditioned on the EXACT status just read above (current.status,
+    // not just "non-terminal") — the multi-stage pipeline validated `status !== expectedNext` against that
+    // exact value, so a looser "still open" filter could let a stale transition apply itself on top of a
+    // DIFFERENT concurrent transition that already moved the record elsewhere. matchedCount === 0 means
+    // someone else won the race; every side effect below (signature snapshot on Completed, notifications)
+    // never runs for the loser.
+    const updateResult = await db.collection('documentrequests').updateOne(
+      { id, status: current.status },
       { $set: setFields, $push: { statusHistory: historyEntry } }
     );
+    if (updateResult.matchedCount === 0) {
+      return res.status(409).json({ error: 'This request was already updated. Please refresh.' });
+    }
     const updated = await db.collection('documentrequests').findOne({ id });
     if (!updated) return res.status(404).json({ error: 'Document request not found.' });
 
@@ -3376,7 +3395,7 @@ function canAccessDocumentRequest(user, target) {
 
 // Shared formatting so the HTML print view and the PDFKit download show
 // identical values.
-function drFormFields(r) {
+async function drFormFields(r) {
   const dtSource = r.submittedAt || r.date;
   const dt = dtSource ? new Date(dtSource) : null;
   const dateTimeStr = dt && !isNaN(dt)
@@ -3409,15 +3428,17 @@ function drFormFields(r) {
   // and only using the exact file snapshotted at that moment — see signatureFileIdAtCompletion and
   // services/signatureService.js. Checking live `canonical` here (not a stored boolean) is what makes a
   // request moved back off Completed lose the signature again on its own, with no extra code.
-  const approverSignaturePath = canonical === 'Completed'
-    ? signatureService.resolveSignatureFileForRequest(r)
+  // 2026-11 audit fix (Critical/High #3): the signature now lives in MongoDB, not on local disk — this
+  // lookup is an async DB read (getSignatureBytes), which is what makes drFormFields itself async.
+  const approverSignature = canonical === 'Completed'
+    ? await signatureService.resolveSignatureFileForRequest(getDb(), r)
     : null;
   return {
     dateTimeStr, documentItems, fmtDate, isFulfilled,
     approverName: isFulfilled ? DR_APPROVER_NAME : '',
     approvedDateStr: isFulfilled ? fmtDate(r.approvedAt || r.updatedAt) : '',
-    approverSignaturePath,
-    hasApproverSignature: !!approverSignaturePath
+    approverSignature,
+    hasApproverSignature: !!approverSignature
   };
 }
 
@@ -3430,7 +3451,7 @@ app.get('/document-requests/:id/print', requireAuth, async (req, res) => {
     if (!canAccessDocumentRequest(req.session.user, target)) {
       return res.status(403).send('You are not authorized to view this document request.');
     }
-    res.render('print/document_request_print', { r: target, ...drFormFields(target) });
+    res.render('print/document_request_print', { r: target, ...(await drFormFields(target)) });
   } catch (err) {
     res.status(500).send('Failed to render the document request form.');
   }
@@ -3445,7 +3466,7 @@ app.get('/api/document-requests/:id/pdf', requireAuth, async (req, res) => {
     if (!canAccessDocumentRequest(req.session.user, target)) {
       return res.status(403).json({ error: 'You are not authorized to download this document request.' });
     }
-    renderDocumentRequestPdf(res, target);
+    await renderDocumentRequestPdf(res, target);
   } catch (err) {
     console.error('❌ Document request PDF error:', err);
     res.status(500).json({ error: 'Unable to generate the document right now. Please try again.' });
@@ -3464,9 +3485,34 @@ app.get('/api/document-requests/:id/signature-image', requireAuth, async (req, r
     const target = await db.collection('documentrequests').findOne({ id });
     if (!target) return res.status(404).end();
     if (!canAccessDocumentRequest(req.session.user, target)) return res.status(403).end();
-    const { approverSignaturePath } = drFormFields(target);
-    if (!approverSignaturePath) return res.status(404).end();
-    res.sendFile(approverSignaturePath);
+
+    // ETag/Cache-Control (2026-11 Batch 1 follow-up): derived from signatureFileIdAtCompletion itself —
+    // once a request is Completed this value is frozen forever (the whole point of the snapshot), so the
+    // bytes it resolves to can never change again; a day-long private cache is exactly as safe as that
+    // invariant already guarantees. A request that isn't (or is no longer) Completed has no stable fileId
+    // and is never cached at all, so a status reverted off Completed stops showing a stale cached image.
+    const canonical = canonicalDrStatus(target.status);
+    const fileId = canonical === 'Completed' ? target.signatureFileIdAtCompletion : null;
+    const etag = fileId ? `"${fileId}"` : null;
+    if (etag && req.get('If-None-Match') === etag) {
+      res.set('Cache-Control', 'private, max-age=86400');
+      res.set('ETag', etag);
+      return res.status(304).end();
+    }
+
+    const { approverSignature } = await drFormFields(target);
+    if (!approverSignature) {
+      res.set('Cache-Control', 'no-store');
+      return res.status(404).end();
+    }
+    res.set('Content-Type', approverSignature.mimetype);
+    if (etag) {
+      res.set('Cache-Control', 'private, max-age=86400');
+      res.set('ETag', etag);
+    } else {
+      res.set('Cache-Control', 'no-store');
+    }
+    res.send(approverSignature.buffer);
   } catch (err) {
     console.error('❌ Document request signature image error:', err);
     res.status(500).end();
@@ -3483,11 +3529,8 @@ app.get('/api/settings/signature', requireStaffAccess, async (req, res) => {
     const db = getDb();
     const current = await signatureService.getCurrentSignature(db);
     if (!current) return res.json({ success: true, hasSignature: false });
-    const filePath = signatureService.signatureFilePath(current.fileId);
-    let dataUri = null;
-    if (fs.existsSync(filePath)) {
-      dataUri = `data:${current.mimetype};base64,${fs.readFileSync(filePath).toString('base64')}`;
-    }
+    const bytes = await signatureService.getSignatureBytes(db, current.fileId);
+    const dataUri = bytes ? `data:${bytes.mimetype};base64,${bytes.buffer.toString('base64')}` : null;
     res.json({
       success: true,
       hasSignature: !!dataUri,
@@ -3520,6 +3563,7 @@ app.post('/api/settings/signature', requireStaffAccess, (req, res) => {
       const actor = req.session.user;
       await signatureService.saveSignature(db, {
         fileId: req.file.filename,
+        filePath: req.file.path,
         mimetype: req.file.mimetype,
         uploadedBy: actor.name,
         uploadedByEmail: actor.email
@@ -3844,7 +3888,8 @@ app.get('/api/college-requests', requireAuth, async (req, res) => {
       const requests = await db.collection('collegedeanrequests').find(filter).sort({ id: -1 }).toArray();
       return res.json(requests);
     }
-    if (req.query.status) filter.status = req.query.status;
+    const safeCdrStatus = safeQueryString(req.query.status, CDR_STATUSES);
+    if (safeCdrStatus) filter.status = safeCdrStatus;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = [10, 25, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 25;
     const totalCount = await db.collection('collegedeanrequests').countDocuments(filter);
@@ -4059,7 +4104,16 @@ app.patch('/api/college-requests/:id', requireStaffAccess, announce('collegeRequ
     if (action === 'accept') setFields.decidedAt = now;
     if (action === 'return') setFields.reviewRemark = remark.trim();
 
-    await db.collection('collegedeanrequests').updateOne({ id }, { $set: setFields, $push: { statusHistory: historyEntry } });
+    // Race fix (2026-11 audit, Critical #1): conditioned on target.status === 'Submitted', the exact value
+    // the pre-check above just verified — the loser of a concurrent accept/return gets matchedCount 0 and
+    // its notification/logActivity below never runs.
+    const updateResult = await db.collection('collegedeanrequests').updateOne(
+      { id, status: target.status },
+      { $set: setFields, $push: { statusHistory: historyEntry } }
+    );
+    if (updateResult.matchedCount === 0) {
+      return res.status(409).json({ error: 'This request was already updated. Please refresh.' });
+    }
     const updated = await db.collection('collegedeanrequests').findOne({ id });
 
     const assignedDeanNames = getAssignedDeans(target).map(d => d.name).join(', ');
@@ -4234,12 +4288,16 @@ app.get('/api/documents', requireUploader, async (req, res) => {
       if (folder === 'unfiled') filter.folderId = null;
       else if (folder && folder !== 'all') { const fid = parseInt(folder, 10); if (Number.isInteger(fid)) filter.folderId = fid; }
     }
-    if (req.query.type && req.query.type !== 'All') filter.type = req.query.type;
+    // No fixed vocabulary for document type names, so safeQueryString is used without an allow-list —
+    // it still rejects anything that isn't a plain string (e.g. ?type[$ne]=X), which is the actual risk.
+    const safeDocType = safeQueryString(req.query.type);
+    if (safeDocType && safeDocType !== 'All') filter.type = safeDocType;
     // Nature of Partnership tag — same rule as the client filter: only ever narrows MOA/MOU records;
     // "Other" means an MOA/MOU with no confidently-extracted nature (missing, null, or empty string).
-    if (req.query.tag && req.query.tag !== 'All') {
+    const safeTag = safeQueryString(req.query.tag);
+    if (safeTag && safeTag !== 'All') {
       filter.type = { $in: ['MOA', 'MOU'] };
-      filter.nature = req.query.tag === 'Other' ? { $in: [null, ''] } : req.query.tag;
+      filter.nature = safeTag === 'Other' ? { $in: [null, ''] } : safeTag;
     }
     const search = (req.query.search || '').trim();
     if (search) {
@@ -4918,23 +4976,30 @@ function safeFilename(title) {
   return title.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '') || 'report';
 }
 
+// Shared NoSQL-operator-injection guard (2026-11 audit fix) for any single req.query value headed into a
+// Mongo filter. Express's query parser turns bracket/dot-notation input (e.g. ?status[$ne]=Approved) into
+// a nested object rather than a string, so requiring `typeof value === 'string'` rejects every
+// MongoDB-operator-injection shape in one check — there's no pattern to blacklist, because anything that
+// isn't a plain string is simply never looked at. `allowedValues`, when given, additionally restricts the
+// result to a known-safe set (still just an equality value, never an operator) — omit it for fields with
+// no practical fixed vocabulary (e.g. free-form document type names).
+function safeQueryString(value, allowedValues) {
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  if (allowedValues && !allowedValues.includes(value)) return undefined;
+  return value;
+}
+
 // Only these five fields are ever filterable, and only as plain equality
-// matches on a plain string. Express's query parser turns bracket/dot-notation
-// input (e.g. ?status[$ne]=Approved, ?cat[$in][]=A) into a nested object or
-// array rather than a string, so requiring `typeof value === 'string'` rejects
-// every MongoDB-operator-injection shape in one check — there's no pattern to
-// blacklist, because anything that isn't a plain string for an allowlisted key
-// is simply never looked at. Unknown field names (not in this list) are
-// likewise never read from `query` at all, injection-shaped or not.
+// matches on a plain string — see safeQueryString above for the injection
+// guard every field here goes through. Unknown field names (not in this
+// list) are likewise never read from `query` at all, injection-shaped or not.
 const PARTNERSHIP_FILTER_FIELDS = ['status', 'type', 'cat', 'region', 'unit'];
 
 function buildPartnershipFilter(query) {
   const filter = {};
   for (const field of PARTNERSHIP_FILTER_FIELDS) {
-    const value = query[field];
-    if (typeof value === 'string' && value.length > 0) {
-      filter[field] = value;
-    }
+    const value = safeQueryString(query[field]);
+    if (value) filter[field] = value;
   }
   return filter;
 }
@@ -5170,7 +5235,7 @@ function renderTablePdf(res, { title, filename, subtitle, columns, rows, summary
  * PDF, mirroring views/print/document_request_print.ejs field-for-field so
  * the browser print view and the downloaded PDF never drift apart.
  */
-function renderDocumentRequestPdf(res, r) {
+async function renderDocumentRequestPdf(res, r) {
   const filename = `Document_Request_${r.id}`;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}.pdf"`);
@@ -5184,7 +5249,7 @@ function renderDocumentRequestPdf(res, r) {
   res.on('error', (err) => console.error('❌ Document Request PDF response stream error:', err));
   doc.pipe(res);
 
-  const { dateTimeStr, documentItems, fmtDate, isFulfilled, approverName, approvedDateStr, approverSignaturePath } = drFormFields(r);
+  const { dateTimeStr, documentItems, fmtDate, isFulfilled, approverName, approvedDateStr, approverSignature } = await drFormFields(r);
   const left = doc.page.margins.left;
   const right = doc.page.width - doc.page.margins.right;
   const contentWidth = right - left;
@@ -5324,15 +5389,16 @@ function renderDocumentRequestPdf(res, r) {
     const nameY = sigTop + 34 + (10 - nameSize);
 
     // The Head's actual e-signature (2026-11) only ever applies to the Approved By column, and only once
-    // drFormFields has already confirmed the request is Completed and a snapshot file exists on disk.
-    // Positioned entirely from nameY, with its bottom edge overlapping the top of the name slightly, like
-    // a real signature sitting just above its printed caption.
-    if (i === 0 && approverSignaturePath) {
+    // drFormFields has already confirmed the request is Completed and its snapshot exists in MongoDB
+    // (see services/signatureService.js). Positioned entirely from nameY, with its bottom edge
+    // overlapping the top of the name slightly, like a real signature sitting just above its printed
+    // caption. PDFKit's .image() accepts a Buffer directly — no temp file needed.
+    if (i === 0 && approverSignature) {
       try {
         const imgH = 45; // 40-50px tall per spec; width follows the image's own aspect ratio (fit)
-        doc.image(approverSignaturePath, x, nameY - imgH + 6, { fit: [sigW, imgH], align: 'center', valign: 'bottom' });
+        doc.image(approverSignature.buffer, x, nameY - imgH + 6, { fit: [sigW, imgH], align: 'center', valign: 'bottom' });
       } catch (e) {
-        // Corrupt/unreadable file on disk — print the form with no signature rather than fail the whole PDF.
+        // Corrupt/unreadable image data — print the form with no signature rather than fail the whole PDF.
         console.error('❌ Document Request PDF signature image error:', e);
       }
     }
@@ -8030,7 +8096,7 @@ app.delete('/api/users/:id', requireStaffAccess, async (req, res) => {
       }
     }
     await db.collection('users').deleteOne({ id });
-    deleteUploadedAvatar(target && target.avatarUrl); // their uploaded profile picture goes with the account
+    deleteUploadedAvatar(db, target && target.avatarUrl); // their uploaded profile picture goes with the account
     await logActivity(db, req.session.user, 'DELETE', `User deleted: ${target ? target.name + ' (' + target.email + ')' : 'ID #' + id}`);
     res.json({ success: true });
   } catch (err) {
@@ -10646,13 +10712,55 @@ app.get('/uploads/documents/:filename', requireFileAccess, async (req, res) => {
     res.status(500).send('Server error');
   }
 });
-app.use('/uploads/avatars', requireAuth, express.static(path.join(__dirname, 'uploads', 'avatars')));
-// A profile picture whose file is gone (e.g. the host's disk was reset by a redeploy — Render's free plan keeps no
-// files between deploys) falls back to the default picture instead of a broken image. no-store, so the real photo
-// shows again as soon as the user re-uploads (a re-upload gets a new file name anyway).
-app.use('/uploads/avatars', requireAuth, (req, res) => {
+// 2026-11 audit fix (High #3): avatar bytes now live in MongoDB (`avatars`, keyed by the same
+// never-reused filename avatarUrl already embeds), not on local disk — Render's free plan wipes local
+// disk on every redeploy, which previously meant every production redeploy silently broke every
+// profile photo. Same URL shape as before (/uploads/avatars/<filename>), so avatarUrl stored on user
+// records and every <img src> that already points at it need no changes. A missing document (legacy
+// pre-migration record not yet copied over, or any other lookup miss) falls back to the default
+// picture instead of a broken image, same as the old disk-based 404 fallback — no-store so a
+// re-upload's new filename is never masked by a stale cached response.
+// ETag/Cache-Control (2026-11 Batch 1 follow-up): the filename itself is the version — a replace or a
+// fresh upload always gets a brand-new, never-reused filename (see saveAvatarUpload), so the ETag
+// derived from it automatically changes whenever the photo actually changes, and the browser's cached
+// copy of an OLD filename is simply never requested again once avatarUrl points at the new one. A
+// client that already has this exact filename cached gets a 304 without ever touching the database.
+// Only the confirmed-real-photo response is cached for a day; the "no record, fell back to default"
+// branch is explicitly no-store so a since-completed migration shows up immediately, not after 24h.
+// res.sendFile() cannot be used for the fallback below: Express 5 unconditionally overwrites whatever
+// `etag` option is passed to it with the app-level `etag` setting (lib/response.js, "wire application
+// etag option to send") — there is no per-call way to suppress it. Reading the file once and sending it
+// with res.end() bypasses Express's response wrapper (and both of its ETag code paths) entirely, which
+// is what actually guarantees this no-store response never carries a stale-cacheable ETag.
+let defaultAvatarBuffer = null;
+function sendDefaultAvatar(res) {
+  if (!defaultAvatarBuffer) defaultAvatarBuffer = fs.readFileSync(path.join(__dirname, 'public', DEFAULT_AVATAR_URL));
   res.set('Cache-Control', 'no-store');
-  res.sendFile(path.join(__dirname, 'public', DEFAULT_AVATAR_URL));
+  res.set('Content-Type', 'image/jpeg');
+  res.end(defaultAvatarBuffer);
+}
+
+app.get('/uploads/avatars/:filename', requireAuth, async (req, res) => {
+  const match = /^[A-Za-z0-9._-]+$/.test(req.params.filename) ? req.params.filename : null;
+  const etag = match ? `"${match}"` : null;
+  if (etag && req.get('If-None-Match') === etag) {
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.set('ETag', etag);
+    return res.status(304).end();
+  }
+  try {
+    const db = getDb();
+    const doc = match ? await db.collection('avatars').findOne({ _id: match }) : null;
+    if (!doc || !doc.data) return sendDefaultAvatar(res);
+    const buffer = Buffer.isBuffer(doc.data) ? doc.data : Buffer.from(doc.data.buffer || doc.data);
+    res.set('Cache-Control', 'private, max-age=86400');
+    res.set('ETag', etag);
+    res.set('Content-Type', doc.mimetype || 'image/jpeg');
+    res.send(buffer);
+  } catch (err) {
+    console.error('❌ Avatar serve error:', err);
+    sendDefaultAvatar(res);
+  }
 });
 
 // ── ADMIN ROUTES ──────────────────────────────────────────────────────────────
@@ -11146,7 +11254,9 @@ async function saveAchievementFile(db, achievementId, file) {
   };
 }
 
-// Best-effort delete of an achievement's stored file — mirrors DELETE /api/documents/:id's own cleanup.
+// Best-effort delete of a LEGACY (pre-2026-11 Document Library archiving) achievement's stored file —
+// mirrors DELETE /api/documents/:id's own cleanup. Never called for an achievement that already has a
+// documentId — see retireAchievementDocument below, which is what every achievement gets from now on.
 async function deleteAchievementFile(db, achievement) {
   if (!achievement) return;
   if (achievement.driveFileId) {
@@ -11155,6 +11265,20 @@ async function deleteAchievementFile(db, achievement) {
     const filename = path.basename(achievement.fileLink);
     fs.unlink(path.join(ACHIEVEMENTS_DIR, filename), () => {});
   }
+}
+
+// Retires an achievement's PREVIOUS Document Library entry when its file is replaced or removed/deleted
+// — never deletes it, only marks it so it drops out of ordinary Document Library browsing, exactly like
+// supersedePreviousRequestDocuments() does for Partnership Request documents. `newDocumentId` is given
+// only on a replace (superseded, pointing at the new entry); omitted on a plain remove/delete (archived
+// only, nothing superseding it).
+async function retireAchievementDocument(db, achievement, newDocumentId) {
+  if (!achievement || !achievement.documentId) return;
+  const now = new Date().toISOString();
+  const setFields = newDocumentId
+    ? { superseded: true, supersededBy: newDocumentId, supersededAt: now }
+    : { archived: true };
+  await db.collection('documents').updateOne({ id: achievement.documentId }, { $set: setFields });
 }
 
 app.get('/api/achievements', requireStaffAccess, async (req, res) => {
@@ -11213,7 +11337,24 @@ app.post('/api/achievements', requireStaffAccess, (req, res) => {
         updatedByEmail: null
       }));
       if (req.file) {
-        const saved = await saveAchievementFile(db, entry.id, req.file);
+        // 2026-11 Document Library archiving: every achievement file now goes straight through the same
+        // archive pipeline as Partner Activities (archiveToDocumentLibrary), not the old separate
+        // uploads/achievements/+Drive pipeline below (saveAchievementFile/deleteAchievementFile are kept
+        // only as the fallback path for achievements created before this change — see PATCH/DELETE).
+        // meta.achievementId links the new Document Library entry back to this achievement.
+        const { documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
+          documentType: 'Achievement Certificate',
+          title: `${entry.title} – ${category}`
+        }, {
+          uploadedBy: req.session.user.name,
+          uploadedByEmail: req.session.user.email,
+          achievementId: entry.id
+        });
+        const saved = {
+          documentId, fileLink,
+          originalFilename: req.file.originalname,
+          fileType: EXT_MIME_TYPES[path.extname(req.file.originalname).toLowerCase()] || req.file.mimetype
+        };
         await db.collection('achievements').updateOne({ id: entry.id }, { $set: saved });
         Object.assign(entry, saved);
       }
@@ -11255,10 +11396,6 @@ app.patch('/api/achievements/:id', requireStaffAccess, (req, res) => {
     if (req.file && !verifyMagicBytes(req.file)) {
       return res.status(400).json({ error: 'Unsupported file type. Only PDF, JPG, JPEG, and PNG are accepted.' });
     }
-    // Set only once saveAchievementFile() has actually succeeded in this request (file-replace branch
-    // below) — lets the catch block clean up the new file if something AFTER that point still fails,
-    // without ever touching it on a save failure itself (where it's never set at all).
-    let newFileLocalPath = null;
     try {
       const db = getDb();
       const existing = await db.collection('achievements').findOne({ id });
@@ -11277,18 +11414,40 @@ app.patch('/api/achievements/:id', requireStaffAccess, (req, res) => {
         updatedByEmail: req.session.user.email
       };
       if (req.file) {
-        // Save the NEW file first. If this throws (disk full, permissions, ACHIEVEMENTS_DIR unwritable),
-        // we fall straight to the catch below without ever touching the old file or the DB — the existing
-        // achievement keeps its current file/reference exactly as it was. Only once the new file is
-        // confirmed saved do we remove the old one, so a replace can never end up deleting the old file
-        // without the new one actually taking its place.
-        const saved = await saveAchievementFile(db, id, req.file);
-        Object.assign(patch, saved);
-        newFileLocalPath = saved.fileLink ? path.join(ACHIEVEMENTS_DIR, path.basename(saved.fileLink)) : null;
-        await deleteAchievementFile(db, existing); // now safe — the new file already exists on disk
+        // Save the NEW file first (via the same Document Library archive pipeline as create, above). If
+        // this throws, we fall straight to the catch below without ever touching the old file/reference
+        // or the DB — the existing achievement keeps exactly what it had. Only once the new file is
+        // confirmed archived do we retire the old one, so a replace can never end up losing the old
+        // reference without the new one actually taking its place.
+        const { documentId, fileLink } = await archiveToDocumentLibrary(req.file.path, req.file.originalname, {
+          documentType: 'Achievement Certificate',
+          title: `${title} – ${category}`
+        }, {
+          uploadedBy: req.session.user.name,
+          uploadedByEmail: req.session.user.email,
+          achievementId: id
+        });
+        Object.assign(patch, {
+          documentId, fileLink,
+          originalFilename: req.file.originalname,
+          fileType: EXT_MIME_TYPES[path.extname(req.file.originalname).toLowerCase()] || req.file.mimetype
+        });
+        if (existing.documentId) {
+          // The old file already has its own Document Library entry — mark it superseded (never
+          // deleted), same convention as supersedePreviousRequestDocuments() for request documents.
+          await retireAchievementDocument(db, existing, documentId);
+        } else {
+          // Legacy achievement from before this change: its file is still only on local disk/Drive via
+          // the old pipeline, with no Document Library entry to supersede — clean it up the old way.
+          await deleteAchievementFile(db, existing);
+        }
       } else if (req.body.removeFile === '1' || req.body.removeFile === 'true') {
-        await deleteAchievementFile(db, existing);
-        Object.assign(patch, { fileLink: null, originalFilename: null, fileType: null, driveFileId: null });
+        if (existing.documentId) {
+          await retireAchievementDocument(db, existing); // keep the library entry, mark it archived
+        } else {
+          await deleteAchievementFile(db, existing);
+        }
+        Object.assign(patch, { fileLink: null, originalFilename: null, fileType: null, driveFileId: null, documentId: null });
       }
       await db.collection('achievements').updateOne({ id }, { $set: patch });
       const updated = await db.collection('achievements').findOne({ id });
@@ -11296,16 +11455,11 @@ app.patch('/api/achievements/:id', requireStaffAccess, (req, res) => {
       res.json({ success: true, achievement: updated });
     } catch (err) {
       console.error('❌ Achievement edit error:', err);
-      if (req.file) fs.unlink(req.file.path, () => {}); // stale multer temp path once saveAchievementFile has
-                                                          // already moved it — a harmless no-op in that case
-      if (newFileLocalPath) {
-        // The new file was already saved locally (and may already be mid-upload to Drive in the
-        // background — that part is intentionally left alone, see the comment on saveAchievementFile())
-        // but something AFTER that point (deleting the old file, or this request's own database update)
-        // failed, so the database was never told about it. Clean up the orphaned local copy rather than
-        // leaving it on disk forever; the old file/record this request started with are untouched.
-        fs.unlink(newFileLocalPath, () => {});
-      }
+      // Stale multer temp path once archiveToDocumentLibrary()/saveAchievementFile() has already moved
+      // it — a harmless no-op in that case. If the archive call itself succeeded but a step after it
+      // (retiring the old entry, this request's own database update) failed, the new Document Library
+      // entry is simply left as a complete, valid, if not-yet-linked, archived copy — never deleted.
+      if (req.file) fs.unlink(req.file.path, () => {});
       res.status(500).json({ error: 'Unable to save the achievement right now. Please try again.' });
     }
   });
@@ -11318,7 +11472,14 @@ app.delete('/api/achievements/:id', requireStaffAccess, async (req, res) => {
     const db = getDb();
     const existing = await db.collection('achievements').findOne({ id });
     if (!existing) return res.status(404).json({ error: 'Achievement not found.' });
-    await deleteAchievementFile(db, existing);
+    // Deleting the achievement never deletes its file: a Document-Library-backed one (existing.documentId)
+    // keeps its entry, marked archived rather than removed; a legacy, pre-migration one falls back to the
+    // old local/Drive cleanup, same as before this change.
+    if (existing.documentId) {
+      await retireAchievementDocument(db, existing);
+    } else {
+      await deleteAchievementFile(db, existing);
+    }
     await db.collection('achievements').deleteOne({ id });
     await logActivity(db, req.session.user, 'DELETE', `Achievement deleted: ${existing.title}`);
     res.json({ success: true, message: 'Achievement deleted successfully.' });
@@ -11828,6 +11989,11 @@ app.post('/api/partner/password', partnerPasswordLimiter, requirePartner, async 
 // sidebar of every page can show it. An account with no photo shows DEFAULT_AVATAR_URL. Uploading replaces the
 // previous file on disk. Before this, only Partners could upload (stored in `profiles`, and wiped by the next profile
 // save, which rewrites that whole document) and the other roles' Settings kept the photo in browser storage only.
+// 2026-11 audit fix (High #3): the uploaded bytes are read from multer's temp disk file, stored
+// directly in MongoDB (`avatars`, keyed by the same never-reused filename avatarUrl already embeds),
+// and the temp file is then deleted — Mongo is the only persistent copy from this point on, immune to
+// Render's free-plan disk wipe on every redeploy. avatarUrl itself keeps the exact same
+// /uploads/avatars/<filename> shape as before, so nothing downstream (session, every <img src>) changes.
 async function saveAvatarUpload(req, res) {
   uploadAvatar.single('avatar')(req, res, async (err) => {
     if (err) {
@@ -11841,10 +12007,19 @@ async function saveAvatarUpload(req, res) {
     try {
       const db = getDb();
       const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+      const data = fs.readFileSync(req.file.path);
+      await db.collection('avatars').insertOne({
+        _id: req.file.filename, data: new Binary(data), mimetype: req.file.mimetype,
+        uploadedBy: req.session.user.email, uploadedAt: new Date().toISOString()
+      });
+      fs.unlink(req.file.path, () => { }); // best-effort cleanup of our own transient temp file
       const previous = await db.collection('users').findOne({ id: req.session.user.id }, { projection: { avatarUrl: 1 } });
       await db.collection('users').updateOne({ id: req.session.user.id }, { $set: { avatarUrl } });
       req.session.user.avatarUrl = avatarUrl;
-      deleteUploadedAvatar(previous && previous.avatarUrl);
+      // Unlike the Head's e-signature (which must keep every old version for a Completed form's
+      // snapshot), an avatar has no such history requirement — the previous photo is deleted outright,
+      // matching the original disk-based behavior exactly.
+      await deleteUploadedAvatar(db, previous && previous.avatarUrl);
       res.json({ success: true, avatarUrl });
     } catch (e) {
       fs.unlink(req.file.path, () => { });
@@ -11854,10 +12029,10 @@ async function saveAvatarUpload(req, res) {
   });
 }
 
-// Only files this app stored under /uploads/avatars/ are ever deleted — never the default image or any other path.
-function deleteUploadedAvatar(url) {
+// Only ids this app stored under /uploads/avatars/ are ever deleted — never the default image or any other path.
+async function deleteUploadedAvatar(db, url) {
   const match = typeof url === 'string' && url.match(/^\/uploads\/avatars\/([A-Za-z0-9._-]+)$/);
-  if (match) fs.unlink(path.join(__dirname, 'uploads', 'avatars', match[1]), () => { });
+  if (match) await db.collection('avatars').deleteOne({ _id: match[1] }).catch(() => {});
 }
 
 // Partner photos uploaded before avatarUrl moved onto the users record were kept in profiles.profile.avatarUrl.

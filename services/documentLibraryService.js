@@ -29,6 +29,10 @@ function shortDocType(documentType) {
   // archivePartnerActivitiesPdf in cirl.js). Its own type so it is never grouped under 'Other' with
   // every unrecognized upload.
   if (/partner activities/i.test(documentType)) return 'Partner Activities';
+  // Achievements (2026-11) — a QS Ranking/TÜV Certification/PQA/Accreditation/Award certificate archived
+  // from the Dashboard's Institutional Achievements section (see POST/PATCH /api/achievements in
+  // cirl.js). Same reasoning as Partner Activities: its own type/filter, never lumped into 'Other'.
+  if (/^achievement/i.test(documentType)) return 'Achievements';
   return 'Other';
 }
 
@@ -327,6 +331,10 @@ async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, 
     // field so the two are never confused, and so a Document Library record can show which partnership it
     // was the supporting document for.
     ...(meta.partnershipId != null ? { partnershipId: meta.partnershipId } : {}),
+    // Links a Document Library entry back to the Institutional Achievement it was archived from
+    // (2026-11) — lets a future duplicate/cross-reference check recognize this entry as already
+    // belonging to that specific achievement rather than treating it as an unrelated match.
+    ...(meta.achievementId != null ? { achievementId: meta.achievementId } : {}),
     // Duplicate-warning acknowledgment (2026-11): set only when the uploader explicitly chose "Upload
     // anyway" on a duplicate/possible-duplicate warning (never set for an ordinary, no-match upload) — see
     // the pending-upload accept flow in cirl.js/ocrService.js. acknowledgedMatchIds links the acknowledgment

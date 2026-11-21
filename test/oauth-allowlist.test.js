@@ -253,7 +253,10 @@ describe('Google sign-in — profile photo', () => {
     try {
       expect(headerAvatar((await agent.get('/staff/dashboard')).text)).toBe(up.body.avatarUrl);
     } finally {
+      // 2026-11 audit fix: avatar bytes now live in MongoDB (`avatars`), not on local disk.
       require('fs').rmSync(require('path').join(__dirname, '..', up.body.avatarUrl), { force: true });
+      const fileId = up.body.avatarUrl.split('/').pop();
+      await db.collection('avatars').deleteOne({ _id: fileId });
     }
 
     const admin = await createTestUser({ role: 'Administrator' });

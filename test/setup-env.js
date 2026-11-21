@@ -16,3 +16,14 @@ process.env.MONGO_URI = resolveTestDatabaseUri(process.env);
 process.env.GOOGLE_CALENDAR_INTEGRATION_COLLECTION = 'jesttest_googleCalendarIntegration';
 // Same protection for the Google Docs connection (services/googleDocsService.js).
 process.env.GOOGLE_DOCS_INTEGRATION_COLLECTION = 'jesttest_googleDocsIntegration';
+
+// Gemini AI gate (2026-11 audit fix, test hygiene #15). This deployment's real .env has
+// INSTITUTIONAL_AI_DATA_APPROVED=true, and before this fix nothing reset it for tests — every individual
+// AI-related test file had to defensively save/delete/restore it itself (several already did; nothing
+// enforced it for a new file that forgot to). Forced here, before any test file's `require('../cirl')`
+// runs dotenv.config() — same "set it so dotenv can't override it" trick as MONGO_URI above (dotenv never
+// touches a variable that is already defined, and an empty string counts as defined, so this also wins
+// over a real key ever being added to .env, not just over today's absent one). isRealDataApprovedForGemini()
+// only ever treats the exact string 'true' as approved, so 'false' here fails closed unconditionally.
+process.env.INSTITUTIONAL_AI_DATA_APPROVED = 'false';
+process.env.GEMINI_API_KEY = '';

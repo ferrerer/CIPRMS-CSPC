@@ -259,6 +259,10 @@
                                          archivePartnerActivitiesPdf in cirl.js), one per partnership. Its own filter button, same
                                          pattern as MOA/MOU above, so it is never only reachable via "All". -->
                                     <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Partner Activities', this)">Partner Activities</button>
+                                    <!-- Achievements (2026-11) — a certificate archived from the Dashboard's Institutional
+                                         Achievements section (see POST/PATCH /api/achievements in cirl.js). Same pattern as
+                                         Partner Activities above: its own filter button, never only reachable via "All". -->
+                                    <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Achievements', this)">Achievements</button>
                                     <button type="button" class="btn btn-outline-primary btn-sm" onclick="filterType('Other', this)">Other</button>
                                 </div>
                                 <!-- Acknowledged duplicates (2026-11 duplicate-warning follow-up): review every document
@@ -927,6 +931,7 @@
                          doc.type === 'MOU' ? 'ri-file-list-3-line text-info' :
                          isAccred ? 'ri-award-line text-warning' :
                          doc.type === 'Partner Activities' ? 'ri-calendar-check-line text-success' :
+                         doc.type === 'Achievements' ? 'ri-trophy-line text-warning' :
                          'ri-file-paper-2-line text-secondary';
             const nature = doc.tags && doc.tags.length > 0 ? doc.tags[0] : 'Research';
             const natureBadge = nature === 'Research' ? 'bg-info-subtle text-info' :
@@ -1001,6 +1006,7 @@
                          doc.type === 'MOU' ? 'ri-file-list-3-line text-info' :
                          isAccred ? 'ri-award-line text-warning' :
                          doc.type === 'Partner Activities' ? 'ri-calendar-check-line text-success' :
+                         doc.type === 'Achievements' ? 'ri-trophy-line text-warning' :
                          'ri-file-paper-2-line text-secondary';
             const nature = doc.tags && doc.tags.length > 0 ? doc.tags[0] : 'Research';
             const natureBadge = nature === 'Research' ? 'bg-info-subtle text-info' :
