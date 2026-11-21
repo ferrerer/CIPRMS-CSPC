@@ -189,15 +189,15 @@
                                                         </span>
                                                     </h2>
                                                     <p class="mb-0 text-muted"><span
-                                                            class="badge bg-warning-subtle text-warning mb-0"><i
+                                                            class="badge bg-expiring-subtle text-expiring mb-0"><i
                                                                 class="ri-time-line align-middle"></i> Within 90
                                                             days</span></p>
                                                 </div>
                                                 <div>
                                                     <div class="avatar-sm flex-shrink-0">
                                                         <span
-                                                            class="avatar-title bg-warning-subtle rounded-circle fs-2">
-                                                            <i class="ri-time-line text-warning"></i>
+                                                            class="avatar-title bg-expiring-subtle rounded-circle fs-2">
+                                                            <i class="ri-time-line text-expiring"></i>
                                                         </span>
                                                     </div>
                                                 </div>
@@ -873,8 +873,8 @@
         const countryHighlightLayer = L.layerGroup().addTo(map);
         window.countryHighlightLayer = countryHighlightLayer;
 
-        const STATUS_COLOR = { active: '#17c653', expiring: '#f7b84b', expired: '#f06548' };
-        const STATUS_RING = { active: '#d1fae5', expiring: '#fef3c7', expired: '#fee2e2' };
+        const STATUS_COLOR = { active: '#17c653', expiring: '#f97316', expired: '#f06548' };
+        const STATUS_RING = { active: '#d1fae5', expiring: '#ffedd5', expired: '#fee2e2' };
         const STATUS_LABEL = { active: 'Active', expiring: 'Expiring Soon', expired: 'Expired' };
 
         // Real partnership status strings ('Active' / 'Expiring Soon' / 'Expired') → map/badge color key
@@ -1284,7 +1284,7 @@
                     { name: 'Expired', data: [stats.expired] }
                 ],
                 xaxis: { categories: ['Agreements'] },
-                colors: ['#405189', '#0ab39c', '#17c653', '#f7b84b', '#f06548'],
+                colors: ['#405189', '#0ab39c', '#17c653', '#f97316', '#f06548'],
                 legend: { position: 'bottom' },
                 grid: { borderColor: '#f1f1f1' }
             });

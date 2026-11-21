@@ -24,7 +24,7 @@ const { createTestUser, loginAs, cleanupAll } = require('./helpers');
 describe('assets/js/shared/status-colors.js — the one mapping both preview and PDF read from', () => {
   test('the four real statuses each get their own distinct, correct semantic color', () => {
     expect(statusColors.hex('Active')).toBe('#0ab39c'); // green
-    expect(statusColors.hex('Expiring Soon')).toBe('#f7b84b'); // amber
+    expect(statusColors.hex('Expiring Soon')).toBe('#f97316'); // deep orange ("almost expired")
     expect(statusColors.hex('Expired')).toBe('#f06548'); // red
     expect(statusColors.hex('Inactive')).toBe('#878a99'); // gray
     const hexes = new Set([statusColors.hex('Active'), statusColors.hex('Expiring Soon'), statusColors.hex('Expired'), statusColors.hex('Inactive')]);

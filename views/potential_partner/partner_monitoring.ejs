@@ -282,7 +282,7 @@
             <div class="modal-dialog modal-dialog-centered">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title"><i class="ri-refresh-line me-2 text-primary"></i>Request Renewal</h5>
+                        <h5 class="modal-title"><i class="ri-refresh-line me-2 text-success"></i>Request Renewal</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
@@ -299,7 +299,7 @@
                     </div>
                     <div class="modal-footer">
                         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
-                        <button type="button" class="btn btn-primary" id="rr-submit-btn" onclick="submitRenewalRequest()">
+                        <button type="button" class="btn btn-success" id="rr-submit-btn" onclick="submitRenewalRequest()">
                             <i class="ri-send-plane-line me-1"></i>Submit Request
                         </button>
                     </div>
@@ -567,11 +567,24 @@
         // every other request was submitted by the partner themselves.
         document.getElementById('pr-det-initiator').textContent = r.initiatedBy === 'institution'
             ? 'CSPC-CIRL (started on your behalf)' : 'You';
-        var hasDraft = requestHasDraftContent(r);
+        var hasDraft = requestHasDraftContent(r) || !!gdocsDraftIds[r.id];
         var viewDraftBtn = document.getElementById('pr-details-view-draft-btn');
+        var noDraftNote = document.getElementById('pr-details-no-draft-note');
         viewDraftBtn.disabled = !hasDraft;
-        document.getElementById('pr-details-no-draft-note').style.display = hasDraft ? 'none' : '';
+        noDraftNote.style.display = hasDraft ? 'none' : '';
+        // A draft CIRL created in Google Docs isn't an uploaded file, so also ask the server for those —
+        // without this the partner's View Draft stayed disabled and the Google Docs draft was unreachable.
+        if (!hasDraft) {
+            CIPRMS.api('/api/requests/' + r.id + '/google-docs', { quiet: true }).then(function (res) {
+                if (!res.ok || !res.data || !res.data.docs || !res.data.docs.length) return;
+                gdocsDraftIds[r.id] = true;
+                if (currentDraftPRId !== r.id) return;
+                viewDraftBtn.disabled = false;
+                noDraftNote.style.display = 'none';
+            });
+        }
     }
+    var gdocsDraftIds = {};   // request id → true once a Google Docs draft is known to exist
 
     function openDetailsModal(id) {
         var r = myRequests.find(function (x) { return x.id === id; });
@@ -600,7 +613,7 @@
 
     function openDraftModal(id) {
         var r = myRequests.find(function (x) { return x.id === id; });
-        if (!r || !requestHasDraftContent(r)) return;
+        if (!r || !(requestHasDraftContent(r) || gdocsDraftIds[r.id])) return;
         currentDraftPRId = id;
         document.getElementById('pr-draft-modal-title').innerHTML = '<i class="ri-file-list-3-line me-2 text-primary"></i>Draft & Documents — #' + r.id;
         renderDraftTimeline(r);
@@ -747,7 +760,7 @@
             return '<tr data-pr-id="' + r.id + '"' + (flashPRIds.has(r.id) ? ' class="rt-flash"' : '') + '>' +
                 '<td>' + (escapeHtml(r.institution) || '<span class="text-muted">(untitled draft)</span>') + '</td>' +
                 '<td>' + (r.isRenewal ? 'Renewal' : 'Partnership') + '</td>' +
-                '<td><span class="badge ' + statusBadgeClass(r.status) + '">' + r.status + '</span></td>' +
+                '<td><span class="badge table-pill ' + statusBadgeClass(r.status) + '">' + r.status + '</span></td>' +
                 '<td>' + (r.date || '—') + '</td>' +
                 '<td>' + fmtWhen(r.updatedAt, r.date) + '</td>' +
                 '<td>' + (PR_STAGE_LABEL[r.status] || r.status) + '</td>' +
@@ -797,7 +810,7 @@
                 '<td>' + escapeHtml(r.institution || '—') + '</td>' +
                 '<td style="max-width:260px;">' + moaNotesCell(r.notes) + '</td>' +
                 '<td>' + files + '</td>' +
-                '<td><span class="badge ' + statusBadgeClass(r.status) + '">' + escapeHtml(r.status) + '</span></td>' +
+                '<td><span class="badge table-pill ' + statusBadgeClass(r.status) + '">' + escapeHtml(r.status) + '</span></td>' +
                 '<td>' + (r.date || '—') + '</td>' +
                 '<td>' + fmtWhen(r.updatedAt, r.date) + '</td>' +
                 '<td>' + escapeHtml(r.decidedBy || '—') + '</td>' +
@@ -809,7 +822,7 @@
                 '<td>' + escapeHtml(d.institution || '—') + '</td>' +
                 '<td style="max-width:260px;">' + moaNotesCell(d.notes) + '</td>' +
                 '<td>' + (d.supportingDocuments || []).length + '</td>' +
-                '<td><span class="badge ' + statusBadgeClass(cs) + '">' + escapeHtml(cs) + '</span></td>' +
+                '<td><span class="badge table-pill ' + statusBadgeClass(cs) + '">' + escapeHtml(cs) + '</span></td>' +
                 '<td>' + (d.date || '—') + '</td>' +
                 '<td>' + fmtWhen(d.updatedAt, d.date) + '</td>' +
                 '<td>' + escapeHtml(d.decidedBy || '—') + '</td>' +
@@ -947,17 +960,17 @@
             // (Institution, Country/Region, Nature, Start, End, Days Left, Status) plus the renewal action.
             var rows = partnerships.map(function (p) {
                 var status = p.status || 'Unknown';
-                var badge = status === 'Expired' ? 'bg-danger-subtle text-danger' : status === 'Expiring Soon' ? 'bg-warning-subtle text-warning' : status === 'Active' ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary';
+                var badge = status === 'Expired' ? 'bg-danger-subtle text-danger' : status === 'Expiring Soon' ? 'bg-expiring-subtle text-expiring' : status === 'Active' ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary';
                 var inst = p.inst || p.institution || '';
                 var nature = Array.isArray(p.nature) ? p.nature.join(', ') : (p.nature || '');
                 var endDate = new Date(p.end);
                 var days = isNaN(endDate) ? null : Math.ceil((endDate - new Date()) / 86400000);
-                var daysHtml = status === 'Expired' ? '<span class="badge bg-danger-subtle text-danger">Expired</span>'
+                var daysHtml = status === 'Expired' ? '<span class="badge table-pill bg-danger-subtle text-danger">Expired</span>'
                     : days === null ? '—'
-                    : days <= 14 ? '<span class="badge bg-danger">Critical (' + days + 'd)</span>'
-                    : days <= 90 ? '<span class="badge bg-warning-subtle text-warning">' + days + ' days</span>'
-                    : '<span class="badge bg-success-subtle text-success">' + days + ' days</span>';
-                var endColor = status === 'Expired' ? '#dc2626' : status === 'Expiring Soon' ? '#d97706' : '#15803d';
+                    : days <= 14 ? '<span class="badge table-pill bg-danger">Critical (' + days + 'd)</span>'
+                    : days <= 90 ? '<span class="badge table-pill bg-expiring-subtle text-expiring">' + days + ' days</span>'
+                    : '<span class="badge table-pill bg-success-subtle text-success">' + days + ' days</span>';
+                var endColor = status === 'Expired' ? '#dc2626' : status === 'Expiring Soon' ? '#ea580c' : '#15803d';
                 var actionHtml = pendingRenewalIds.has(p.id)
                     ? '<span class="badge bg-info-subtle text-info fs-13 px-3 py-2">Renewal Requested</span>'
                     : '<button class="btn btn-primary text-nowrap px-4" onclick="openRenewalModal(' + p.id + ')"><i class="ri-refresh-line me-1"></i>Request Renewal</button>';
@@ -968,7 +981,7 @@
                     '<td class="text-nowrap">' + escapeHtml(p.start || '—') + '</td>' +
                     '<td class="text-nowrap"><span style="color:' + endColor + ';font-weight:600">' + escapeHtml(p.end || '—') + '</span></td>' +
                     '<td>' + daysHtml + '</td>' +
-                    '<td><span class="badge ' + badge + '">' + escapeHtml(status) + '</span></td>' +
+                    '<td><span class="badge table-pill ' + badge + '">' + escapeHtml(status) + '</span></td>' +
                     '<td class="text-center">' + actionHtml + '</td>' +
                     '</tr>';
             }).join('');

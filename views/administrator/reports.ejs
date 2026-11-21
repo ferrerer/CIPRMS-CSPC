@@ -28,7 +28,7 @@
          cirl.js require()'s server-side for PDF generation, loaded here as a plain global (CIPRMS_STATUS_COLORS)
          so the Custom Report Builder preview's badges/swatches and the exported PDF can never disagree on
          what color a given status is. -->
-    <script src="/velzon/assets/js/shared/status-colors.js"></script>
+    <script src="/velzon/assets/js/shared/status-colors.js?v=20261121b"></script>
     <!-- Custom Report Builder — searchable Country filter (2026-09-23). Same visual language (rounded corners,
          shadow, bounded/scrollable results, hover highlight, dark-mode variant) as the Registry page's Country
          combobox, defined independently here since this is a separate template with its own CSS. -->
@@ -1501,8 +1501,8 @@
                 <div class="col-md-3">
                     <div class="card card-animate mb-0 bg-warning-subtle border-0">
                         <div class="card-body p-3">
-                            <h6 class="fs-12 text-uppercase text-warning fw-semibold mb-1">Expiring Soon</h6>
-                            <h3 class="mb-0 text-warning fw-bold">${sum.expiringSoonCount || 0}</h3>
+                            <h6 class="fs-12 text-uppercase text-expiring fw-semibold mb-1">Expiring Soon</h6>
+                            <h3 class="mb-0 text-expiring fw-bold">${sum.expiringSoonCount || 0}</h3>
                         </div>
                     </div>
                 </div>

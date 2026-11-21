@@ -792,7 +792,7 @@ function runOnce(btnSelector, label, fn) {
 
 
 function sbadge(s) {
-  var m = { 'Active':'bg-success-subtle text-success', 'Expiring Soon':'bg-warning-subtle text-warning', 'Expired':'bg-danger-subtle text-danger', 'Pending Approval':'bg-info-subtle text-info' };
+  var m = { 'Active':'bg-success-subtle text-success', 'Expiring Soon':'bg-expiring-subtle text-expiring', 'Expired':'bg-danger-subtle text-danger', 'Pending Approval':'bg-info-subtle text-info' };
   return '<span class="badge ' + (m[s]||'bg-secondary-subtle text-secondary') + '">' + s + '</span>';
 }
 
@@ -803,7 +803,7 @@ function sbadge(s) {
 function daysBadgeHtml(d, s) {
   if (s === 'Expired') return '<span class="badge bg-danger-subtle text-danger">Expired</span>';
   if (d <= 14)         return '<span class="badge bg-danger">Critical (' + d + 'd)</span>';
-  if (d <= 90)         return '<span class="badge bg-warning-subtle text-warning">' + d + ' days</span>';
+  if (d <= 90)         return '<span class="badge bg-expiring-subtle text-expiring">' + d + ' days</span>';
   return '<span class="badge bg-success-subtle text-success">' + d + ' days</span>';
 }
 
@@ -960,7 +960,7 @@ function monRenderReportPreview(data) {
     '<div class="col-md-3"><div class="card card-animate mb-0 bg-success-subtle border-0"><div class="card-body p-3">' +
       '<h6 class="fs-12 text-uppercase text-success fw-semibold mb-1">Active Agreements</h6><h3 class="mb-0 text-success fw-bold">' + (sum.activeCount || 0) + '</h3></div></div></div>' +
     '<div class="col-md-3"><div class="card card-animate mb-0 bg-warning-subtle border-0"><div class="card-body p-3">' +
-      '<h6 class="fs-12 text-uppercase text-warning fw-semibold mb-1">Expiring Soon</h6><h3 class="mb-0 text-warning fw-bold">' + (sum.expiringSoonCount || 0) + '</h3></div></div></div>' +
+      '<h6 class="fs-12 text-uppercase text-expiring fw-semibold mb-1">Expiring Soon</h6><h3 class="mb-0 text-expiring fw-bold">' + (sum.expiringSoonCount || 0) + '</h3></div></div></div>' +
     '<div class="col-md-3"><div class="card card-animate mb-0 bg-danger-subtle border-0"><div class="card-body p-3">' +
       '<h6 class="fs-12 text-uppercase text-danger fw-semibold mb-1">Expired / Inactive</h6><h3 class="mb-0 text-danger fw-bold">' + (sum.inactiveCount || 0) + '</h3></div></div></div>';
 
@@ -1077,8 +1077,10 @@ function buildGrid() {
     // UI change) — they still live on `p` and are shown in full in the
     // View/Preview modal (openViewModal below) and everywhere else (Edit
     // form, Reports, filters); this table just no longer duplicates them.
-    var statusBadge = sbadge(p.status);
-    var endColor    = p.status==='Expired'?'#dc2626':p.status==='Expiring Soon'?'#d97706':'#15803d';
+    // .table-pill (assets/css/status-expiring.css) makes the table's Days Left / Status badges larger.
+    var statusBadge = sbadge(p.status).replace('class="badge ', 'class="badge table-pill ');
+    var daysBadge   = daysBadgeHtml(p.days, p.status).replace('class="badge ', 'class="badge table-pill ');
+    var endColor    = p.status==='Expired'?'#dc2626':p.status==='Expiring Soon'?'#ea580c':'#15803d';
     var instHtml    = escapeHtml(p.inst)+(p.coordinator?'<div class="text-muted fs-11"><i class="ri-user-line me-1"></i>'+escapeHtml(p.coordinator)+'</div>':'');
     var countryHtml = escapeHtml(p.country)+'<div class="text-muted fs-11"><i class="ri-map-pin-line me-1"></i>'+escapeHtml(p.region)+'</div>';
     var endHtml     = '<span style="color:'+endColor+';font-weight:600">'+p.end+'</span>';
@@ -1098,7 +1100,7 @@ function buildGrid() {
     // nature can be an array (multi-select, 2026-09-19) — join for display,
     // same treatment as Unit already gets in the View modal below.
     var natureDisplay = Array.isArray(p.nature) ? p.nature.join(', ') : p.nature;
-    return [gridjs.html(instHtml), gridjs.html(countryHtml), natureDisplay, p.start, gridjs.html(endHtml), gridjs.html(daysBadgeHtml(p.days, p.status)), gridjs.html(statusBadge), gridjs.html(actions)];
+    return [gridjs.html(instHtml), gridjs.html(countryHtml), natureDisplay, p.start, gridjs.html(endHtml), gridjs.html(daysBadge), gridjs.html(statusBadge), gridjs.html(actions)];
   });
 
   var totalPages = Math.ceil(data.length / regPageSize);
