@@ -236,22 +236,24 @@ describe('Admin/Staff-Initiated Partnership Requests to Partners', () => {
     expect(upload.status).toBe(200);
   });
 
-  test('(f) only the #pr-status dropdown is gone from the Admin Partnership Requests page — the quick-filter pills stay (minus Rejected/Withdrawn), and the per-request status changer (PATCH) still works', async () => {
+  test('(f) the Admin Partnership Requests page filters by search + an "All Status" dropdown (Pending / Under Review / Approved), and the per-request status changer (PATCH) still works', async () => {
     const agent = await agentFor(admin);
     const pageRes = await agent.get('/partnership-requests');
     expect(pageRes.status).toBe(200);
-    expect(pageRes.text).not.toContain('id="pr-status"');
-    // The quick-filter pills (and their JS) were restored (2026-11 follow-up) — only the dropdown was
-    // supposed to be removed. Rejected and Withdrawn pills were then removed again (2026-11 cleanup) —
-    // those statuses still appear under "All"; only the pills themselves are gone.
-    expect(pageRes.text).toContain('id="pr-filter-tabs"');
+    // 2026-11-21: the quick-filter pills were replaced by a search box + "All Status" dropdown on every
+    // tab (same layout as Document Requests). Rejected/Withdrawn stay out of the Partnership filter
+    // (they still appear under "All Status").
+    expect(pageRes.text).toContain('id="pr-status"');
+    expect(pageRes.text).not.toContain('id="pr-filter-tabs"');
     expect(pageRes.text).toContain('setPRStatusFilter');
-    expect(pageRes.text).not.toMatch(/setPRStatusFilter\('Rejected'/);
-    expect(pageRes.text).not.toMatch(/setPRStatusFilter\('Withdrawn'/);
-    expect(pageRes.text).toMatch(/setPRStatusFilter\('Pending'/);
-    expect(pageRes.text).toMatch(/setPRStatusFilter\('Under Review'/);
-    expect(pageRes.text).toMatch(/setPRStatusFilter\('Approved'/);
-    // The dashboard's ?status=Pending deep-link still works through the pills.
+    const prSelect = pageRes.text.slice(pageRes.text.indexOf('id="pr-status"'), pageRes.text.indexOf('</select>', pageRes.text.indexOf('id="pr-status"')));
+    for (const s of ['All Status', 'Pending', 'Under Review', 'Approved']) expect(prSelect).toContain(s);
+    expect(prSelect).not.toContain('Rejected');
+    expect(prSelect).not.toContain('Withdrawn');
+    // College Requests has its own search + status dropdown.
+    expect(pageRes.text).toContain('id="cdr-search"');
+    expect(pageRes.text).toContain('id="cdr-status"');
+    // The dashboard's ?status=Pending deep-link still works through the dropdown.
     expect(pageRes.text).toContain('applyStatusFromQuery');
     // The Request Management Center header card is gone; the breadcrumb/page title stay.
     expect(pageRes.text).not.toContain('Request Management Center');
@@ -276,16 +278,14 @@ describe('Admin/Staff-Initiated Partnership Requests to Partners', () => {
     expect(stored.status).toBe('Under Review');
   });
 
-  test('Staff also sees the "Request Partnership" button on their own Requests page, and the #pr-status dropdown is gone there too (pills stay, minus Rejected/Withdrawn)', async () => {
+  test('Staff also sees the "Request Partnership" button on their own Requests page, with the same search + "All Status" dropdown filter', async () => {
     const agent = await agentFor(staff);
     const res = await agent.get('/staff/requests');
     expect(res.status).toBe(200);
     expect(res.text).toContain('id="pr-initiate-modal"');
     expect(res.text).toContain('Request Partnership');
-    expect(res.text).not.toContain('id="pr-status"');
-    expect(res.text).toContain('id="pr-filter-tabs"');
-    expect(res.text).not.toMatch(/setPRStatusFilter\('Rejected'/);
-    expect(res.text).not.toMatch(/setPRStatusFilter\('Withdrawn'/);
+    expect(res.text).toContain('id="pr-status"');
+    expect(res.text).not.toContain('id="pr-filter-tabs"');
     expect(res.text).not.toContain('Request Management Center');
     expect(res.text).toContain('id="pri-partner-search"');
   });

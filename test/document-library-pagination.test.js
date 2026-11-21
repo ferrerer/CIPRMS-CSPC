@@ -85,10 +85,10 @@ describe('Paginated shape and page math', () => {
     expect([...ids2].some((id) => ids1.has(id))).toBe(false);
   });
 
-  test('an invalid pageSize falls back to the default (25) rather than erroring', async () => {
+  test('an invalid pageSize falls back to the default (9) rather than erroring', async () => {
     const res = await agent.get('/api/documents?page=1&pageSize=999');
     expect(res.status).toBe(200);
-    expect(res.body.pageSize).toBe(25);
+    expect(res.body.pageSize).toBe(9);
   });
 
   test('a page past the end returns zero records, not an error', async () => {

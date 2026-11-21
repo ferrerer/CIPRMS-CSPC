@@ -69,17 +69,26 @@ function absoluteLink(link) {
   return baseUrl() + link;
 }
 
-function buildMessage(to, { title, desc, link, tag, time }) {
+function buildMessage(to, { title, desc, link, tag, time, showSystemUrl }) {
   const url = link ? absoluteLink(link) : baseUrl();
   const subject = `[CIPRMS] ${title || 'Notification'}`;
   const notifTime = time || new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  const text = `${title || 'Notification'}\nDate: ${notifTime}\n\n${desc || ''}\n\nOpen in CIPRMS: ${url}\n\n— CIPRMS, Camarines Sur Polytechnic Colleges (CIRL)\nThis is an automated system notification from CIPRMS.`;
+  // showSystemUrl (e.g. the new-account welcome e-mail): also print the system's own web address as visible,
+  // copyable text — not only behind the "Open in CIPRMS" button — so the recipient knows where CIPRMS lives.
+  const siteUrl = baseUrl() + '/';
+  const text = `${title || 'Notification'}\nDate: ${notifTime}\n\n${desc || ''}\n\n`
+    + (showSystemUrl ? `CIPRMS web address: ${siteUrl}\n` : '')
+    + `Open in CIPRMS: ${url}\n\n— CIPRMS, Camarines Sur Polytechnic Colleges (CIRL)\nThis is an automated system notification from CIPRMS.`;
+  const siteUrlHtml = showSystemUrl
+    ? `<p style="font-size:14px;line-height:1.5;margin:0 0 18px;padding:10px 12px;background:#f3f6f9;border-radius:4px;"><strong>CIPRMS web address:</strong><br><a href="${esc(siteUrl)}" style="color:#405189;word-break:break-all;">${esc(siteUrl)}</a></p>`
+    : '';
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#212529;">
   <div style="background:#405189;color:#fff;padding:14px 20px;border-radius:6px 6px 0 0;font-weight:bold;">CIPRMS${tag ? ' · ' + esc(tag) : ''}</div>
   <div style="border:1px solid #e9ebec;border-top:none;padding:20px;border-radius:0 0 6px 6px;">
     <h2 style="font-size:17px;margin:0 0 8px;">${esc(title)}</h2>
     <p style="font-size:12px;color:#878a99;margin:0 0 14px;"><strong>Date:</strong> ${esc(notifTime)}</p>
     <p style="font-size:14px;line-height:1.5;margin:0 0 18px;">${esc(desc)}</p>
+    ${siteUrlHtml}
     ${link ? `<a href="${esc(url)}" style="display:inline-block;background:#405189;color:#fff;text-decoration:none;padding:9px 16px;border-radius:4px;font-size:14px;">Open in CIPRMS</a>` : ''}
     <p style="font-size:12px;color:#878a99;margin:20px 0 0;">You received this because you are a registered recipient in CIPRMS at Camarines Sur Polytechnic Colleges (CIRL). This notification is also recorded in your CIPRMS account bell.</p>
   </div>

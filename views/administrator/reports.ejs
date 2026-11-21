@@ -96,7 +96,31 @@
         max-height: 420px;
         overflow-y: auto;
       }
-    </style>
+        /* Audit Trail table fits its card: fixed layout, text wraps, no horizontal scrollbar. */
+    #audit-grid .gridjs-wrapper { overflow-x: hidden; }
+    #audit-grid .gridjs-table { table-layout: fixed; width: 100% !important; }
+    #audit-grid .gridjs-th, #audit-grid .gridjs-td { white-space: normal; overflow-wrap: break-word; word-break: normal; }
+    #audit-grid .gridjs-td .badge { white-space: normal; text-align: left; line-height: 1.3; max-width: 100%; }
+    /* Audit Trail table: Previous / Next on the right. */
+    #audit-grid .gridjs-pagination { display: flex; justify-content: flex-end; }
+    #audit-grid .gridjs-pagination .gridjs-pages { float: none; margin-left: auto; }
+    /* Audit Trail filters: one compact row, same sizes as Monitoring's filter row. */
+    .aud-filter-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-end; }
+    .aud-filter-item { flex: 0 0 auto; width: auto; }   /* each box is as wide as its own text */
+    .aud-filter-item .form-select { width: auto; max-width: 100%; }
+    .aud-filter-item .form-control[type=date] { width: auto; }
+    .aud-filter-row .form-select-sm, .aud-filter-row .form-control-sm { font-size: .8125rem; padding-top: .28rem; padding-bottom: .28rem; }
+    .aud-filter-row .search-box .form-control-sm { padding-left: 1.9rem; }
+    .aud-filter-row .search-box .search-icon { font-size: .8rem; }
+    .aud-filter-clear { flex: 0 0 auto; }
+    .aud-clear-link { color: #000; text-decoration: none; font-size: .8125rem; font-weight: 500; padding: .28rem .75rem;
+      border: 1px solid #adb5bd; border-radius: var(--vz-border-radius-sm, .2rem); background: #e9ecef; }
+    .aud-clear-link:hover, .aud-clear-link:focus { color: #000; text-decoration: none; background: #dee2e6; border-color: #868e96; }
+    [data-bs-theme="dark"] .aud-clear-link { color: #fff; background: #3a4252; border-color: #5c6577; }
+    .aud-filter-search { flex: 1 1 150px; min-width: 150px; max-width: 280px; margin-left: auto; display: flex; align-items: center; gap: .4rem; }
+    .aud-filter-search > .search-box { flex: 1 1 auto; min-width: 0; }
+    @media (max-width: 575.98px) { .aud-filter-search { flex: 1 1 100%; max-width: none; margin-left: 0; } }
+</style>
 </head>
 
 <body>
@@ -679,9 +703,12 @@
                                                      Administrator is specifically investigating, without scrolling the whole trail. Pre-existing
                                                      ADD/EDIT/DELETE/etc. rows have no category/status and simply don't match either filter, exactly
                                                      like a Role filter already didn't match a legacy record with no stored email. -->
-                                                <div class="row g-2 mb-2">
-                                                    <div class="col-md-3">
-                                                        <select id="audit-filter-action" class="form-select" onchange="applyAuditFilters()">
+                                                <!-- One compact row (same layout as Monitoring's filters): Action, Category, Status, Role, Date
+                                                     From/To, a boxed Clear, and Search (label on its left) at the right end. -->
+                                                <div class="aud-filter-row mb-3">
+                                                    <div class="aud-filter-item aud-filter-wide">
+                                                        <label class="form-label fs-12 mb-1" for="audit-filter-action">Action</label>
+                                                        <select id="audit-filter-action" class="form-select form-select-sm" onchange="applyAuditFilters()">
                                                             <option value="">All Actions</option>
                                                             <option value="LOGIN_SUCCESS">LOGIN_SUCCESS</option>
                                                             <option value="LOGIN_FAILED">LOGIN_FAILED</option>
@@ -698,23 +725,26 @@
                                                             <option value="RENEW">RENEW</option>
                                                         </select>
                                                     </div>
-                                                    <div class="col-md-3">
-                                                        <select id="audit-filter-category" class="form-select" onchange="applyAuditFilters()">
+                                                    <div class="aud-filter-item">
+                                                        <label class="form-label fs-12 mb-1" for="audit-filter-category">Category</label>
+                                                        <select id="audit-filter-category" class="form-select form-select-sm" onchange="applyAuditFilters()">
                                                             <option value="">All Categories</option>
                                                             <option value="Authentication">Authentication</option>
                                                             <option value="Security">Security</option>
                                                         </select>
                                                     </div>
-                                                    <div class="col-md-3">
-                                                        <select id="audit-filter-status" class="form-select" onchange="applyAuditFilters()">
+                                                    <div class="aud-filter-item">
+                                                        <label class="form-label fs-12 mb-1" for="audit-filter-status">Status</label>
+                                                        <select id="audit-filter-status" class="form-select form-select-sm" onchange="applyAuditFilters()">
                                                             <option value="">All Statuses</option>
                                                             <option value="success">Success</option>
                                                             <option value="failure">Failure</option>
                                                             <option value="blocked">Blocked</option>
                                                         </select>
                                                     </div>
-                                                    <div class="col-md-3">
-                                                        <select id="audit-filter-role" class="form-select" onchange="applyAuditFilters()">
+                                                    <div class="aud-filter-item">
+                                                        <label class="form-label fs-12 mb-1" for="audit-filter-role">Role</label>
+                                                        <select id="audit-filter-role" class="form-select form-select-sm" onchange="applyAuditFilters()">
                                                             <option value="">All Roles</option>
                                                             <option value="Administrator">Administrator</option>
                                                             <option value="Auth. Personnel">College Dean</option>
@@ -722,18 +752,23 @@
                                                             <option value="Staff">CIRL Staff</option>
                                                         </select>
                                                     </div>
-                                                </div>
-                                                <div class="row g-2 mb-3">
-                                                    <div class="col-md-3">
-                                                        <label class="form-label fs-12 text-muted mb-1">Date From</label>
-                                                        <input type="date" id="audit-filter-from" class="form-control" onchange="applyAuditFilters()">
+                                                    <div class="aud-filter-item aud-filter-date">
+                                                        <label class="form-label fs-12 mb-1" for="audit-filter-from">Date From</label>
+                                                        <input type="date" id="audit-filter-from" class="form-control form-control-sm" onchange="applyAuditFilters()">
                                                     </div>
-                                                    <div class="col-md-3">
-                                                        <label class="form-label fs-12 text-muted mb-1">Date To</label>
-                                                        <input type="date" id="audit-filter-to" class="form-control" onchange="applyAuditFilters()">
+                                                    <div class="aud-filter-item aud-filter-date">
+                                                        <label class="form-label fs-12 mb-1" for="audit-filter-to">Date To</label>
+                                                        <input type="date" id="audit-filter-to" class="form-control form-control-sm" onchange="applyAuditFilters()">
                                                     </div>
-                                                    <div class="col-md-3 d-flex align-items-end">
-                                                        <button class="btn btn-outline-secondary w-100" onclick="resetAuditFilters()"><i class="ri-refresh-line me-1"></i>Reset Filters</button>
+                                                    <div class="aud-filter-clear">
+                                                        <button type="button" class="btn btn-link btn-sm aud-clear-link" onclick="resetAuditFilters()" title="Clear all filters">Clear</button>
+                                                    </div>
+                                                    <div class="aud-filter-search">
+                                                        <label class="form-label fs-12 mb-0" for="audit-filter-q">Search</label>
+                                                        <div class="search-box">
+                                                            <input type="text" id="audit-filter-q" class="form-control form-control-sm" oninput="applyAuditFilters()">
+                                                            <i class="ri-search-line search-icon"></i>
+                                                        </div>
                                                     </div>
                                                 </div>
                                                 <div id="audit-grid"></div>
@@ -966,7 +1001,7 @@
                 document.getElementById('content-insights').style.display = tab === 'insights' ? '' : 'none';
             }
             // Lazy-load data when tab becomes visible
-            if (tab === 'audit') loadAuditGrid();
+            if (tab === 'audit') { loadAuditGrid(); if (typeof sizeAuditSelects === 'function') sizeAuditSelects(); }
         }
 
         const actionBadge = {
@@ -1042,23 +1077,25 @@
             document.getElementById('audit-empty').style.display = 'none';
             auditGrid = new gridjs.Grid({
                 columns: [
-                    { name: '#', width: '50px', formatter: (_, row) => gridjs.html(`<span class="text-muted fw-semibold">${row.cells[0].data}</span>`) },
-                    { name: 'Action', formatter: (cell) => gridjs.html(`<span class="badge ${actionBadge[cell] || 'bg-secondary-subtle text-secondary'}">${cell}</span>`) },
+                    { name: '#', width: '3%', formatter: (_, row) => gridjs.html(`<span class="text-muted fw-semibold">${row.cells[0].data}</span>`) },
+                    { name: 'Action', width: '14%', formatter: (cell) => gridjs.html(`<span class="badge ${actionBadge[cell] || 'bg-secondary-subtle text-secondary'}">${cell}</span>`) },
                     // Category/Status (2026-10-21): absent on every pre-existing record (ADD/EDIT/DELETE/… never
                     // carried either) — an em dash, not a blank cell, so "no category recorded" reads as a fact
                     // rather than looking like missing/broken data.
-                    { name: 'Category', formatter: (cell) => cell || '—' },
-                    { name: 'Status', formatter: (cell) => cell ? gridjs.html(`<span class="badge ${statusBadge[cell] || 'bg-secondary-subtle text-secondary'}">${cell}</span>`) : '—' },
-                    { name: 'Record / Details', width: '30%' },
-                    { name: 'Performed By', formatter: (cell) => cell || 'Unknown' },
-                    { name: 'Role', formatter: (cell) => cell ? gridjs.html(`<span class="badge ${roleBadge[cell] || 'bg-secondary-subtle text-secondary'}">${formatRole(cell)}</span>`) : '—' },
-                    { name: 'IP Address', formatter: (cell) => cell || '—' },
-                    { name: 'Date & Time' }
+                    { name: 'Category', width: '11%', formatter: (cell) => cell || '—' },
+                    { name: 'Status', width: '8%', formatter: (cell) => cell ? gridjs.html(`<span class="badge ${statusBadge[cell] || 'bg-secondary-subtle text-secondary'}">${cell}</span>`) : '—' },
+                    { name: 'Record / Details', width: '21%' },
+                    { name: 'Performed By', width: '10%', formatter: (cell) => cell || 'Unknown' },
+                    { name: 'Role', width: '11%', formatter: (cell) => cell ? gridjs.html(`<span class="badge ${roleBadge[cell] || 'bg-secondary-subtle text-secondary'}">${formatRole(cell)}</span>`) : '—' },
+                    { name: 'IP Address', width: '10%', formatter: (cell) => cell || '—' },
+                    { name: 'Date & Time', width: '12%' }
                 ],
                 data: logs.map((a, i) => [i + 1, a.action, a.category, a.status, displayRoleText(a.record), a.by, a.role, a.ip, a.date]),
-                search: true,
-                pagination: { limit: 15 },
-                sort: true,
+                search: false,   // keyword search is the "Search" box in the filter row (#audit-filter-q)
+                // Previous / Next only — no numbered page buttons, no "Showing x to y" summary (same as the other pages).
+                pagination: { limit: 20, buttonsCount: 0, summary: false },   // 20 entries per page
+                width: '100%', autoWidth: false,   // fit the card (no sideways scrollbar); long text wraps instead
+                sort: false,   // column sorting is off for every table
                 language: { search: { placeholder: '' } }, // placeholders removed system-wide (2026-11-20)
                 style: {
                     table: { border: 'none' },
@@ -1074,8 +1111,8 @@
                     // header instead follows the real stylesheet rules
                     // (assets/libs/gridjs/theme/mermaid.min.css for light,
                     // assets/css/ciprms-bridge.css's dark-mode block for dark).
-                    th: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: '700', border: 'none', padding: '10px 16px' },
-                    td: { border: 'none', padding: '10px 16px', fontSize: '13px' }
+                    th: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: '700', border: 'none', padding: '10px 10px' },
+                    td: { border: 'none', padding: '10px 10px', fontSize: '13px' }
                 }
             }).render(document.getElementById('audit-grid'));
         }
@@ -1091,6 +1128,23 @@
             if (!m) return null;
             return endOfDay ? new Date(+m[1], +m[2] - 1, +m[3], 23, 59, 59, 999) : new Date(+m[1], +m[2] - 1, +m[3], 0, 0, 0, 0);
         }
+        // Each Audit Trail filter dropdown is as wide as the option it currently shows (e.g. "All Roles" is
+        // narrow, "GOOGLE_AUTH_INITIATED" wide), measured with the dropdown's own font; re-run on every change.
+        function sizeAuditSelects() {
+            const canvas = sizeAuditSelects._c || (sizeAuditSelects._c = document.createElement('canvas'));
+            const ctx = canvas.getContext('2d');
+            document.querySelectorAll('.aud-filter-row select').forEach(function (sel) {
+                const opt = sel.options[sel.selectedIndex];
+                if (!opt) return;
+                const cs = getComputedStyle(sel);
+                ctx.font = cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily;
+                const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 4;   // includes room for the caret
+                sel.style.width = Math.ceil(ctx.measureText(opt.text).width + pad) + 'px';
+            });
+        }
+        document.addEventListener('DOMContentLoaded', sizeAuditSelects);
+        document.addEventListener('change', function (e) { if (e.target.closest && e.target.closest('.aud-filter-row select')) sizeAuditSelects(); });
+
         function applyAuditFilters() {
             const action   = document.getElementById('audit-filter-action').value;
             const category = document.getElementById('audit-filter-category').value;
@@ -1098,7 +1152,13 @@
             const role     = document.getElementById('audit-filter-role').value;
             const from     = auditLocalDate(document.getElementById('audit-filter-from').value, false);
             const to       = auditLocalDate(document.getElementById('audit-filter-to').value, true);
+            const q        = (document.getElementById('audit-filter-q').value || '').trim().toLowerCase();
             let filtered = allAuditLogs.filter(function(log) {
+                if (q) {
+                    const hay = [log.action, log.category, log.status, displayRoleText(log.record), log.by, formatRole(log.role), log.ip, log.date]
+                        .map(function (v) { return v == null ? '' : String(v); }).join(' ').toLowerCase();
+                    if (hay.indexOf(q) === -1) return false;
+                }
                 if (action   && log.action   !== action)   return false;
                 if (category && log.category !== category) return false;
                 if (status   && log.status   !== status)   return false;
@@ -1124,6 +1184,8 @@
             document.getElementById('audit-filter-role').value = '';
             document.getElementById('audit-filter-from').value = '';
             document.getElementById('audit-filter-to').value = '';
+            document.getElementById('audit-filter-q').value = '';
+            sizeAuditSelects();
             renderAuditGrid(allAuditLogs);
         }
 

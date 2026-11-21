@@ -70,6 +70,11 @@
       }
 
       /* Section switcher — same convention as administrator/partnership_requests.ejs */
+      /* Tab bar scrolls sideways on phones instead of stacking (same rule as the Administrator Requests page). */
+      @media (max-width: 575.98px) {
+        .dean-req-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .dean-req-tabs .nav-item { flex: 0 0 auto; }
+      }
       .section-tabs { display: flex; gap: .5rem; margin-bottom: 1.25rem; flex-wrap: wrap; }
       .section-tab {
           padding: .45rem 1.15rem; border-radius: 20px; font-size: .82rem; font-weight: 600;
@@ -260,19 +265,30 @@
                 </div>
 
                 <!-- Section switcher: Document Request | Submission of Approved MOA/MOU (same convention as the Partner's Requests page) -->
-                <div class="section-tabs">
-                    <a class="section-tab active" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
-                        <i class="ri-file-shield-2-line"></i> Document Request
-                    </a>
-                    <a class="section-tab" id="tab-moa" href="#" onclick="switchSection('moa');return false;">
-                        <i class="ri-government-line"></i> Submission of Approved MOA/MOU
-                    </a>
-                    <!-- College Requests (2026-11 follow-up) — MOA/MOU/Accreditation requests Administrator/Staff
-                         assign to this Dean specifically; replaces the former standalone College Requests page
-                         and its own sidebar item. -->
-                    <a class="section-tab" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
-                        <i class="ri-award-line"></i> College Requests
-                    </a>
+                <%# Same underlined nav-tabs-custom tab bar as the Administrator/Staff/LAU Requests page. %>
+                <div class="card border-0 shadow-sm mb-3">
+                    <div class="card-header border-0">
+                        <ul class="nav nav-tabs-custom rounded card-header-tabs border-bottom-0 dean-req-tabs" role="tablist">
+                            <li class="nav-item">
+                                <a class="nav-link active" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
+                                    <i class="ri-file-shield-2-line me-1"></i> Document Request
+                                </a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" id="tab-moa" href="#" onclick="switchSection('moa');return false;">
+                                    <i class="ri-government-line me-1"></i> Submission of Approved MOA/MOU
+                                </a>
+                            </li>
+                            <!-- College Requests (2026-11 follow-up) — MOA/MOU/Accreditation requests Administrator/Staff
+                                 assign to this Dean specifically; replaces the former standalone College Requests page
+                                 and its own sidebar item. -->
+                            <li class="nav-item">
+                                <a class="nav-link" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
+                                    <i class="ri-award-line me-1"></i> College Requests
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
                 </div>
 
                 <!-- ═══════════ PANEL: DOCUMENT REQUEST ═══════════ -->

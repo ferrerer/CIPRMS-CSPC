@@ -159,7 +159,7 @@
                                                      the caller for CIRL Staff (activityLogFilterFor).
                                                    - User Management: requireStaffAccess, but CIRL Staff can never create, edit or
                                                      delete an Administrator account or grant the Administrator role.
-                                                   Each cell carries a level: full (green), scoped (blue: own records / view only /
+                                                   Each cell carries a level: full (green), scoped (blue: personal records / view only /
                                                    submit only / join only) or none (red). */ %>
                                             <% var F = function (t) { return { t: t, l: 'full' }; },
                                                    S = function (t) { return { t: t, l: 'scoped' }; },
@@ -171,11 +171,11 @@
                                                   note: 'Only Administrator and CIRL Staff manage events. College Dean/Partner see just the events that are public or name them; Administrator sees all. LAU has no Calendar access.' },
                                                 { feature: 'Meetings (invitations &amp; attendance)', admin: F('Full (invite, see who joined)'), college: S('Join When Invited'), partner: S('Join When Invited'), staff: F('Full (invite, see who joined)'), lau: N(),
                                                   note: 'Invitations are e-mailed by Google Calendar once it is connected. Join opens at the meeting start and is checked on the server, which records the join time. LAU has no Calendar access.' },
-                                                { feature: 'Monitoring', admin: F('Full'), college: S('Own Only'), partner: S('Own Only'), staff: F('Full'), lau: S('View Only — All Requests'),
+                                                { feature: 'Monitoring', admin: F('Full'), college: S('Personal Records Only'), partner: S('Personal Records Only'), staff: F('Full'), lau: S('View Only — All Requests'),
                                                   note: 'Administrator and CIRL Staff: partnership overview and registry. College Dean and Partner: only their own submitted requests. LAU: every submitter\'s requests, read-only.' },
                                                 { feature: 'Registry (inside Monitoring)', admin: F('Full (CRUD)'), college: N(), partner: N(), staff: F('Full (CRUD)'), lau: N(),
                                                   note: 'Add, edit, renew and delete partnerships. LAU\'s monitoring is Partnership Requests only, not the Partnerships registry.' },
-                                                { feature: 'Document Library', admin: S('Own + Review Attachments'), college: N(), partner: N(), staff: S('Own + Review Attachments'), lau: S('Request Attachments Only'),
+                                                { feature: 'Document Library', admin: S('Personal Uploads + Review Attachments'), college: N(), partner: N(), staff: S('Personal Uploads + Review Attachments'), lau: S('Request Attachments Only'),
                                                   note: 'The library lists a user\'s own uploads; reviewers can also open any request attachment. College Dean and Partner have no library page, but files they submit are still archived for review. LAU has no library page either, but can open any Partnership Request\'s own supporting documents from its detail view.' },
                                                 { feature: 'User Management', admin: F('Full'), college: N(), partner: N(), staff: S('Full (except Administrator accounts)'), lau: N(),
                                                   note: 'CIRL Staff cannot create, edit or delete an Administrator account, or grant the Administrator role.' },
@@ -183,11 +183,11 @@
                                                   note: 'Partners submit and track their own. College Dean has no Partnership Request page (the submit API itself is still open to the role). LAU reuses the exact same Admin/Staff page, fully read-only — no submit, edit, approve, reject, or delete.' },
                                                 { feature: 'Document Requests', admin: F('Full (Review / Fulfill / Reject)'), college: S('Submit Only'), partner: S('Submit MOA/MOU Only'), staff: F('Full (Review / Fulfill / Reject)'), lau: N(),
                                                   note: 'Partners use the &ldquo;Submission Of MOA/MOU&rdquo; form. Reviewers get the printable form and PDF. LAU\'s monitoring scope is Partnership Requests only — the Document Requests tab on that shared page is hidden for this role.' },
-                                                { feature: 'Notifications', admin: S('Own Only'), college: S('Own Only'), partner: S('Bell Only (own)'), staff: S('Own Only'), lau: N(),
+                                                { feature: 'Notifications', admin: S('Personal Only'), college: S('Personal Only'), partner: S('Bell Only (Personal)'), staff: S('Personal Only'), lau: N(),
                                                   note: 'Always the user\'s own notifications. Partner has the header bell but no Notifications page. LAU has neither in this release.' },
-                                                { feature: 'Reports &amp; Analytics', admin: F('Full'), college: N(), partner: N(), staff: S('Full, Own Audit Trail Only'), lau: N(),
+                                                { feature: 'Reports &amp; Analytics', admin: F('Full'), college: N(), partner: N(), staff: S('Full, Personal Audit Trail Only'), lau: N(),
                                                   note: 'Audit Trail: Administrator sees every record; CIRL Staff sees only their own actions.' },
-                                                { feature: 'Settings (own account)', admin: F('Full'), college: F('Full'), partner: F('Full'), staff: F('Full'), lau: N('No'),
+                                                { feature: 'Settings (personal account)', admin: F('Full'), college: F('Full'), partner: F('Full'), staff: F('Full'), lau: N('No'),
                                                   note: 'Personal details (Partner: organization profile) and password. LAU has no Settings page in this release — out of scope for the initial read-only monitoring role.' },
                                                 { feature: 'Google Calendar connection (Admin Settings)', admin: F('Full'), college: N(), partner: N(), staff: N(), lau: N(),
                                                   note: 'Only Administrator connects, checks or disconnects the organization\'s Google account.' }
@@ -213,7 +213,7 @@
                                 </div>
                                 <div class="p-3 border-top">
                                     <span class="badge bg-success-subtle text-success me-2"><i class="ri-check-double-line me-1"></i>Full</span>
-                                    <span class="badge bg-info-subtle text-info me-2"><i class="ri-shield-check-line me-1"></i>Scoped (own records / view only / submit only / join only)</span>
+                                    <span class="badge bg-info-subtle text-info me-2"><i class="ri-shield-check-line me-1"></i>Scoped (personal records / view only / submit only / join only)</span>
                                     <span class="badge bg-danger-subtle text-danger"><i class="ri-close-line me-1"></i>No Access</span>
                                 </div>
                             </div>

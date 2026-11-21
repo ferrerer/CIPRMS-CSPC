@@ -3894,7 +3894,17 @@ app.get('/api/college-requests', requireAuth, async (req, res) => {
       const requests = await db.collection('collegedeanrequests').find(filter).sort({ id: -1 }).toArray();
       return res.json(requests);
     }
-    if (req.query.status) filter.status = req.query.status;
+    if (req.query.status) filter.status = String(req.query.status);
+    // Optional search box text (Requests page → College Requests tab): matched, case-insensitive, against
+    // title, type and the assigned Dean's name/college. Escaped, so it is always a literal substring match.
+    const q = typeof req.query.q === 'string' ? req.query.q.trim().slice(0, 100) : '';
+    if (q) {
+      const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      const searchOr = [{ title: rx }, { requestType: rx }, { assignedDeanName: rx }, { assignedCollege: rx },
+        { 'assignedDeans.name': rx }, { 'assignedDeans.college': rx }];
+      if (filter.$or) { filter.$and = [{ $or: filter.$or }, { $or: searchOr }]; delete filter.$or; }
+      else filter.$or = searchOr;
+    }
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = [10, 25, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 25;
     const totalCount = await db.collection('collegedeanrequests').countDocuments(filter);
@@ -4270,7 +4280,7 @@ app.get('/api/documents', requireUploader, async (req, res) => {
     }
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const pageSize = [10, 12, 15, 25, 30, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 15;
+    const pageSize = [9, 10, 12, 15, 25, 30, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 9;
     const filter = { ...roleFilter };
 
     // Folder/archived — doc.archived/doc.folderId are plain fields on each record, queried here exactly
@@ -8045,10 +8055,11 @@ app.post('/api/users', requireStaffAccess, async (req, res) => {
       icon: 'ri-user-star-line',
       color: 'primary',
       title: 'Welcome to CIPRMS',
-      desc: `Hello ${entry.name}, your CIPRMS account has been created with the role "${entry.role}". Sign in `
+      desc: `Hello ${entry.name}, your CIPRMS account has been created with the role "${displayRoleName(entry.role)}". Sign in `
         + `with Google using this e-mail address (${entry.email}) to get started. If you don't have Google `
         + `access for this address, or run into trouble signing in, please contact the CIRL office for assistance.`,
-      link: '/activate'
+      link: '/activate',
+      showSystemUrl: true   // the e-mail also prints the CIPRMS web address as visible text (APP_BASE_URL)
     });
     // The account is already created at this point regardless of what happens below — a failed e-mail
     // never rolls it back. Awaited (not fire-and-forget, unlike emailSubmissionReceipt) so the admin can
