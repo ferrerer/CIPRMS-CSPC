@@ -499,19 +499,19 @@
             <div class="row g-3">
                 <div class="col-md-6">
                     <label class="form-label ocr-field-label" for="res-title">Document Title <span class="text-danger">*</span></label>
-                    <input type="text" class="form-control ocr-field-input" id="res-title" placeholder="Document Title">
+                    <input type="text" class="form-control ocr-field-input" id="res-title">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label ocr-field-label" for="res-type">Document Type</label>
-                    <input type="text" class="form-control ocr-field-input" id="res-type" placeholder="e.g. MOA, MOU, Contract">
+                    <input type="text" class="form-control ocr-field-input" id="res-type">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label ocr-field-label" for="res-inst">Institution / Partner</label>
-                    <input type="text" class="form-control ocr-field-input" id="res-inst" placeholder="Institution Name">
+                    <input type="text" class="form-control ocr-field-input" id="res-inst">
                 </div>
                 <div class="col-md-6">
                     <label class="form-label ocr-field-label" for="res-validity">Validity Period</label>
-                    <input type="text" class="form-control ocr-field-input" id="res-validity" placeholder="Start Date – End Date">
+                    <input type="text" class="form-control ocr-field-input" id="res-validity">
                 </div>
                 <div class="col-12">
                     <div class="d-flex align-items-center justify-content-between mb-1">
@@ -521,7 +521,7 @@
                         </button>
                     </div>
                     <div class="collapse show" id="ocr-text-collapse">
-                        <textarea class="form-control ocr-raw-pre bg-light" rows="5" readonly id="res-rawtext" placeholder="Extracted text preview..."></textarea>
+                        <textarea class="form-control ocr-raw-pre bg-light" rows="5" readonly id="res-rawtext"></textarea>
                     </div>
                 </div>
             </div>
@@ -559,7 +559,7 @@
     // Pagination (2026-11 panel recommendation) — server-side; the grid/list only ever render the current
     // page's `records`, never the full allDocs array.
     let docPage = 1;
-    let docPageSize = 25;
+    let docPageSize = 15; // default 15 files per page (user can also pick 30)
     let docTotalCount = 0;
     let docSearchDebounce = null;
 
@@ -675,7 +675,7 @@
         if (docPage > totalPages) docPage = totalPages;
         document.getElementById('doc-pagination').innerHTML = CIPRMSPagination.buildPaginationHtml(docPage, totalPages, 'goToDocPage');
         document.getElementById('doc-page-summary').textContent = CIPRMSPagination.summaryText(docPage, docPageSize, docTotalCount);
-        CIPRMSPagination.renderPageSizeSelector('doc-page-size', docPageSize, [10, 25, 50], function (newSize) {
+        CIPRMSPagination.renderPageSizeSelector('doc-page-size', docPageSize, [15, 30], function (newSize) {
             docPageSize = newSize;
             docPage = 1;
             loadPage();

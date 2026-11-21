@@ -250,7 +250,7 @@
                       '<div class="border rounded p-3 mt-3 bg-light-subtle">' +
                       '<p class="mb-2"><strong>' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + ' Documents</strong></p>' +
                       '<input type="file" class="form-control mb-2" id="cdr-sub-file" accept=".pdf,.jpg,.jpeg,.png,.docx">' +
-                      '<textarea class="form-control mb-2" id="cdr-sub-note" rows="2" placeholder="Note (optional if attaching a file)"></textarea>' +
+                      '<textarea class="form-control mb-2" id="cdr-sub-note" rows="2"></textarea>' +
                       '<button class="btn btn-primary w-100" onclick="cdrSubmitDocuments(' + r.id + ')"><i class="ri-upload-cloud-2-line me-1"></i> ' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + '</button>' +
                       '</div>'
                   ) : '') +

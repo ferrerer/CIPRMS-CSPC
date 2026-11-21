@@ -31,8 +31,16 @@
 // passed with no further failure — unchanged from the original policy, and a SEPARATE concept from the
 // rolling window above: the window decides whether a given lockout triggers at all, the tier decay decides
 // how severe the NEXT one is once it does.
-const MAX_ATTEMPTS = 5;
-const LOCKOUT_DURATIONS_MS = [45 * 1000, 105 * 1000, 225 * 1000, 465 * 1000, 945 * 1000];
+//
+// LOCAL OVERRIDE (2026-11-20): schedule changed to
+//   3 failed attempts → 2:00 lockout
+//   4th failed attempt (the first failure after that lockout ends) → 5:00 lockout
+//   5th and every later failed attempt → 10:00 lockout (cap)
+// i.e. the FIRST lockout needs MAX_ATTEMPTS failures; once a key has been locked out at least once
+// (tier >= 1, until TIER_DECAY_MS passes with no failure), every single further failure locks it again
+// at the next, longer duration.
+const MAX_ATTEMPTS = 3;
+const LOCKOUT_DURATIONS_MS = [2 * 60 * 1000, 5 * 60 * 1000, 10 * 60 * 1000];
 const ROLLING_WINDOW_MS = 15 * 60 * 1000; // only failures within this trailing window count toward MAX_ATTEMPTS
 const TIER_DECAY_MS = 24 * 60 * 60 * 1000; // 24 hours of no failures resets the escalation tier to 0
 const COLLECTION = 'loginLockouts';
@@ -121,7 +129,8 @@ async function recordFailure(db, scope, key) {
             }
           }
       } },
-      { $set: { _justLocked: { $gte: [{ $size: '$recentFailures' }, MAX_ATTEMPTS] } } },
+      // First lockout needs MAX_ATTEMPTS failures in the window; after that (tier >= 1) each failure re-locks.
+      { $set: { _justLocked: { $gte: [{ $size: '$recentFailures' }, { $cond: [{ $gt: ['$tier', 0] }, 1, MAX_ATTEMPTS] }] } } },
       { $set: {
           lockedUntil: { $cond: ['$_justLocked', { $add: [now, durationsExpr] }, { $ifNull: ['$lockedUntil', null] }] },
           tier: { $cond: ['$_justLocked', { $add: ['$tier', 1] }, '$tier'] },
@@ -178,7 +187,8 @@ function formatMMSS(totalSeconds) {
   return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
 }
 function lockoutMessage(retryAfterSeconds) {
-  return `Too many sign-in attempts. Please try again in ${formatMMSS(retryAfterSeconds)}.`;
+  // Static text — the live "Try again in MM:SS" countdown box below the alert already shows the time.
+  return 'Too many sign-in attempts. Please try again later.';
 }
 
 module.exports = {
