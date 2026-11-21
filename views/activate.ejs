@@ -78,6 +78,12 @@
                                 <input type="tel" inputmode="numeric" class="form-control" id="a-contact" maxlength="25" autocomplete="tel" value="<%= profile.contactNumber %>" required>
                                 <div class="form-text text-danger" id="a-contact-warn" style="display:none"><i class="ri-error-warning-line me-1"></i>Numbers only — letters aren't allowed.</div>
                             </div>
+                            <!-- Optional: the school's / institution's website. -->
+                            <div class="col-12">
+                                <label class="form-label" for="a-website">School / Institution Website <span class="text-muted fw-normal">(optional)</span></label>
+                                <input type="url" inputmode="url" class="form-control" id="a-website" maxlength="300" autocomplete="url" value="<%= profile.website || '' %>">
+                                <div class="form-text">For example: https://www.cspc.edu.ph</div>
+                            </div>
                             <div class="col-12">
                                 <div class="form-text mt-0">Once your account is activated these details can only be changed by the CIRL Administrator.</div>
                             </div>
@@ -125,7 +131,8 @@
           unit: document.getElementById('a-unit').value.trim(),
           institution: document.getElementById('a-institution').value.trim(),
           position: document.getElementById('a-position').value.trim(),
-          contactNumber: contactEl.value.trim()
+          contactNumber: contactEl.value.trim(),
+          website: document.getElementById('a-website').value.trim()   // optional
         };
 
         let valid = true;
@@ -138,6 +145,18 @@
         if (payload.contactNumber.replace(/\D/g, '').length < 7) {
           contactEl.classList.add('is-invalid');
           return showError('Enter a valid contact number (at least 7 digits).');
+        }
+        // Website is optional; when given it must look like a web address (https:// is added if left out).
+        const websiteEl = document.getElementById('a-website');
+        websiteEl.classList.remove('is-invalid');
+        if (payload.website) {
+          if (!/^https?:\/\//i.test(payload.website)) payload.website = 'https://' + payload.website;
+          let okUrl = false;
+          try { const u = new URL(payload.website); okUrl = /^https?:$/.test(u.protocol) && u.hostname.includes('.'); } catch (_) { okUrl = false; }
+          if (!okUrl) {
+            websiteEl.classList.add('is-invalid');
+            return showError('Enter a valid website address (for example: https://www.cspc.edu.ph), or leave it blank.');
+          }
         }
 
         submitBtn.disabled = true;

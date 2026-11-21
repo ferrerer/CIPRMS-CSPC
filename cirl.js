@@ -1343,6 +1343,11 @@ app.post('/api/activate', requireAuth, async (req, res) => {
     }
     if (contact.error) return res.status(400).json({ error: contact.error });
     if (!contact.value) return res.status(400).json({ error: 'Contact number is required.' });
+    // Optional school / institution website: blank is allowed; otherwise it must be an http(s) address
+    // ("https://" is added when the scheme was left out). Stored as typed, never fetched by the server.
+    const site = parseWebsite(req.body.website === undefined ? '' : req.body.website);
+    if (site.error) return res.status(400).json({ error: site.error });
+    const website = site.value || '';
 
     const db = getDb();
     const userDoc = await db.collection('users').findOne({ id: req.session.user.id }, { projection: { password: 0 } });
@@ -1351,7 +1356,7 @@ app.post('/api/activate', requireAuth, async (req, res) => {
 
     await db.collection('users').updateOne(
       { id: userDoc.id },
-      { $set: { unit, institution, position, contactNumber: contact.value, activated: true, activatedAt: new Date() } }
+      { $set: { unit, institution, position, contactNumber: contact.value, website, activated: true, activatedAt: new Date() } }
     );
     req.session.user.unit = unit;
     req.session.user.activated = true;
@@ -8154,6 +8159,13 @@ app.patch('/api/users/:id', requireStaffAccess, async (req, res) => {
       if (contact.value === undefined) delete updateData.contactNumber; else updateData.contactNumber = contact.value;
     }
 
+    // Optional school / institution website — same rule as the activation form.
+    if (updateData.website !== undefined) {
+      const site = parseWebsite(updateData.website);
+      if (site.error) return res.status(400).json({ error: site.error });
+      updateData.website = site.value;
+    }
+
     // Never let an admin lock everyone out: block deactivating your own account,
     // and block demoting the last remaining Administrator.
     if (req.session.user.id === id && updateData.status === 'Inactive') {
@@ -10402,13 +10414,27 @@ function registeredProfile(userDoc) {
   return {
     name: userDoc.name || '', email: userDoc.email || '',
     dept: userDoc.unit || '', position: userDoc.position || '', institution: userDoc.institution || '',
-    contactNumber: userDoc.contactNumber || ''
+    contactNumber: userDoc.contactNumber || '', website: userDoc.website || ''
   };
 }
 
 // The contact number entered when an account is registered / edited in User Management. Digits and the usual phone
 // punctuation only, at least 7 digits when one is given; empty clears it. Returns { value } (undefined = not sent, so
 // the stored number is left alone) or { error }.
+// Optional school / institution website (account activation form and Edit User). Blank clears it; otherwise it must
+// be an http(s) address with a real host ("https://" is added when the scheme was left out). Stored as text only —
+// the server never fetches it. Returns { value } (undefined = not sent) or { error }.
+function parseWebsite(raw) {
+  if (raw === undefined) return { value: undefined };
+  let website = typeof raw === 'string' ? raw.trim().slice(0, 300) : '';
+  if (!website) return { value: '' };
+  if (!/^https?:\/\//i.test(website)) website = 'https://' + website;
+  try {
+    const u = new URL(website);
+    if ((u.protocol === 'http:' || u.protocol === 'https:') && u.hostname.includes('.')) return { value: website };
+  } catch (_) { /* not a valid URL */ }
+  return { error: 'Enter a valid website address (for example: https://www.cspc.edu.ph), or leave it blank.' };
+}
 const CONTACT_NUMBER_RE = /^[0-9+()\-\s]{1,25}$/;
 function parseContactNumber(raw) {
   if (typeof raw !== 'string') return { value: undefined };

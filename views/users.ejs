@@ -283,6 +283,10 @@
                         <input type="tel" inputmode="numeric" class="form-control" id="u-contact" maxlength="25" autocomplete="off" oninput="onContactInput()">
                         <div class="form-text text-danger" id="u-contact-warn" style="display:none"><i class="ri-error-warning-line me-1"></i>Numbers only — letters aren't allowed.</div>
                     </div>
+                    <div class="col-12 u-profile-field">
+                        <label class="form-label" for="u-website">School / Institution Website <span class="text-muted fw-normal">(optional)</span></label>
+                        <input type="url" inputmode="url" class="form-control" id="u-website" maxlength="300" autocomplete="off">
+                    </div>
                     <div class="col-12">
                         <div class="form-text mt-0" id="u-profile-note"></div>
                     </div>
@@ -524,8 +528,9 @@
     document.getElementById('u-institution').value = u.institution || '';
     document.getElementById('u-position').value = u.position || '';
     document.getElementById('u-contact').value = u.contactNumber || '';
+    document.getElementById('u-website').value = u.website || '';
     document.getElementById('u-contact-warn').style.display = 'none';
-    ['u-name','u-email','u-unit','u-institution','u-position','u-contact'].forEach(id => document.getElementById(id).classList.remove('is-invalid'));
+    ['u-name','u-email','u-unit','u-institution','u-position','u-contact','u-website'].forEach(id => document.getElementById(id).classList.remove('is-invalid'));
     setBreadcrumb(['User Management', u.name]);
     getModal().show();
   }
@@ -547,6 +552,7 @@
     const institution = document.getElementById('u-institution').value.trim();
     const position = document.getElementById('u-position').value.trim();
     const contactNumber = document.getElementById('u-contact').value.trim();
+    const website = document.getElementById('u-website').value.trim();   // optional; validated by the server
     let valid = true;
 
     [['u-name', name], ['u-email', email]].forEach(([fid, val]) => {
@@ -568,11 +574,12 @@
 
     if (editingId) {
       // EDIT — accounts sign in with Google; there is no password here to ever touch.
-      const payload = { name, email, role, unit, institution, position, contactNumber };
+      const payload = { name, email, role, unit, institution, position, contactNumber, website };
       apiPatch(editingId, payload)
         .then(data => {
           if (data.success) {
-            Object.assign(users.find(x => x.id === editingId), { name, email, role, unit, institution, position, contactNumber });
+            const savedSite = (data.user && data.user.website !== undefined) ? data.user.website : website;
+            Object.assign(users.find(x => x.id === editingId), { name, email, role, unit, institution, position, contactNumber, website: savedSite });
             getModal().hide();
             renderUsers();
             showToast(`<i class="ri-checkbox-circle-fill me-1"></i>${name} updated.`, '#405189');
