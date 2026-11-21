@@ -31,7 +31,8 @@
   // identical here to everywhere else in the product, not a new one-off style.
   const ENTRIES = {
     active: { label: 'Active', badgeClass: 'bg-success-subtle text-success', hex: '#0ab39c' },
-    'expiring soon': { label: 'Expiring Soon', badgeClass: 'bg-warning-subtle text-warning', hex: '#f7b84b' },
+    // Deep orange (2026-11) — reads as "almost expired"; .bg-expiring-subtle/.text-expiring live in assets/css/status-expiring.css.
+    'expiring soon': { label: 'Expiring Soon', badgeClass: 'bg-expiring-subtle text-expiring', hex: '#f97316' },
     expired: { label: 'Expired', badgeClass: 'bg-danger-subtle text-danger', hex: '#f06548' },
     inactive: { label: 'Inactive', badgeClass: 'bg-secondary-subtle text-secondary', hex: '#878a99' }
   };

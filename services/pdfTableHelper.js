@@ -24,13 +24,16 @@ function oneLineUnit(doc) {
 // cell is capped at `maxLines` (default 4) — not a limit that affects normal institution names/addresses
 // (which wrap comfortably well under that in these column widths), but a safety bound against a pathological
 // free-text value (an accidentally pasted paragraph) blowing up one row's height without limit.
-function measureRowHeight(doc, cellTexts, colWidths, { minHeight = 16, maxLines = 4, padY = 4 } = {}) {
+function measureRowHeight(doc, cellTexts, colWidths, { minHeight = 16, maxLines = 4, padX = 4, padY = 4 } = {}) {
   const cap = oneLineUnit(doc) * maxLines;
   let maxH = minHeight;
   cellTexts.forEach((text, i) => {
     const w = colWidths[i];
     if (!w) return;
-    const natural = doc.heightOfString(String(text == null ? '' : text), { width: w });
+    // Measured at the same inner width drawRowCells() draws at (column width minus horizontal padding) —
+    // measuring at the full width under-sized rows whose text wrapped one extra line when drawn, clipping it.
+    const str = String(text == null || text === '' ? '—' : text);
+    const natural = doc.heightOfString(str, { width: Math.max(1, w - padX * 2) });
     maxH = Math.max(maxH, Math.min(natural, cap) + padY * 2);
   });
   return maxH;

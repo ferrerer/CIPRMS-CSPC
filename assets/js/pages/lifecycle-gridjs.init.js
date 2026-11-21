@@ -97,7 +97,7 @@ function daysBadgeHtml(d, s) {
 }
 
 function statusBadgeHtml(s) {
-    var map = { Active: 'bg-success-subtle text-success', 'Expiring Soon': 'bg-warning-subtle text-warning', Expired: 'bg-danger-subtle text-danger' };
+    var map = { Active: 'bg-success-subtle text-success', 'Expiring Soon': 'bg-expiring-subtle text-expiring', Expired: 'bg-danger-subtle text-danger' };
     return '<span class="badge ' + (map[s] || 'bg-secondary-subtle text-secondary') + '">' + escapeHtml(s) + '</span>';
 }
 

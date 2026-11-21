@@ -85,20 +85,194 @@
       flex: 0 0 auto;
     }
 
-    /* Tabs scroll horizontally on mobile instead of wrapping (2026-11) — nav-tabs-custom's underlying
-       .nav is a plain flex-wrap row, which on a narrow viewport would stack three tabs into a tall column
-       instead of the compact single-row bar the rest of this layout matches (reports.ejs's own 3 tabs
-       happen to fit without needing this, but this page's slightly longer labels don't). Scoped to this
-       page's own card-header-tabs only, not nav-tabs-custom generally. */
-    @media (max-width: 575.98px) {
-      .card-header-tabs.nav-tabs-custom {
-        flex-wrap: nowrap;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
-      .card-header-tabs.nav-tabs-custom .nav-item {
-        flex: 0 0 auto;
-      }
+    /* ── Section Switcher Cards (restored 2026-11-20 — large clickable cards, one per table) ── */
+    .section-tabs {
+      display: flex;
+      gap: .75rem;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      align-items: stretch; /* every card the same height */
+    }
+    .section-tab {
+      flex: 1 1 0;          /* every card the same width */
+      min-width: 180px;
+      max-width: 300px;
+      padding: 1rem 1.2rem;
+      border-radius: 12px;
+      font-size: .84rem;
+      font-weight: 600;
+      cursor: pointer;
+      border: 2px solid #e9ecef;
+      transition: all .2s ease;
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      text-decoration: none;
+      color: #495057;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,.05);
+    }
+    .section-tab:hover {
+      border-color: #405189;
+      background: #f0f3ff;
+      color: #405189;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 14px rgba(64,81,137,.12);
+    }
+    .section-tab.active {
+      border-color: #405189;
+      background: var(--vz-card-bg, #fff);
+      color: #405189;
+      box-shadow: 0 4px 14px rgba(64,81,137,.18);
+    }
+    .section-tab.active .tab-count {
+      background: #405189;
+      color: #fff;
+    }
+    .section-tab-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      background: rgba(255,255,255,.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      flex-shrink: 0;
+      transition: background .2s;
+    }
+    .section-tab:not(.active) .section-tab-icon {
+      background: #eef1fb;
+      color: #405189;
+    }
+    .section-tab.active .section-tab-icon {
+      background: #405189;
+      color: #fff;
+    }
+    /* DR variant accent */
+    .section-tab[id="tab-dr"]:not(.active):hover {
+      border-color: #0ab39c;
+      background: #f0fdf4;
+      color: #0ab39c;
+    }
+    .section-tab[id="tab-dr"]:not(.active):hover .section-tab-icon {
+      background: #d1fae5;
+      color: #0ab39c;
+    }
+    .section-tab[id="tab-dr"].active {
+      background: var(--vz-card-bg, #fff);
+      color: #0ab39c;
+      border-color: #0ab39c;
+      box-shadow: 0 4px 14px rgba(10,179,156,.18);
+    }
+    .section-tab[id="tab-dr"].active .section-tab-icon,
+    .section-tab[id="tab-dr"].active .tab-count {
+      background: #0ab39c;
+      color: #fff;
+    }
+    .section-tab-body {
+      display: flex;
+      flex-direction: column;
+    }
+    .section-tab-title {
+      font-size: .88rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+    .section-tab-desc {
+      font-size: .72rem;
+      font-weight: 400;
+      opacity: .75;
+      margin-top: 1px;
+    }
+    .section-tab .tab-count {
+      margin-left: auto;
+      background: rgba(255,255,255,.25);
+      border-radius: 20px;
+      padding: 2px 9px;
+      font-size: .75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .section-tab:not(.active) .tab-count {
+      background: #e2e7f8;
+      color: #405189;
+    }
+    .section-tab[id="tab-dr"]:not(.active) .tab-count {
+      background: #d1fae5;
+      color: #0ab39c;
+    }
+    /* CDR (College Requests) variant accent */
+    .section-tab[id="tab-cdr"]:not(.active):hover {
+      border-color: #6f42c1;
+      background: #f5f0fc;
+      color: #6f42c1;
+    }
+    .section-tab[id="tab-cdr"]:not(.active):hover .section-tab-icon {
+      background: #e8d9f7;
+      color: #6f42c1;
+    }
+    .section-tab[id="tab-cdr"].active {
+      background: var(--vz-card-bg, #fff);
+      color: #6f42c1;
+      border-color: #6f42c1;
+      box-shadow: 0 4px 14px rgba(111,66,193,.18);
+    }
+    .section-tab[id="tab-cdr"].active .section-tab-icon,
+    .section-tab[id="tab-cdr"].active .tab-count {
+      background: #6f42c1;
+      color: #fff;
+    }
+    .section-tab[id="tab-cdr"]:not(.active) .tab-count {
+      background: #e8d9f7;
+      color: #6f42c1;
+    }
+    /* Dark mode for the section cards */
+    [data-bs-theme="dark"] .section-tab {
+      background: #1e2533;
+      color: #ced4da;
+      border-color: rgba(255, 255, 255, .12);
+    }
+    [data-bs-theme="dark"] .section-tab.active {
+      background: #1e2533;
+      color: #7094f5;
+      border-color: #405189;
+    }
+    [data-bs-theme="dark"] .section-tab[id="tab-dr"].active {
+      color: #3bc2b0;
+      border-color: #0ab39c;
+    }
+    [data-bs-theme="dark"] .section-tab[id="tab-cdr"].active {
+      color: #b18cf0;
+      border-color: #6f42c1;
+    }
+    [data-bs-theme="dark"] .section-tab:hover {
+      background: #262d3d;
+      color: #7094f5;
+    }
+    [data-bs-theme="dark"] .section-tab:not(.active) .section-tab-icon {
+      background: rgba(112, 148, 245, .15);
+      color: #7094f5;
+    }
+    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active):hover {
+      background: rgba(10, 179, 156, .12);
+      color: #3bc2b0;
+    }
+    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active):hover .section-tab-icon {
+      background: rgba(10, 179, 156, .18);
+      color: #3bc2b0;
+    }
+    [data-bs-theme="dark"] .section-tab:not(.active) .tab-count {
+      background: rgba(112, 148, 245, .18);
+      color: #7094f5;
+    }
+    [data-bs-theme="dark"] .section-tab[id="tab-dr"]:not(.active) .tab-count {
+      background: rgba(10, 179, 156, .18);
+      color: #3bc2b0;
+    }
+    [data-bs-theme="dark"] .section-tab[id="tab-cdr"]:not(.active) .tab-count {
+      background: rgba(111, 66, 193, .22);
+      color: #b18cf0;
     }
 
     /* Target Partner searchable combobox (2026-11) — same visual pattern as the Country combobox used
@@ -525,37 +699,41 @@
               <div class="row">
                 <div class="col-12">
                   <div class="card border-0 shadow-sm">
-                    <div class="card-header border-0">
-                      <!-- Section switcher (2026-11) — same nav-tabs-custom markup/classes as Reports &
-                           Analytics' own tabs (views/administrator/reports.ejs), reused as-is rather than
-                           styled separately. Counts keep the existing tab-cnt-* ids switchSection()/
-                           updateStats() already depend on; they're now a plain, light badge instead of the
-                           old per-tab-colored pill, to stay visually consistent with this simpler tab style. -->
-                      <ul class="nav nav-tabs-custom rounded card-header-tabs border-bottom-0" role="tablist">
-                        <li class="nav-item">
-                          <a class="nav-link active" id="tab-pr" href="#" onclick="switchSection('pr');return false;">
-                            <i class="ri-building-4-line me-1"></i> Partnership Requests
-                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-pr">0</span>
-                          </a>
-                        </li>
+                    <div class="card-header border-bottom bg-transparent pt-3 pb-0">
+                      <!-- Section switcher cards (restored 2026-11-20) — one large clickable card per table
+                           (Partnership / Document / College Requests). Keeps the tab-pr/tab-dr/tab-cdr and
+                           tab-cnt-* ids that switchSection()/updateStats() depend on. -->
+                      <div class="section-tabs">
+                        <a class="section-tab active" id="tab-pr" href="#" onclick="switchSection('pr');return false;">
+                          <div class="section-tab-icon"><i class="ri-building-4-line"></i></div>
+                          <div class="section-tab-body">
+                            <span class="section-tab-title">Partnership Requests</span>
+                            <span class="section-tab-desc">Partnership requests / submissions</span>
+                          </div>
+                          <span class="tab-count" id="tab-cnt-pr">0</span>
+                        </a>
                         <% if (typeof user === 'undefined' || !user || user.role !== 'LAU') { %>
-                        <li class="nav-item">
-                          <a class="nav-link" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
-                            <i class="ri-file-shield-2-line me-1"></i> Document Requests
-                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-dr">0</span>
-                          </a>
-                        </li>
+                        <a class="section-tab" id="tab-dr" href="#" onclick="switchSection('dr');return false;">
+                          <div class="section-tab-icon"><i class="ri-file-shield-2-line"></i></div>
+                          <div class="section-tab-body">
+                            <span class="section-tab-title">Document Requests</span>
+                            <span class="section-tab-desc">Official document processing</span>
+                          </div>
+                          <span class="tab-count" id="tab-cnt-dr">0</span>
+                        </a>
                         <!-- College Requests (2026-11) — MOA/MOU/Accreditation requests Administrator/Staff assign to a
                              specific College Dean. Same requireAdmin/requireStaffAccess-gated audience as Document
                              Requests above, so it shares that tab's LAU exclusion rather than needing its own. -->
-                        <li class="nav-item">
-                          <a class="nav-link" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
-                            <i class="ri-award-line me-1"></i> College Requests
-                            <span class="badge bg-light-subtle text-body-secondary border ms-1" id="tab-cnt-cdr">0</span>
-                          </a>
-                        </li>
+                        <a class="section-tab" id="tab-cdr" href="#" onclick="switchSection('cdr');return false;">
+                          <div class="section-tab-icon"><i class="ri-award-line"></i></div>
+                          <div class="section-tab-body">
+                            <span class="section-tab-title">College Requests</span>
+                            <span class="section-tab-desc">MOA / MOU / Accreditation</span>
+                          </div>
+                          <span class="tab-count" id="tab-cnt-cdr">0</span>
+                        </a>
                         <% } %>
-                      </ul>
+                      </div>
                     </div>
 
                     <div class="card-body pt-3">
@@ -768,10 +946,10 @@
             </div>
             <div class="mb-3">
               <label class="form-label ocr-field-label fs-13 mb-1" for="pr-draft-note">Version Note / Remarks</label>
-              <textarea class="form-control" id="pr-draft-note" rows="2" placeholder="Add a note or summary of changes for this version..."></textarea>
+              <textarea class="form-control" id="pr-draft-note" rows="2"></textarea>
             </div>
             <button type="button" class="btn btn-primary px-3 fs-13" id="pr-draft-upload-btn" onclick="uploadDraftDocument()">
-              <i class="ri-upload-2-line me-1"></i>Upload Version
+              <i class="ri-upload-2-line me-1"></i>Upload
             </button>
             <p class="text-muted fs-12 mt-2 mb-0">A file, a note, or both — at least one is required. A file (PDF, JPG, PNG, or DOCX, max 10MB) is archived to the Document Library; collaborators are notified automatically.</p>
           </div>
@@ -794,7 +972,7 @@
               </div>
               <div class="mb-3">
                 <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-note">Notes (Optional)</label>
-                <textarea class="form-control" id="pr-lau-note" rows="2" placeholder="Add your internal review notes..."></textarea>
+                <textarea class="form-control" id="pr-lau-note" rows="2"></textarea>
               </div>
               <div class="mb-3">
                 <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-status">Status (Optional)</label>
@@ -935,7 +1113,7 @@
             </div>
             <div class="mb-3">
               <label class="form-label ocr-field-label fs-13 mb-1" for="dr-draft-note">Version Note / Remarks</label>
-              <textarea class="form-control" id="dr-draft-note" rows="2" placeholder="Add a note or summary of changes for this version..."></textarea>
+              <textarea class="form-control" id="dr-draft-note" rows="2"></textarea>
             </div>
             <button type="button" class="btn btn-primary px-3 fs-13" id="dr-draft-upload-btn" onclick="uploadDRDraftDocument()">
               <i class="ri-upload-2-line me-1"></i>Upload Version
@@ -1003,7 +1181,7 @@
             <label class="form-label" for="pri-partner-search">Target Partner <span class="text-danger">*</span></label>
             <div class="pri-partner-wrap">
               <input type="text" class="form-control" id="pri-partner-search" autocomplete="off" role="combobox"
-                aria-expanded="false" aria-haspopup="listbox" aria-controls="pri-partner-dropdown" placeholder="Type to search partners…">
+                aria-expanded="false" aria-haspopup="listbox" aria-controls="pri-partner-dropdown">
               <input type="hidden" id="pri-partner-id" value="">
               <div class="pri-partner-dropdown" id="pri-partner-dropdown" role="listbox"></div>
             </div>
@@ -1081,7 +1259,7 @@
         </div>
         <div class="modal-body">
           <div class="search-box mb-2">
-            <input type="text" class="form-control" id="dr-select-existing-search" placeholder="Search by title, type, institution, or uploader…" oninput="renderDrSelectExistingList()">
+            <input type="text" class="form-control" id="dr-select-existing-search" oninput="renderDrSelectExistingList()">
             <i class="ri-search-line search-icon"></i>
           </div>
           <div id="dr-select-existing-list" class="list-group" style="max-height:360px;overflow-y:auto;"></div>
@@ -1224,7 +1402,7 @@
                 <div class="dean-combo" id="cdr-c-dean-combo">
                   <div class="dean-combo-chips" id="cdr-c-dean-chips"></div>
                   <div class="dean-combo-input-wrap">
-                    <input type="text" class="form-control" id="cdr-c-dean-input" placeholder="Search College Dean by name or college…" autocomplete="off" aria-expanded="false">
+                    <input type="text" class="form-control" id="cdr-c-dean-input" autocomplete="off" aria-expanded="false">
                     <div class="dean-combo-dropdown" id="cdr-c-dean-dropdown" role="listbox" style="display:none"></div>
                   </div>
                 </div>
@@ -1235,19 +1413,19 @@
               </div>
               <div class="col-12">
                 <label class="form-label">Title</label>
-                <input type="text" class="form-control" id="cdr-c-title" maxlength="300" placeholder="e.g. 2027 AACCUP Accreditation Documents" required>
+                <input type="text" class="form-control" id="cdr-c-title" maxlength="300" required>
               </div>
               <div class="col-12">
                 <label class="form-label">Instructions</label>
-                <textarea class="form-control" id="cdr-c-instructions" rows="3" maxlength="4000" placeholder="What the Dean needs to do, and by when."></textarea>
+                <textarea class="form-control" id="cdr-c-instructions" rows="3" maxlength="4000"></textarea>
               </div>
               <div class="col-12">
                 <label class="form-label">Description</label>
-                <textarea class="form-control" id="cdr-c-description" rows="2" maxlength="4000" placeholder="Additional context (optional)."></textarea>
+                <textarea class="form-control" id="cdr-c-description" rows="2" maxlength="4000"></textarea>
               </div>
               <div class="col-12">
                 <label class="form-label">Required Documents <span class="text-muted">(comma-separated)</span></label>
-                <input type="text" class="form-control" id="cdr-c-required" placeholder="e.g. Accomplishment Report, Faculty Profile, Curriculum Checklist">
+                <input type="text" class="form-control" id="cdr-c-required">
               </div>
             </div>
             <div class="invalid-feedback d-block d-none mt-2" id="cdr-c-error"></div>
@@ -3439,7 +3617,7 @@
               if (r.status === 'Submitted') {
                   footer.innerHTML =
                       '<div class="w-100">' +
-                      '<textarea class="form-control mb-2" id="cdr-return-remark" rows="2" placeholder="Comment (required if returning for revision)"></textarea>' +
+                      '<textarea class="form-control mb-2" id="cdr-return-remark" rows="2"></textarea>' +
                       '<div class="d-flex justify-content-end gap-2">' +
                       '<button class="btn btn-warning" onclick="cdrDecide(' + r.id + ', \'return\')"><i class="ri-arrow-go-back-line"></i> Return for Revision</button>' +
                       '<button class="btn btn-success" onclick="cdrDecide(' + r.id + ', \'accept\')"><i class="ri-checkbox-circle-line"></i> Accept</button>' +

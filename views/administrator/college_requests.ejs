@@ -138,19 +138,19 @@
             </div>
             <div class="col-12">
               <label class="form-label">Title</label>
-              <input type="text" class="form-control" id="cdr-c-title" maxlength="300" placeholder="e.g. 2027 AACCUP Accreditation Documents" required>
+              <input type="text" class="form-control" id="cdr-c-title" maxlength="300" required>
             </div>
             <div class="col-12">
               <label class="form-label">Instructions</label>
-              <textarea class="form-control" id="cdr-c-instructions" rows="3" maxlength="4000" placeholder="What the Dean needs to do, and by when."></textarea>
+              <textarea class="form-control" id="cdr-c-instructions" rows="3" maxlength="4000"></textarea>
             </div>
             <div class="col-12">
               <label class="form-label">Description</label>
-              <textarea class="form-control" id="cdr-c-description" rows="2" maxlength="4000" placeholder="Additional context (optional)."></textarea>
+              <textarea class="form-control" id="cdr-c-description" rows="2" maxlength="4000"></textarea>
             </div>
             <div class="col-12">
               <label class="form-label">Required Documents <span class="text-muted">(comma-separated)</span></label>
-              <input type="text" class="form-control" id="cdr-c-required" placeholder="e.g. Accomplishment Report, Faculty Profile, Curriculum Checklist">
+              <input type="text" class="form-control" id="cdr-c-required">
             </div>
           </div>
           <div class="invalid-feedback d-block d-none mt-2" id="cdr-c-error"></div>
@@ -385,7 +385,7 @@
               if (r.status === 'Submitted') {
                   footer.innerHTML =
                       '<div class="w-100">' +
-                      '<textarea class="form-control mb-2" id="cdr-return-remark" rows="2" placeholder="Comment (required if returning for revision)"></textarea>' +
+                      '<textarea class="form-control mb-2" id="cdr-return-remark" rows="2"></textarea>' +
                       '<div class="d-flex justify-content-end gap-2">' +
                       '<button class="btn btn-warning" onclick="cdrDecide(' + r.id + ', \'return\')"><i class="ri-arrow-go-back-line"></i> Return for Revision</button>' +
                       '<button class="btn btn-success" onclick="cdrDecide(' + r.id + ', \'accept\')"><i class="ri-checkbox-circle-line"></i> Accept</button>' +

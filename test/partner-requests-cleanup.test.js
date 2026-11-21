@@ -272,9 +272,9 @@ describe('Partner → Monitoring', () => {
     expect(html).toContain("'/api/document-requests/mine'");
   });
 
-  test('the rest of the page is intact: Partnership Requests, Approval Progress, Renewal Status, stat cards and the View Draft modal', () => {
+  test('the rest of the page is intact: Partnership Requests, Renewal Status, stat cards and the View Draft modal', () => {
     const visible = textOf(html);
-    for (const keep of ['My Partnership Requests', 'Approval Progress', 'Renewal Status', 'Total Requests', 'In Progress', 'Approved']) expect(visible).toContain(keep);
+    for (const keep of ['My Partnership Requests', 'Renewal Status', 'Total Requests', 'In Progress', 'Approved']) expect(visible).toContain(keep);
     for (const keep of ['id="pr-monitor-body"', 'id="pr-draft-modal"', 'id="draft-preview-modal"', 'id="renewal-request-modal"', 'id="cnt-total"', 'id="cnt-docs"']) expect(html).toContain(keep);
   });
 });

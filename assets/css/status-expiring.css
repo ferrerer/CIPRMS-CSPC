@@ -1,0 +1,21 @@
+/* "Expiring Soon" status color — deep orange, so it reads as urgent ("almost expired") and is clearly
+   different from Expired (red) and from Bootstrap's softer yellow "warning", which stays in use for
+   unrelated things like Pending. The same hex is used by assets/js/shared/status-colors.js for report
+   PDFs/charts. Linked for every page from views/partials/header.ejs. */
+:root {
+    --ciprms-expiring: #f97316;
+    --ciprms-expiring-text: #ea580c;      /* a shade darker for text on light backgrounds (readability) */
+    --ciprms-expiring-subtle: rgba(249, 115, 22, 0.15);
+}
+[data-bs-theme="dark"] {
+    --ciprms-expiring-text: #fb923c;      /* lighter on dark backgrounds */
+    --ciprms-expiring-subtle: rgba(249, 115, 22, 0.22);
+}
+.text-expiring { color: var(--ciprms-expiring-text) !important; }
+.text-expiring svg, svg.text-expiring { color: var(--ciprms-expiring-text) !important; stroke: currentColor; }
+.bg-expiring { background-color: var(--ciprms-expiring) !important; color: #fff !important; }
+.bg-expiring-subtle { background-color: var(--ciprms-expiring-subtle) !important; }
+
+/* Larger Days Left / Status badges in the partnership tables (Monitoring registry, partner Renewal Status). */
+/* Same text size and weight as the other cells (Nature, Start, End); only a light tint/padding remains. */
+.badge.table-pill { font-family: inherit; font-size: 0.75rem; font-weight: 400; line-height: inherit; letter-spacing: normal; text-transform: none; padding: 0.15em 0.5em; }

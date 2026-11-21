@@ -792,7 +792,7 @@ function runOnce(btnSelector, label, fn) {
 
 
 function sbadge(s) {
-  var m = { 'Active':'bg-success-subtle text-success', 'Expiring Soon':'bg-warning-subtle text-warning', 'Expired':'bg-danger-subtle text-danger', 'Pending Approval':'bg-info-subtle text-info' };
+  var m = { 'Active':'bg-success-subtle text-success', 'Expiring Soon':'bg-expiring-subtle text-expiring', 'Expired':'bg-danger-subtle text-danger', 'Pending Approval':'bg-info-subtle text-info' };
   return '<span class="badge ' + (m[s]||'bg-secondary-subtle text-secondary') + '">' + s + '</span>';
 }
 
@@ -803,7 +803,7 @@ function sbadge(s) {
 function daysBadgeHtml(d, s) {
   if (s === 'Expired') return '<span class="badge bg-danger-subtle text-danger">Expired</span>';
   if (d <= 14)         return '<span class="badge bg-danger">Critical (' + d + 'd)</span>';
-  if (d <= 90)         return '<span class="badge bg-warning-subtle text-warning">' + d + ' days</span>';
+  if (d <= 90)         return '<span class="badge bg-expiring-subtle text-expiring">' + d + ' days</span>';
   return '<span class="badge bg-success-subtle text-success">' + d + ' days</span>';
 }
 
@@ -960,7 +960,7 @@ function monRenderReportPreview(data) {
     '<div class="col-md-3"><div class="card card-animate mb-0 bg-success-subtle border-0"><div class="card-body p-3">' +
       '<h6 class="fs-12 text-uppercase text-success fw-semibold mb-1">Active Agreements</h6><h3 class="mb-0 text-success fw-bold">' + (sum.activeCount || 0) + '</h3></div></div></div>' +
     '<div class="col-md-3"><div class="card card-animate mb-0 bg-warning-subtle border-0"><div class="card-body p-3">' +
-      '<h6 class="fs-12 text-uppercase text-warning fw-semibold mb-1">Expiring Soon</h6><h3 class="mb-0 text-warning fw-bold">' + (sum.expiringSoonCount || 0) + '</h3></div></div></div>' +
+      '<h6 class="fs-12 text-uppercase text-expiring fw-semibold mb-1">Expiring Soon</h6><h3 class="mb-0 text-expiring fw-bold">' + (sum.expiringSoonCount || 0) + '</h3></div></div></div>' +
     '<div class="col-md-3"><div class="card card-animate mb-0 bg-danger-subtle border-0"><div class="card-body p-3">' +
       '<h6 class="fs-12 text-uppercase text-danger fw-semibold mb-1">Expired / Inactive</h6><h3 class="mb-0 text-danger fw-bold">' + (sum.inactiveCount || 0) + '</h3></div></div></div>';
 
@@ -1077,8 +1077,10 @@ function buildGrid() {
     // UI change) — they still live on `p` and are shown in full in the
     // View/Preview modal (openViewModal below) and everywhere else (Edit
     // form, Reports, filters); this table just no longer duplicates them.
-    var statusBadge = sbadge(p.status);
-    var endColor    = p.status==='Expired'?'#dc2626':p.status==='Expiring Soon'?'#d97706':'#15803d';
+    // .table-pill (assets/css/status-expiring.css) makes the table's Days Left / Status badges larger.
+    var statusBadge = sbadge(p.status).replace('class="badge ', 'class="badge table-pill ');
+    var daysBadge   = daysBadgeHtml(p.days, p.status).replace('class="badge ', 'class="badge table-pill ');
+    var endColor    = p.status==='Expired'?'#dc2626':p.status==='Expiring Soon'?'#ea580c':'#15803d';
     var instHtml    = escapeHtml(p.inst)+(p.coordinator?'<div class="text-muted fs-11"><i class="ri-user-line me-1"></i>'+escapeHtml(p.coordinator)+'</div>':'');
     var countryHtml = escapeHtml(p.country)+'<div class="text-muted fs-11"><i class="ri-map-pin-line me-1"></i>'+escapeHtml(p.region)+'</div>';
     var endHtml     = '<span style="color:'+endColor+';font-weight:600">'+p.end+'</span>';
@@ -1098,7 +1100,7 @@ function buildGrid() {
     // nature can be an array (multi-select, 2026-09-19) — join for display,
     // same treatment as Unit already gets in the View modal below.
     var natureDisplay = Array.isArray(p.nature) ? p.nature.join(', ') : p.nature;
-    return [gridjs.html(instHtml), gridjs.html(countryHtml), natureDisplay, p.start, gridjs.html(endHtml), gridjs.html(daysBadgeHtml(p.days, p.status)), gridjs.html(statusBadge), gridjs.html(actions)];
+    return [gridjs.html(instHtml), gridjs.html(countryHtml), natureDisplay, p.start, gridjs.html(endHtml), gridjs.html(daysBadge), gridjs.html(statusBadge), gridjs.html(actions)];
   });
 
   var totalPages = Math.ceil(data.length / regPageSize);
@@ -1118,14 +1120,54 @@ function buildGrid() {
     });
   }
 
+  // Empty state: shown under the table header when the current filters match nothing.
+  var emptyEl = document.getElementById('reg-empty');
+  if (emptyEl) {
+    var isEmpty = filtered.length === 0;
+    emptyEl.style.display = isEmpty ? '' : 'none';
+    if (isEmpty) {
+      var noData = total === 0;
+      setText('reg-empty-title', noData ? 'No partnerships yet' : 'No partnerships found');
+      setText('reg-empty-text', noData
+        ? 'There are no partnerships in the registry yet.'
+        : 'No partnership matches the selected filters. Try changing or clearing the filters.');
+      var clearBtn = document.getElementById('reg-empty-clear');
+      if (clearBtn) clearBtn.style.display = noData ? 'none' : '';
+    }
+  }
+
   if (window._regGrid) { window._regGrid.updateConfig({data:pageData}).forceRender(); return; }
   var regGridEl = document.getElementById('reg-grid');
   if (regGridEl) regGridEl.innerHTML = ''; // clear the template's loading placeholder — Grid.js requires an empty container on first render
+  // Sort helpers: html cells (gridjs.html) are objects, which Grid.js's default compare can't order,
+  // so sort on their visible text instead; dates sort chronologically, not alphabetically.
+  function cellText(v) {
+    if (v == null) return '';
+    if (typeof v === 'string' || typeof v === 'number') return String(v);
+    var content = v.props && v.props.content;
+    if (typeof content !== 'string') return '';
+    var div = document.createElement('div');
+    div.innerHTML = content;
+    var first = div.firstChild;
+    // Institution/Country cells: name first, then a sub-line div — sort on the name only.
+    return (first && first.nodeType === 3 ? first.textContent : div.textContent).trim();
+  }
+  function textCompare(a, b) {
+    return cellText(a).localeCompare(cellText(b), undefined, { sensitivity: 'base', numeric: true });
+  }
+  function dateCompare(a, b) {
+    var ta = Date.parse(cellText(a)), tb = Date.parse(cellText(b));
+    if (isNaN(ta) && isNaN(tb)) return 0;
+    if (isNaN(ta)) return 1;
+    if (isNaN(tb)) return -1;
+    // Must return -1/0/1: Grid.js combines results with a bitwise OR, which overflows on raw ms differences.
+    return ta < tb ? -1 : ta > tb ? 1 : 0;
+  }
   regGridEl && (window._regGrid = new gridjs.Grid({
     columns:[
-      {name:'Institution',width:'23%'},{name:'Country/Region',width:'14%'},
-      {name:'Nature',width:'11%'},{name:'Start',width:'10%'},
-      {name:'End',width:'11%'},{name:'Days Left',width:'11%',sort:false},
+      {name:'Institution',width:'23%',sort:{compare:textCompare}},{name:'Country/Region',width:'14%',sort:{compare:textCompare}},
+      {name:'Nature',width:'11%',sort:{compare:textCompare}},{name:'Start',width:'10%',sort:{compare:dateCompare}},
+      {name:'End',width:'11%',sort:{compare:dateCompare}},{name:'Days Left',width:'11%',sort:false},
       {name:'Status',width:'10%',sort:false},{name:'Actions',width:'10%',sort:false}
     ],
     data:pageData, search:false, pagination:false, sort:true,
@@ -1202,11 +1244,19 @@ var currentActivities = [];
 function renderActivitiesPartnerInfo(p) {
   document.getElementById('activities-title').textContent = 'List of Activities — ' + p.inst;
   document.getElementById('activities-partner-info').innerHTML =
-    '<div class="col-sm-6"><div class="text-muted fs-12">Institution</div><div class="fw-semibold">' + escapeHtml(p.inst) + '</div></div>'
-    + '<div class="col-sm-6"><div class="text-muted fs-12">Country</div><div class="fw-semibold">' + escapeHtml(p.country) + '</div></div>'
-    + '<div class="col-sm-4"><div class="text-muted fs-12">Date of Signing</div><div class="fw-semibold">' + escapeHtml(p.start) + '</div></div>'
-    + '<div class="col-sm-4"><div class="text-muted fs-12">Date of Expiration</div><div class="fw-semibold">' + escapeHtml(p.end) + '</div></div>'
-    + '<div class="col-sm-4"><div class="text-muted fs-12">Nature of Partnership</div><div class="fw-semibold">' + escapeHtml(Array.isArray(p.nature) ? p.nature.join(', ') : p.nature) + '</div></div>'
+    // Three aligned columns: [Institution / Date of Signing] [Country / Date of Expiration] [Nature of Partnership].
+    // Nature sits on the right, spanning both rows; Units get a full-width row below.
+    '<div class="col-sm-4">'
+    +   '<div class="text-muted fs-12">Institution</div><div class="fw-semibold mb-2">' + escapeHtml(p.inst) + '</div>'
+    +   '<div class="text-muted fs-12">Date of Signing</div><div class="fw-semibold">' + escapeHtml(p.start) + '</div>'
+    + '</div>'
+    + '<div class="col-sm-4">'
+    +   '<div class="text-muted fs-12">Country</div><div class="fw-semibold mb-2">' + escapeHtml(p.country) + '</div>'
+    +   '<div class="text-muted fs-12">Date of Expiration</div><div class="fw-semibold">' + escapeHtml(p.end) + '</div>'
+    + '</div>'
+    + '<div class="col-sm-4">'
+    +   '<div class="text-muted fs-12">Nature of Partnership</div><div class="fw-semibold">' + escapeHtml(Array.isArray(p.nature) ? p.nature.join(', ') : p.nature) + '</div>'
+    + '</div>'
     + '<div class="col-sm-12"><div class="text-muted fs-12">Parallel Faculty/Colleges and Programs</div><div class="fw-semibold">' + escapeHtml(Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) + '</div></div>';
 }
 

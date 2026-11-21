@@ -1543,6 +1543,32 @@ async function archivePartnerActivitiesPdf(db, res, partnership, activities, act
     { key: 'activityConducted', label: 'Activities Conducted', width: 140 },
     { key: 'natureOfActivity', label: 'Nature of Activity', width: 85 }
   ];
+  // Alignment (2026-11-20): header and cell text use the SAME alignment per column so each value sits
+  // directly under its own header — No. and the two dates centered, everything else left-aligned.
+  const CENTERED_KEYS = new Set(['no', 'start', 'end']);
+  COL_DEFS.forEach(c => { c.align = CENTERED_KEYS.has(c.key) ? 'center' : 'left'; });
+  // Stretch the columns to the full printable width (they summed to 710pt on a ~770pt page, leaving a blank
+  // strip at the right edge of the blue header bar and every row).
+  {
+    const total = COL_DEFS.reduce((s, c) => s + c.width, 0);
+    const scale = contentWidth / total;
+    let used = 0;
+    COL_DEFS.forEach((c, i) => {
+      c.width = i === COL_DEFS.length - 1 ? contentWidth - used : Math.floor(c.width * scale);
+      used += c.width;
+    });
+  }
+  const HEADER_PAD = 4;
+  // Thin vertical lines between columns so every value visibly belongs to one column.
+  function drawColumnLines(y, h, color) {
+    let x = left;
+    doc.save().lineWidth(0.5).strokeColor(color);
+    COL_DEFS.forEach((c, i) => {
+      x += c.width;
+      if (i < COL_DEFS.length - 1) doc.moveTo(x, y).lineTo(x, y + h).stroke();
+    });
+    doc.restore();
+  }
 
   function drawLetterhead() {
     const top = doc.page.margins.top;
@@ -1579,15 +1605,21 @@ async function archivePartnerActivitiesPdf(db, res, partnership, activities, act
 
   function drawTableHeader() {
     const chY = doc.y;
-    doc.rect(left, chY, contentWidth, 20).fillAndStroke('#0a58ca', '#0a58ca');
+    doc.font('Helvetica-Bold').fontSize(7);
+    // Tall enough for the tallest wrapped label (e.g. "Parallel Faculty/Colleges and Programs").
+    const headerH = Math.max(20, ...COL_DEFS.map(c => doc.heightOfString(c.label, { width: c.width - 6 }))) + HEADER_PAD * 2;
+    doc.rect(left, chY, contentWidth, headerH).fillAndStroke('#0a58ca', '#0a58ca');
+    drawColumnLines(chY, headerH, '#3d7fe0');
     doc.font('Helvetica-Bold').fontSize(7).fillColor('#fff');
     let cx = left;
     COL_DEFS.forEach(col => {
-      doc.text(col.label, cx + 3, chY + 4, { width: col.width - 6, align: 'center' });
+      // Vertically centered in the bar; horizontally aligned the same way as the column's own cells.
+      const h = doc.heightOfString(col.label, { width: col.width - 6 });
+      doc.text(col.label, cx + 3, chY + (headerH - h) / 2, { width: col.width - 6, align: col.align });
       cx += col.width;
     });
     doc.fillColor('#000');
-    doc.y = chY + 20;
+    doc.y = chY + headerH;
   }
 
   function availableBottom() { return doc.page.height - doc.page.margins.bottom - FOOTER_H; }
@@ -1657,12 +1689,14 @@ async function archivePartnerActivitiesPdf(db, res, partnership, activities, act
 
   function drawChunk(values, rowHeight, shaded) {
     const rowY = doc.y;
-    doc.rect(left, rowY, contentWidth, rowHeight).fill(shaded ? '#F5F7FA' : '#FFFFFF').stroke('#ddd');
+    doc.rect(left, rowY, contentWidth, rowHeight).fill(shaded ? '#F5F7FA' : '#FFFFFF');
+    doc.save().lineWidth(0.5).rect(left, rowY, contentWidth, rowHeight).stroke('#cfd6e0').restore();
+    drawColumnLines(rowY, rowHeight, '#cfd6e0');
     let rx = left;
     COL_DEFS.forEach(col => {
       if (values[col.key]) {
         doc.font(colFont(col.key)).fontSize(FONT_SIZE).fillColor('#222')
-          .text(values[col.key], rx + CELL_PAD, rowY + CELL_PAD, { width: col.width - CELL_PAD * 2, align: col.key === 'no' ? 'center' : 'left' });
+          .text(values[col.key], rx + CELL_PAD, rowY + CELL_PAD, { width: col.width - CELL_PAD * 2, align: col.align });
       }
       rx += col.width;
     });
@@ -1670,9 +1704,25 @@ async function archivePartnerActivitiesPdf(db, res, partnership, activities, act
     doc.y = rowY + rowHeight;
   }
 
-  const activityPairs = activities.length
+  const activityPairs = (activities.length
     ? activities.map(a => ({ activity: `${monthYearLabel(a.dateConducted)} – ${a.activityConducted}`, nature: a.natureOfActivity || '—' }))
-    : [{ activity: '—', nature: '—' }];
+    : [{ activity: '—', nature: '—' }]
+  ).map(p => {
+    // Keep each activity level with its own Nature of Activity (2026-11-20): when one side wraps onto more
+    // lines than the other, pad the shorter side with blank lines so the NEXT pair starts on the same line
+    // in both columns instead of drifting out of alignment.
+    const lines = (text, key) => {
+      doc.font(colFont(key)).fontSize(FONT_SIZE);
+      const w = colDef(key).width - CELL_PAD * 2;
+      return Math.max(1, Math.round(doc.heightOfString(text, { width: w }) / doc.heightOfString('X', { width: w })));
+    };
+    const aL = lines(p.activity, 'activityConducted');
+    const nL = lines(p.nature, 'natureOfActivity');
+    return {
+      activity: p.activity + '\n'.repeat(Math.max(0, nL - aL)),
+      nature: p.nature + '\n'.repeat(Math.max(0, aL - nL))
+    };
+  });
 
   let remainingPairs = activityPairs.slice();
   let firstChunk = true;
@@ -4274,7 +4324,7 @@ app.get('/api/documents', requireUploader, async (req, res) => {
     }
 
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const pageSize = [10, 25, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 25;
+    const pageSize = [10, 12, 15, 25, 30, 50].includes(parseInt(req.query.pageSize, 10)) ? parseInt(req.query.pageSize, 10) : 15;
     const filter = { ...roleFilter };
 
     // Folder/archived — doc.archived/doc.folderId are plain fields on each record, queried here exactly
@@ -5197,33 +5247,76 @@ function renderTablePdf(res, { title, filename, subtitle, columns, rows, summary
   const pageTop = doc.page.margins.top;
   const pageBottom = doc.page.height - doc.page.margins.bottom;
 
-  function drawHeader() {
+  // Bordered grid table (same style as the List of Activities export): columns scaled to the full content
+  // width, every label/cell drawn at a fixed row top (never doc.y-relative, so headers can't stagger), each
+  // row measured at the SAME inner width it is drawn at (so text can't overflow its row and spill pages).
+  const PAD_X = 4, PAD_Y = 4, MAX_LINES = 5;
+  const totalW = columns.reduce((s, c) => s + c.width, 0);
+  const cols = columns.map(c => ({ ...c, w: (c.width / totalW) * contentWidth }));
+  const BODY_FONT = 7.5, HEAD_FONT = 8;
+
+  function drawColumnLines(y, h, color) {
     let x = startX;
-    doc.font('Helvetica-Bold').fontSize(9);
-    columns.forEach(col => {
-      doc.text(col.label, x, doc.y, { width: col.width, lineBreak: false, ellipsis: true });
-      x += col.width;
+    doc.lineWidth(0.5).strokeColor(color);
+    cols.forEach((c, i) => {
+      if (i > 0) doc.moveTo(x, y).lineTo(x, y + h).stroke();
+      x += c.w;
     });
-    doc.y += 16;
-    doc.moveTo(startX, doc.y - 4).lineTo(x, doc.y - 4).strokeColor('#cccccc').stroke();
-    doc.font('Helvetica').fontSize(8.5);
+    doc.rect(startX, y, contentWidth, h).stroke();
+  }
+
+  function drawHeader() {
+    doc.font('Helvetica-Bold').fontSize(HEAD_FONT);
+    const hH = Math.max(18, ...cols.map(c => doc.heightOfString(c.label, { width: c.w - PAD_X * 2 }))) + PAD_Y * 2;
+    const y = doc.y;
+    doc.rect(startX, y, contentWidth, hH).fillColor('#0a58ca').fill();
+    let x = startX;
+    doc.fillColor('#ffffff');
+    cols.forEach(c => {
+      const th = doc.heightOfString(c.label, { width: c.w - PAD_X * 2 });
+      doc.text(c.label, x + PAD_X, y + (hH - th) / 2, { width: c.w - PAD_X * 2, align: c.align || 'left' });
+      x += c.w;
+    });
+    drawColumnLines(y, hH, '#0a58ca');
+    doc.y = y + hH;
+    doc.font('Helvetica').fontSize(BODY_FONT).fillColor('#000');
   }
 
   if (!rows.length) {
     drawHeader();
-    doc.text('No records match this report.', startX, doc.y + 4);
+    doc.text('No records match this report.', startX, doc.y + 6);
   } else {
     drawHeader();
-    // Column widths here are already generous (this report's caller always sizes them for its own data), so
-    // -5 padding matches the original code's own small visual gutter between columns.
-    pdfTableHelper.drawTable(doc, {
-      columns: columns.map(c => ({ width: c.width - 5 })),
-      rows,
-      cellValues: (row) => columns.map(col => row[col.key]),
-      left: startX,
-      pageTop,
-      pageBottom,
-      drawHeader
+    doc.font('Helvetica').fontSize(BODY_FONT);
+    const lineH = doc.heightOfString('Mg', { width: 1000 });
+    const cap = lineH * MAX_LINES;
+    rows.forEach((row, idx) => {
+      const texts = cols.map(c => {
+        const v = row[c.key];
+        return String(v == null || v === '' ? '—' : v);
+      });
+      const heights = texts.map((t, i) => Math.min(doc.heightOfString(t, { width: cols[i].w - PAD_X * 2 }), cap));
+      const h = Math.max(16, ...heights) + PAD_Y * 2;
+      if (doc.y + h > pageBottom) {
+        doc.addPage();
+        doc.y = pageTop;
+        drawHeader();
+      }
+      const y = doc.y;
+      if (idx % 2 === 1) doc.rect(startX, y, contentWidth, h).fillColor('#f4f6fb').fill();
+      doc.fillColor('#000');
+      let x = startX;
+      texts.forEach((t, i) => {
+        const c = cols[i];
+        const innerW = c.w - PAD_X * 2;
+        const natural = doc.heightOfString(t, { width: innerW });
+        const opts = { width: innerW, align: c.align || 'left' };
+        if (natural > cap + 0.5) { opts.height = cap; opts.ellipsis = true; }
+        doc.text(t, x + PAD_X, y + PAD_Y, opts);
+        x += c.w;
+      });
+      drawColumnLines(y, h, '#c9d2e3');
+      doc.y = y + h;
     });
   }
 
@@ -5492,7 +5585,7 @@ function buildPartnershipFilterSummary(filters) {
   return parts.length ? `Filters: ${parts.join('  ·  ')}` : 'Filters: None — all records';
 }
 
-function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy, customReportData }) {
+function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy, customReportData, showFilters = false }) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${safeFilename(title)}.pdf"`);
 
@@ -5558,10 +5651,13 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     // excluded here (already shown above via periodLabel; repeating them would just be noise), and only
     // filters actually narrowing the result (not left at their "All"/"None" default) are listed, so an
     // unfiltered report shows a clean "All records" line instead of a wall of "All, All, All...".
-    const filterLine = buildPartnershipFilterSummary(customReportData && customReportData.filters);
-    if (filterLine) {
-      doc.font('Helvetica-Oblique').fontSize(8).fillColor('#666')
-        .text(filterLine, left, doc.y, { width: contentWidth, align: 'center' });
+    // "Filters: ..." line — shown only for Custom Report Builder exports (fixed report cards omit it).
+    if (showFilters) {
+      const filterLine = buildPartnershipFilterSummary(customReportData && customReportData.filters);
+      if (filterLine) {
+        doc.font('Helvetica-Oblique').fontSize(8).fillColor('#666')
+          .text(filterLine, left, doc.y, { width: contentWidth, align: 'center' });
+      }
     }
     doc.fillColor('#000');
     // Fixed gap before the table's column-header bar is drawn right after this function returns — see
@@ -5570,19 +5666,36 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     pdfTableHelper.sectionGap(doc);
   }
 
-  const colStartX = left + PARTNERSHIP_REPORT_NO_COL_WIDTH;
+  // Vertical divider lines between the table's columns (No. + PARTNERSHIP_REPORT_COLUMNS), drawn for the
+  // header bar and every row so each value clearly sits in its own column.
+  const flatColWidths = [PARTNERSHIP_REPORT_NO_COL_WIDTH, ...PARTNERSHIP_REPORT_COLUMNS.map(c => c.width)];
+  function drawColumnDividers(y, h, color) {
+    let x = left;
+    doc.save().lineWidth(0.5).strokeColor(color);
+    flatColWidths.forEach((w, i) => {
+      if (i > 0) doc.moveTo(x, y).lineTo(x, y + h).stroke();
+      x += w;
+    });
+    doc.restore();
+  }
   function drawColumnHeader() {
     const y = doc.y;
-    doc.rect(left, y, contentWidth, 18).fillAndStroke('#0a58ca', '#0a58ca');
-    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#fff');
-    doc.text('No.', left + 4, y + 5, { width: PARTNERSHIP_REPORT_NO_COL_WIDTH - 8, lineBreak: false });
-    let x = colStartX;
-    PARTNERSHIP_REPORT_COLUMNS.forEach(col => {
-      doc.text(col.label, x + 4, y + 5, { width: col.width - 8, lineBreak: false });
-      x += col.width;
+    const labels = ['No.', ...PARTNERSHIP_REPORT_COLUMNS.map(c => c.label)];
+    doc.font('Helvetica-Bold').fontSize(8.5);
+    // Header height fits the tallest wrapped label (e.g. "Date of Expiration" wraps to 2 lines) instead of
+    // a fixed 18pt bar that clipped the second line.
+    const labelHeights = labels.map((l, i) => doc.heightOfString(l, { width: flatColWidths[i] - 8 }));
+    const hH = Math.max(18, Math.max(...labelHeights) + 10);
+    doc.rect(left, y, contentWidth, hH).fillAndStroke('#0a58ca', '#0a58ca');
+    doc.fillColor('#fff');
+    let x = left;
+    labels.forEach((label, i) => {
+      doc.text(label, x + 4, y + (hH - labelHeights[i]) / 2, { width: flatColWidths[i] - 8 });
+      x += flatColWidths[i];
     });
+    drawColumnDividers(y, hH, '#5b8fe0');
     doc.fillColor('#000');
-    doc.y = y + 18;
+    doc.y = y + hH;
     doc.font('Helvetica').fontSize(8); // reset from the header's own Helvetica-Bold — this now also fires on
     // every page-break redraw (drawTable calls this same function), not just the first call, so a row's
     // measured height must never be taken with the header's bold/larger font still active.
@@ -5594,6 +5707,7 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#0a3d91')
       .text(`${label} (${count})`, left + 6, y + 4, { width: contentWidth - 12 });
     doc.fillColor('#000');
+    doc.font('Helvetica').fontSize(8); // reset so the rows below aren't drawn in the group header's bold font
     doc.y = y + 16;
   }
 
@@ -5763,8 +5877,9 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
       rowStyle: (d, localIdx, x, y, w, h) => {
         const globalIdx = groupStartIndex + localIdx;
         if (globalIdx % 2 === 1) d.rect(x, y, w, h).fillAndStroke('#f5f7fa', '#f5f7fa');
-        d.strokeColor('#e3e6eb').rect(x, y, w, h).stroke();
-        d.strokeColor('#000').fillColor('#000');
+        d.lineWidth(0.5).strokeColor('#c9d2e3').rect(x, y, w, h).stroke();
+        drawColumnDividers(y, h, '#c9d2e3');
+        d.lineWidth(1).strokeColor('#000').fillColor('#000');
       }
     });
     rowIndex += group.docs.length;
@@ -6203,7 +6318,9 @@ app.get('/api/reports/partnerships/pdf', requireStaffAccess, async (req, res) =>
       docs: reportData.records,
       periodLabel: reportData.periodLabel,
       generatedBy: reportData.generatedBy,
-      customReportData: reportData
+      customReportData: reportData,
+      // Only the Custom Report Builder export prints the "Filters: ..." line; the fixed report cards don't.
+      showFilters: req.query.source === 'builder'
     });
   } catch (err) {
     console.error('❌ Partnerships PDF export error:', err);
@@ -7393,19 +7510,101 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
     doc.strokeColor('#000');
     doc.y = rowY + 18;
   });
+
+  // ── Pie chart of each configuration's share of the combined total (client request), with a legend.
+  // Slice colors use multiComparisonColor(), the same color as the summary-table label and section header.
+  {
+    const grand = results.reduce((s, r) => s + r.count, 0);
+    const radius = 70;
+    const blockH = radius * 2 + 30;
+    pdfTableHelper.sectionGap(doc);
+    if (doc.y + blockH > doc.page.height - doc.page.margins.bottom) { doc.addPage(); doc.y = doc.page.margins.top; }
+    const blockY = doc.y;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
+      .text('Partnership Share by Comparison', left, blockY, { width: contentWidth, align: 'center' });
+    const cx = left + contentWidth / 2 - 110;
+    const cy = blockY + 22 + radius;
+    if (grand <= 0) {
+      doc.circle(cx, cy, radius).lineWidth(1).strokeColor('#c9d2e3').stroke();
+      doc.font('Helvetica').fontSize(9).fillColor('#888').text('No data', cx - radius, cy - 5, { width: radius * 2, align: 'center' });
+    } else {
+      let angle = -Math.PI / 2; // start at 12 o'clock
+      const slices = results.map((r, idx) => ({ r, idx, frac: r.count / grand })).filter(s => s.frac > 0);
+      slices.forEach(s => {
+        const color = multiComparisonColor(s.r, s.idx);
+        if (s.frac >= 0.9999) {
+          doc.circle(cx, cy, radius).fill(color);
+        } else {
+          const a0 = angle, a1 = angle + s.frac * Math.PI * 2;
+          const x0 = cx + radius * Math.cos(a0), y0 = cy + radius * Math.sin(a0);
+          const x1 = cx + radius * Math.cos(a1), y1 = cy + radius * Math.sin(a1);
+          const large = (a1 - a0) > Math.PI ? 1 : 0;
+          doc.path(`M ${cx} ${cy} L ${x0} ${y0} A ${radius} ${radius} 0 ${large} 1 ${x1} ${y1} Z`).fill(color);
+          angle = a1;
+        }
+      });
+      // White separators between slices
+      if (slices.length > 1) {
+        let a = -Math.PI / 2;
+        doc.save().lineWidth(1.5).strokeColor('#fff');
+        slices.forEach(s => {
+          doc.moveTo(cx, cy).lineTo(cx + radius * Math.cos(a), cy + radius * Math.sin(a)).stroke();
+          a += s.frac * Math.PI * 2;
+        });
+        doc.restore();
+      }
+      // Percentage labels inside slices big enough to hold them
+      let labelAngle = -Math.PI / 2;
+      slices.forEach(s => {
+        const mid = labelAngle + s.frac * Math.PI;
+        labelAngle += s.frac * Math.PI * 2;
+        if (s.frac < 0.06) return;
+        const px = cx + radius * 0.62 * Math.cos(mid), py = cy + radius * 0.62 * Math.sin(mid);
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#fff')
+          .text(`${s.r.percentage}%`, px - 25, py - 5, { width: 50, align: 'center', lineBreak: false });
+      });
+    }
+    // Legend to the right of the pie
+    let ly = cy - (results.length * 18) / 2;
+    const lx = cx + radius + 40;
+    results.forEach((r, idx) => {
+      doc.rect(lx, ly + 1, 10, 10).fill(multiComparisonColor(r, idx));
+      doc.font('Helvetica').fontSize(9).fillColor('#222')
+        .text(`${r.label} — ${r.count} (${r.percentage}%)`, lx + 16, ly + 1, { width: 260, lineBreak: false, ellipsis: true });
+      ly += 18;
+    });
+    doc.fillColor('#000').strokeColor('#000').lineWidth(1);
+    doc.y = blockY + blockH;
+  }
+
   // Fixed gap before the first per-configuration record table's own colored header bar — same fix as above.
   pdfTableHelper.sectionGap(doc);
 
   // ── Per-comparison record tables — one section per configuration.
+  // Relative widths, scaled to the full landscape content width so the table spans the whole page (the
+  // previous fixed widths summed to ~595pt of ~770pt, leaving a blank band and a cramped Unit column).
   const COL_DEFS = [
-    { key: 'inst', label: 'Institution', width: 175 },
-    { key: 'country', label: 'Country', width: 80 },
-    { key: 'type', label: 'Type', width: 45 },
-    { key: 'unit', label: 'Unit', width: 60 },
-    { key: 'start', label: 'Start', width: 75 },
-    { key: 'end', label: 'End', width: 75 },
-    { key: 'status', label: 'Status', width: 85 }
+    { key: 'inst', label: 'Institution', width: 220 },
+    { key: 'country', label: 'Country', width: 95 },
+    { key: 'type', label: 'Type', width: 50 },
+    { key: 'unit', label: 'Unit', width: 140 },
+    { key: 'start', label: 'Start', width: 85 },
+    { key: 'end', label: 'End', width: 85 },
+    { key: 'status', label: 'Status', width: 95 }
   ];
+  {
+    const sum = COL_DEFS.reduce((a, c) => a + c.width, 0);
+    COL_DEFS.forEach(c => { c.width = c.width * contentWidth / sum; });
+  }
+  function drawCompColumnLines(y, h, color) {
+    let x = left;
+    doc.save().lineWidth(0.5).strokeColor(color);
+    COL_DEFS.forEach((c, i) => {
+      if (i > 0) doc.moveTo(x, y).lineTo(x, y + h).stroke();
+      x += c.width;
+    });
+    doc.restore();
+  }
 
   results.forEach((r, idx) => {
     const color = multiComparisonColor(r, idx);
@@ -7439,19 +7638,23 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
 
     function drawCompColumnHeader() {
       const chY = doc.y;
-      doc.rect(left, chY, contentWidth, 16).fillAndStroke('#1a56c4', '#1a56c4');
-      doc.font('Helvetica-Bold').fontSize(7.5).fillColor('#fff');
+      const hH = 18;
+      doc.rect(left, chY, contentWidth, hH).fillAndStroke('#0a58ca', '#0a58ca');
+      doc.font('Helvetica-Bold').fontSize(8).fillColor('#fff');
       let cx = left;
-      COL_DEFS.forEach(col => { doc.text(col.label, cx + 3, chY + 4, { width: col.width - 6, lineBreak: false }); cx += col.width; });
+      COL_DEFS.forEach(col => { doc.text(col.label, cx + 4, chY + 5.5, { width: col.width - 8, lineBreak: false }); cx += col.width; });
+      drawCompColumnLines(chY, hH, '#5b8fe0');
       doc.fillColor('#000');
-      doc.y = chY + 16;
+      doc.y = chY + hH;
+      // Reset from the header's bold font — this also runs on every page-break redraw (drawTable calls it),
+      // so rows after a page break no longer come out bold.
+      doc.font('Helvetica').fontSize(8);
     }
 
     drawCompColumnHeader();
-    doc.font('Helvetica').fontSize(7.5); // header left the font as Helvetica-Bold — must reset before rows are measured/drawn
     const statusColIdx = COL_DEFS.findIndex((c) => c.key === 'status');
     pdfTableHelper.drawTable(doc, {
-      columns: COL_DEFS.map(c => ({ width: c.width - 6 })),
+      columns: COL_DEFS.map(c => ({ width: c.width })),
       rows: r.records,
       cellValues: (p) => COL_DEFS.map((col) => (Array.isArray(p[col.key]) ? p[col.key].join(', ') : p[col.key])),
       left,
@@ -7459,9 +7662,10 @@ function renderMultiComparisonReportPdf(res, { title, results, periodLabel, gene
       pageBottom: doc.page.height - doc.page.margins.bottom,
       drawHeader: drawCompColumnHeader,
       rowStyle: (d, ridx, x, y, w, h) => {
-        const fill = ridx % 2 === 0 ? '#FFFFFF' : '#F5F7FA';
-        d.rect(x, y, w, h).fill(fill).stroke('#ddd');
-        d.strokeColor('#000').fillColor('#222');
+        if (ridx % 2 === 1) d.rect(x, y, w, h).fill('#F5F7FA');
+        d.lineWidth(0.5).strokeColor('#c9d2e3').rect(x, y, w, h).stroke();
+        drawCompColumnLines(y, h, '#c9d2e3');
+        d.lineWidth(1).strokeColor('#000').fillColor('#222');
       },
       // Colors the actual record's own Status value (Active/Expiring Soon/Expired/Inactive) — by the real
       // status name via the shared mapping, never by this row's position/index — so a given status always
@@ -7658,14 +7862,14 @@ app.get('/api/reports/activitylog/pdf', requireStaffAccess, async (req, res) => 
       subtitle: `Generated ${now} · ${logs.length} entries`,
       summaryLine: logs.length ? summaryLine : null,
       columns: [
-        { key: 'action', label: 'Action', width: 50 },
-        { key: 'category', label: 'Category', width: 70 },
-        { key: 'status', label: 'Status', width: 55 },
-        { key: 'record', label: 'Record / Details', width: 200 },
-        { key: 'by', label: 'Performed By', width: 100 },
-        { key: 'role', label: 'Role', width: 80 },
-        { key: 'ip', label: 'IP Address', width: 75 },
-        { key: 'date', label: 'Date & Time', width: 100 }
+        { key: 'action', label: 'Action', width: 112 },
+        { key: 'category', label: 'Category', width: 66 },
+        { key: 'status', label: 'Status', width: 50, align: 'center' },
+        { key: 'record', label: 'Record / Details', width: 210 },
+        { key: 'by', label: 'Performed By', width: 82 },
+        { key: 'role', label: 'Role', width: 70 },
+        { key: 'ip', label: 'IP Address', width: 72 },
+        { key: 'date', label: 'Date & Time', width: 100, align: 'center' }
       ],
       rows: logs.map(l => ({ ...l, role: formatRole(l.role), record: displayRoleText(l.record) }))
     });

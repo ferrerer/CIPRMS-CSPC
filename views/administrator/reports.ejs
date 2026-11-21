@@ -28,7 +28,7 @@
          cirl.js require()'s server-side for PDF generation, loaded here as a plain global (CIPRMS_STATUS_COLORS)
          so the Custom Report Builder preview's badges/swatches and the exported PDF can never disagree on
          what color a given status is. -->
-    <script src="/velzon/assets/js/shared/status-colors.js"></script>
+    <script src="/velzon/assets/js/shared/status-colors.js?v=20261121b"></script>
     <!-- Custom Report Builder — searchable Country filter (2026-09-23). Same visual language (rounded corners,
          shadow, bounded/scrollable results, hover highlight, dark-mode variant) as the Registry page's Country
          combobox, defined independently here since this is a separate template with its own CSS. -->
@@ -159,8 +159,13 @@
                             <!-- â”€â”€ REPORTS TAB â”€â”€ -->
                             <div id="content-rep">
 
-                                <!-- Report Cards -->
-                                <div class="row">
+                                <!-- Report Cards — all the same height (2026-11-20): every card fills its row's
+                                     full height and the PDF/Excel buttons (mt-auto) sit on the same bottom line. -->
+                                <style>
+                                    #content-rep .report-cards > [class*="col-"] { display: flex; margin-bottom: 1.5rem; }
+                                    #content-rep .report-cards > [class*="col-"] > .card { flex: 1 1 auto; width: 100%; margin-bottom: 0; }
+                                </style>
+                                <div class="row report-cards">
 
                                     <div class="col-xl-3 col-md-6">
                                         <div class="card card-animate h-150">
@@ -874,8 +879,7 @@
                                                 </p>
                                                 <div class="input-group mb-2">
                                                     <input type="text" class="form-control" id="ai-ask-input"
-                                                        maxlength="300"
-                                                        placeholder="e.g. How are our monthly targets progressing?">
+                                                        maxlength="300">
                                                     <button type="button" class="btn btn-primary" id="ai-ask-submit-btn">
                                                         <i class="ri-send-plane-2-line align-middle"></i> Ask</button>
                                                 </div>
@@ -1055,7 +1059,7 @@
                 search: true,
                 pagination: { limit: 15 },
                 sort: true,
-                language: { search: { placeholder: 'Search action, category, record, performed by, IP or date…' } },
+                language: { search: { placeholder: '' } }, // placeholders removed system-wide (2026-11-20)
                 style: {
                     table: { border: 'none' },
                     // 2026-09-18: background/color used to be set here as
@@ -1347,6 +1351,7 @@
             }
             if (!validateCustomReportDates()) return;
             var params = buildReportQueryParams();
+            params.set('source', 'builder'); // tells the PDF to print the applied filters (Custom Report Builder only)
             window.open('/api/reports/partnerships/' + format + '?' + params.toString(), '_blank');
         }
 
@@ -1496,8 +1501,8 @@
                 <div class="col-md-3">
                     <div class="card card-animate mb-0 bg-warning-subtle border-0">
                         <div class="card-body p-3">
-                            <h6 class="fs-12 text-uppercase text-warning fw-semibold mb-1">Expiring Soon</h6>
-                            <h3 class="mb-0 text-warning fw-bold">${sum.expiringSoonCount || 0}</h3>
+                            <h6 class="fs-12 text-uppercase text-expiring fw-semibold mb-1">Expiring Soon</h6>
+                            <h3 class="mb-0 text-expiring fw-bold">${sum.expiringSoonCount || 0}</h3>
                         </div>
                     </div>
                 </div>

@@ -210,3 +210,60 @@ html[data-bs-theme="dark"][data-sidebar="dark"] {
     });
 })();
 </script>
+<script>
+// ── 4-digit year limit (every page, every role) ─────────────────────────────
+// Browsers let <input type="date"> accept years up to 6 digits (e.g. 202626) when the input has no `max`.
+// Giving every date/month/datetime-local input a 4-digit-year max stops the year segment at 4 digits.
+// Number inputs used for a year (id/name contains "year") are cut to 4 digits as the user types.
+// A MutationObserver covers inputs that pages build later with JavaScript (modals, report builders).
+(function () {
+    var MAX_BY_TYPE = { 'date': '9999-12-31', 'month': '9999-12', 'datetime-local': '9999-12-31T23:59' };
+
+    function limitInput(el) {
+        if (!el || el.tagName !== 'INPUT') return;
+        var type = (el.getAttribute('type') || '').toLowerCase();
+        if (MAX_BY_TYPE[type] && !el.getAttribute('max')) el.setAttribute('max', MAX_BY_TYPE[type]);
+        if (type === 'number' && /year/i.test((el.id || '') + ' ' + (el.name || ''))) {
+            var cur = el.getAttribute('max');
+            if (!cur || !(Number(cur) <= 9999)) el.setAttribute('max', '9999'); // only write when needed (no observer loop)
+            if (el.dataset.yearLimit !== '1') el.dataset.yearLimit = '1';
+        }
+    }
+    function scan(root) {
+        if (!root || !root.querySelectorAll) return;
+        if (root.tagName === 'INPUT') limitInput(root);
+        var list = root.querySelectorAll('input[type="date"], input[type="month"], input[type="datetime-local"], input[type="number"]');
+        for (var i = 0; i < list.length; i++) limitInput(list[i]);
+    }
+
+    // Year number inputs: keep only the first 4 digits.
+    document.addEventListener('input', function (e) {
+        var el = e.target;
+        if (el && el.dataset && el.dataset.yearLimit === '1') {
+            var digits = String(el.value).replace(/\D/g, '');
+            if (digits.length > 4) el.value = digits.slice(0, 4);
+        }
+    }, true);
+
+    // Date inputs: if a 5+ digit year still gets in (e.g. pasted / set by script), cut it back to 4 digits.
+    document.addEventListener('change', function (e) {
+        var el = e.target;
+        if (!el || el.tagName !== 'INPUT' || !MAX_BY_TYPE[(el.type || '').toLowerCase()]) return;
+        var m = /^(\d{5,})(-.*)$/.exec(el.value || '');
+        if (m) el.value = m[1].slice(0, 4) + m[2];
+    }, true);
+
+    function start() {
+        scan(document.body);
+        new MutationObserver(function (muts) {
+            for (var i = 0; i < muts.length; i++) {
+                var mu = muts[i];
+                if (mu.type === 'attributes') { limitInput(mu.target); continue; }
+                for (var j = 0; j < mu.addedNodes.length; j++) scan(mu.addedNodes[j]);
+            }
+        }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['type', 'max'] });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+    else start();
+})();
+</script>
