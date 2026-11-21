@@ -5,7 +5,8 @@
 <head>
   <meta charset="utf-8" />
   <%- include('../partials/ui-state-init') %>
-  <title>Requests | CIPRMS-CSPC-CIRL</title>
+  <% var pageLabel = (typeof user !== 'undefined' && user && user.role === 'LAU') ? 'Monitoring' : 'Requests'; %>
+  <title><%= pageLabel %> | CIPRMS-CSPC-CIRL</title>
   <meta name="description" content="Manage Partnership Requests and Document Requests for CIPRMS CSPC-CIRL">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="shortcut icon" href="/images/cirl-logo.jpg">
@@ -444,12 +445,12 @@
                   <div
                     class="page-title-box d-sm-flex align-items-center justify-content-between bg-galaxy-transparent">
                     <h4 class="mb-sm-0">
-                      <i class="ri-handshake-line me-2 text-primary"></i>Requests
+                      <i class="ri-handshake-line me-2 text-primary"></i><%= pageLabel %>
                     </h4>
                     <div class="page-title-right d-flex align-items-center gap-2">
                       <ol class="breadcrumb m-0" id="page-breadcrumb">
                         <li class="breadcrumb-item"><a href="<%= typeof homeHref !== 'undefined' ? homeHref : '/dashboard' %>">CIPRMS</a></li>
-                        <li class="breadcrumb-item active">Requests</li>
+                        <li class="breadcrumb-item active"><%= pageLabel %></li>
                       </ol>
                     </div>
                   </div>
@@ -2016,7 +2017,7 @@
             <i class="ri-check-line me-1"></i>${r.isCollegeReport ? 'Record in Registry' : 'Approve'}</button>
         ` : ''}`;
 
-      setBreadcrumb(['Requests', 'Partnership Request', prRequestLabel(r)]);
+      setBreadcrumb([PAGE_LABEL, 'Partnership Request', prRequestLabel(r)]);
       modalInstance('pr-modal').show();
       if (IS_ADMIN) loadPRGoogleDocs(r.id);
     }
@@ -2144,6 +2145,8 @@
     // Requests, e.g. CIPRMS > Requests > Partnership Request > <institution — #id>
     // [> Draft Collaboration]. Reused via MODAL_REOPEN below: reopening pr-modal/
     // dr-modal through openPRDetail/openDRDetail already re-sets it correctly. ──
+    // LAU sees this page as "Monitoring" (read-only), everyone else as "Requests".
+    var PAGE_LABEL = <%- JSON.stringify(pageLabel) %>;
     var HOME_HREF = '<%= typeof homeHref !== "undefined" ? homeHref : "/dashboard" %>';
     function setBreadcrumb(labels) {
       var ol = document.getElementById('page-breadcrumb');
@@ -2157,7 +2160,7 @@
       });
       ol.innerHTML = html;
     }
-    function resetBreadcrumb() { setBreadcrumb(['Requests']); }
+    function resetBreadcrumb() { setBreadcrumb([PAGE_LABEL]); }
     function prRequestLabel(r) { return (r.institution || r.inst || ('Request #' + r.id)) + ' — #REQ-' + String(r.id).padStart(3, '0'); }
     function drRequestLabel(r) { return (r.institution || ('Document Request #' + r.id)) + ' — #' + r.id; }
 
@@ -2439,7 +2442,7 @@
       document.getElementById('dr-draft-note').value = '';
       drLinkedDocumentIds = [];
       renderDrLinkedChips();
-      setBreadcrumb(['Requests', 'Document Request', drRequestLabel(r), 'Draft Collaboration']);
+      setBreadcrumb([PAGE_LABEL, 'Document Request', drRequestLabel(r), 'Draft Collaboration']);
       swapToModal('dr-draft-modal', 'dr-modal');
     }
 
@@ -2582,7 +2585,7 @@
       document.getElementById('pr-lau-note').value = '';
       document.getElementById('pr-lau-status').value = '';
 
-      setBreadcrumb(['Requests', 'Partnership Request', prRequestLabel(r), 'Draft Collaboration']);
+      setBreadcrumb([PAGE_LABEL, 'Partnership Request', prRequestLabel(r), 'Draft Collaboration']);
       swapToModal('pr-draft-modal', 'pr-modal');
     }
 
@@ -2864,7 +2867,7 @@
         <a href="/api/document-requests/${id}/pdf" class="btn btn-primary">
           <i class="ri-download-2-line me-1"></i>Download Request</a>`;
 
-      setBreadcrumb(['Requests', 'Document Request', drRequestLabel(r)]);
+      setBreadcrumb([PAGE_LABEL, 'Document Request', drRequestLabel(r)]);
       modalInstance('dr-modal').show();
     }
 

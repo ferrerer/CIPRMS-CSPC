@@ -234,6 +234,13 @@ function paintNotifBadge(count) {
         badge.style.display = count > 0 ? '' : 'none';
     }
     if (countBadge) countBadge.textContent = count + ' New';
+    // Sidebar "Notifications" badge (Administrator/Staff/Personnel sidebars) — kept in step with the bell so
+    // "Mark all as read", single reads, deletes and live updates clear it without a page refresh.
+    const sideBadge = document.getElementById('sidebar-notif-badge');
+    if (sideBadge) {
+        sideBadge.textContent = count;
+        sideBadge.style.display = count > 0 ? '' : 'none';
+    }
 }
 function refreshNotifBadge() {
     return fetch('/api/notifications/unread-count', { headers: { 'X-Requested-With': 'ciprms' } })

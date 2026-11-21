@@ -310,6 +310,14 @@
                                             <option value="All">All Nature</option>
                                         </select>
                                     </div>
+                                    <!-- MOA / MOU type filter — beside Nature; works together with it (e.g. MOU + Research). -->
+                                    <div class="col-md-auto">
+                                        <select class="form-select" id="type-filter" style="width:140px;" onchange="filterDocType(this.value)">
+                                            <option value="All">All Types</option>
+                                            <option value="MOA">MOA</option>
+                                            <option value="MOU">MOU</option>
+                                        </select>
+                                    </div>
                                     <!-- Acknowledged duplicates (2026-11 duplicate-warning follow-up): review every document
                                          someone chose "Upload anyway" on despite a match — moved here from the removed
                                          left-side Type Filter card. -->
@@ -733,12 +741,31 @@
     function filterTag(tag) {
         // "Partner Activities" is a document type, not a nature: filter by type and clear the nature filter.
         if (tag === PARTNER_ACTIVITIES_OPTION) { currentType = 'Partner Activities'; currentTag = 'All'; }
-        else { currentType = 'All'; currentTag = tag || 'All'; }
+        else {
+            // Keep an MOA/MOU choice from the Type dropdown; only drop the Partner Activities type.
+            if (currentType === 'Partner Activities') currentType = 'All';
+            currentTag = tag || 'All';
+        }
+        syncTypeSelect();
         docPage = 1;
         const sel = document.getElementById('nature-filter');
         const want = currentType === 'Partner Activities' ? PARTNER_ACTIVITIES_OPTION : currentTag;
         if (sel && sel.value !== want) sel.value = want;
         loadPage();
+    }
+
+    // MOA / MOU Type dropdown. Combines with the Nature dropdown; picking MOA/MOU clears a
+    // "Partner Activities" choice there (that one is a document type too, so the two can't both apply).
+    function filterDocType(type) {
+        currentType = (type === 'MOA' || type === 'MOU') ? type : 'All';
+        const sel = document.getElementById('nature-filter');
+        if (sel && sel.value === PARTNER_ACTIVITIES_OPTION) sel.value = 'All';
+        docPage = 1;
+        loadPage();
+    }
+    function syncTypeSelect() {
+        const t = document.getElementById('type-filter');
+        if (t) t.value = (currentType === 'MOA' || currentType === 'MOU') ? currentType : 'All';
     }
 
     // Nature of Partnership filter pills — built from the ACTUAL nature values present on real MOA/MOU records

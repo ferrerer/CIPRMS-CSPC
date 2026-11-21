@@ -4303,7 +4303,8 @@ app.get('/api/documents', requireUploader, async (req, res) => {
     // Nature of Partnership tag — same rule as the client filter: only ever narrows MOA/MOU records;
     // "Other" means an MOA/MOU with no confidently-extracted nature (missing, null, or empty string).
     if (req.query.tag && req.query.tag !== 'All') {
-      filter.type = { $in: ['MOA', 'MOU'] };
+      // A specific MOA or MOU picked in the Type dropdown narrows further; anything else → both.
+      filter.type = (req.query.type === 'MOA' || req.query.type === 'MOU') ? req.query.type : { $in: ['MOA', 'MOU'] };
       filter.nature = req.query.tag === 'Other' ? { $in: [null, ''] } : req.query.tag;
     }
     const search = (req.query.search || '').trim();

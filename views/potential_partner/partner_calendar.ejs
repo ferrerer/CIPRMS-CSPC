@@ -46,20 +46,6 @@
                                 <div id="upcoming-event-list"></div>
                             </div>
                         </div>
-
-                        <div class="card">
-                            <div class="card-body bg-info-subtle">
-                                <div class="d-flex">
-                                    <div class="flex-shrink-0">
-                                        <i class="ri-calendar-check-line text-info fs-3"></i>
-                                    </div>
-                                    <div class="flex-grow-1 ms-3">
-                                        <h6 class="fs-15">Partnership Calendar</h6>
-                                        <p class="text-muted mb-0">Scheduled meetings, partnership events, submission deadlines, and approved activities. Click any date's events to view details. This calendar is view-only for partner accounts.</p>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
                     </div><!-- end col-xl-3 -->
 
                     <!-- Main calendar -->
@@ -206,6 +192,30 @@
             if (ev) { deepLinkOpened = true; showEvent(ev); }
         }
 
+        // ── Fit on one screen (desktop, two-column layout ≥1200px) ──
+        // The calendar gets a fixed height = whatever is left of the window below the card's top edge, minus
+        // the footer, the card's bottom margin and its padding — so the whole page (calendar + Upcoming
+        // Events beside it, which stretches to the same height) fits without page scrolling. Below 1200px
+        // the columns stack and the calendar keeps its normal aspect-ratio sizing.
+        var FIT_MIN = 420; // never squash the month grid smaller than this; the page scrolls instead
+        function fitHeight() {
+            if (window.innerWidth < 1200) return null;
+            var card = document.querySelector('.cal-card');
+            var footer = document.querySelector('.footer');
+            var body = card.querySelector('.card-body');
+            var cs = getComputedStyle(body);
+            var top = card.getBoundingClientRect().top + window.scrollY;
+            var footerH = footer ? footer.offsetHeight : 60;
+            var margin = parseFloat(getComputedStyle(card).marginBottom) || 0;
+            var pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+            return Math.max(FIT_MIN, Math.floor(window.innerHeight - top - footerH - margin - pad - 2));
+        }
+        function applyFit() {
+            var h = fitHeight();
+            if (h) { cal.setOption('height', h); }
+            else { cal.setOption('height', 'auto'); cal.setOption('aspectRatio', calendarAspect(window.innerWidth)); }
+        }
+
         var cal = new FullCalendar.Calendar(calEl, {
             timeZone: 'local',
             headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listMonth' },
@@ -214,7 +224,7 @@
             editable: false,
             selectable: false,
             navLinks: false,
-            dayMaxEvents: 3,
+            dayMaxEvents: true,   // as many as fit in the (window-sized) day cell, then "+N more"
             events: '/api/calendarevents',
             eventDataTransform: function (doc) {
                 return {
@@ -229,8 +239,8 @@
             },
             windowResize: function () {
                 var w = window.innerWidth;
-                cal.setOption('aspectRatio', calendarAspect(w));
                 cal.changeView(w < 768 ? 'listMonth' : w < 1200 ? 'timeGridWeek' : 'dayGridMonth');
+                applyFit();
             },
             datesSet: function (info) { calendarCardFill(info); },
             eventDidMount: function () { upcomingEvents(); },
@@ -239,6 +249,7 @@
             eventsSet: function () { openFromQuery(); }   // see administrator/calendar.ejs: loading(false) can fire before the events are stored
         });
         cal.render();
+        applyFit();
         calendarLive(cal, function () { return 0; });
     });
 </script>
