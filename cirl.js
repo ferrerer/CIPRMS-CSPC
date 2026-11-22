@@ -11260,7 +11260,9 @@ app.post('/api/ai-insights', aiInsightsLimiter, requireStaffAccess, async (req, 
       generate: req.body.generate, forceRefresh: req.body.forceRefresh, targetsWithProgress
     });
     const outcome = result.aiBlocked ? 'blocked' : (result.error ? 'error' : (result.ai ? 'success' : 'cache_miss'));
-    await logActivity(db, req.session.user, 'AI_INSIGHT_REQUEST', `AI strategic insights requested (${result.cacheStatus || 'n/a'})`, {
+    // Only a real request (Generate / Refresh) is audited. The Reports page's automatic cache check on every
+    // load never reaches the AI and used to add an audit entry each time, flooding the Audit Trail.
+    if (req.body.generate || req.body.forceRefresh) await logActivity(db, req.session.user, 'AI_INSIGHT_REQUEST', `AI strategic insights requested (${result.cacheStatus || 'n/a'})`, {
       category: 'AI_INSIGHT', status: outcome,
       details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
     });
@@ -11281,7 +11283,9 @@ app.post('/api/ai-insights/executive-briefing', aiInsightsLimiter, requireStaffA
       scope: 'briefing', generate: req.body.generate, forceRefresh: req.body.forceRefresh, targetsWithProgress
     });
     const outcome = result.aiBlocked ? 'blocked' : (result.error ? 'error' : (result.ai ? 'success' : 'cache_miss'));
-    await logActivity(db, req.session.user, 'AI_BRIEFING_REQUEST', `Executive briefing requested (${result.cacheStatus || 'n/a'})`, {
+    // Only a real request (Generate Briefing / Refresh) is audited. The Dashboard's automatic cache check on
+    // every page load never reaches the AI and used to add an audit entry each time, flooding the Audit Trail.
+    if (req.body.generate || req.body.forceRefresh) await logActivity(db, req.session.user, 'AI_BRIEFING_REQUEST', `Executive briefing requested (${result.cacheStatus || 'n/a'})`, {
       category: 'AI_INSIGHT', status: outcome,
       details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
     });
