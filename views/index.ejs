@@ -231,6 +231,13 @@
                                 </div>
                                 <% } %>
 
+                                <% if (typeof timedOut !== 'undefined' && timedOut) { %>
+                                <div class="alert alert-warning alert-dismissible alert-label-icon rounded-label fade show mt-3" role="alert">
+                                    <i class="ri-time-line label-icon"></i><strong>Signed out</strong> – You were signed out after 10 minutes of inactivity. Please sign in again.
+                                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                                </div>
+                                <% } %>
+
                                 <% if (typeof error !== 'undefined' && error) { %>
                                 <div class="alert alert-danger alert-dismissible alert-label-icon rounded-label fade show mt-3" role="alert">
                                     <i class="ri-error-warning-line label-icon"></i><strong>Error</strong> – <%= error %>

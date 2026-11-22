@@ -122,7 +122,10 @@ app.disable('x-powered-by');
 
 // ── PASSWORD SECURITY HELPERS ─────────────────────────────────────────────────
 const BCRYPT_SALT_ROUNDS = 12;
-const SESSION_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
+// 10 minutes without a request ends the session (server-side backstop, e.g. a closed tab). The page itself signs
+// the user out after 10 minutes without mouse/keyboard/scroll/touch (public/js/ciprms-idle-logout.js) and, while they
+// ARE active, pings GET /api/session/ping so the session never expires mid-work.
+const SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 function hashPassword(plain) {
   return bcrypt.hash(plain, BCRYPT_SALT_ROUNDS);
@@ -833,7 +836,9 @@ app.get('/', async (req, res) => {
     error: lockedUntil ? loginLockoutService.lockoutMessage(Math.ceil((new Date(lockedUntil).getTime() - Date.now()) / 1000)) : undefined,
     lockedUntil,
     // set by the Settings pages after a password change, which ends the session
-    notice: req.query.passwordChanged === '1' ? 'Your password was changed. Please log in again with your new password.' : undefined
+    notice: req.query.passwordChanged === '1' ? 'Your password was changed. Please log in again with your new password.' : undefined,
+    // set by public/js/ciprms-idle-logout.js after an automatic sign-out
+    timedOut: req.query.timeout === '1'
   });
 });
 
@@ -1307,6 +1312,11 @@ app.post('/logout', (req, res) => {
     res.json({ success: true });
   });
 });
+
+// ── SESSION KEEP-ALIVE ─────────────────────────────────────────────────────────
+// Sent by public/js/ciprms-idle-logout.js only while the person is actively using the page; touching the session
+// (rolling cookie) resets its 10-minute idle expiry. No body, no side effects.
+app.get('/api/session/ping', requireAuth, (req, res) => res.status(204).end());
 
 // ── SESSION USER API ──────────────────────────────────────────────────────────
 app.get('/api/me', requireAuth, (req, res) => {
