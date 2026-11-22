@@ -13,6 +13,15 @@
   <link href="/velzon/assets/css/custom.min.css" rel="stylesheet" />
   <link href="/velzon/assets/css/ciprms-bridge.css?v=20260925d" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+  /* Fields filled in during account setup (Contact, Department, Position, Institution) are read-only here:
+     same grey background as the disabled Email Address field so they clearly look locked. */
+  #s-contact[readonly], #s-dept[readonly], #s-position[readonly], #s-institution[readonly] { background-color: var(--vz-tertiary-bg); cursor: not-allowed; }
+  /* Merged profile + settings card: divider between the two columns (right border on wide screens,
+     bottom border when they stack). */
+  .settings-profile-col { border-bottom: 1px solid var(--vz-border-color, #e9ebec); }
+  @media (min-width: 992px) { .settings-profile-col { border-bottom: 0; border-right: 1px solid var(--vz-border-color, #e9ebec); } }
+</style>
 </head>
 <body>
 <div id="layout-wrapper">
@@ -41,9 +50,12 @@
 
         <div class="row">
 
-          <!-- Left: Profile Card -->
-          <div class="col-xxl-3 col-lg-4">
+          <!-- Profile + settings merged into ONE card: profile on the left (divider line), tabs/form on the right. -->
+          <div class="col-12">
             <div class="card">
+             <div class="row g-0">
+              <!-- Left: Profile -->
+              <div class="col-xxl-3 col-lg-4 settings-profile-col">
               <div class="card-body p-4 text-center">
                 <div class="position-relative d-inline-block mb-3" style="cursor:pointer;" onclick="document.getElementById('photo-input').click()" title="Change photo">
                   <div id="hero-avatar" class="avatar-xl mx-auto rounded-circle d-flex align-items-center justify-content-center fs-1 fw-bold text-white"
@@ -74,12 +86,10 @@
                   </div>
                 </div>
               </div>
-            </div>
-          </div>
+              </div>
 
-          <!-- Right: Tab Panel -->
-          <div class="col-xxl-9 col-lg-8">
-            <div class="card">
+              <!-- Right: Tab Panel -->
+              <div class="col-xxl-9 col-lg-8">
               <div class="card-header border-0">
                 <ul class="nav nav-tabs-custom rounded card-header-tabs border-bottom-0" role="tablist">
                   <li class="nav-item" role="presentation">
@@ -138,7 +148,9 @@
 
                 </div>
               </div>
-            </div>
+              </div><!-- right col -->
+             </div><!-- row g-0 -->
+            </div><!-- card -->
           </div>
 
         </div><!-- row -->

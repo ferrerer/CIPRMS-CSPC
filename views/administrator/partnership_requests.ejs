@@ -3430,12 +3430,28 @@
                   '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +
                   (r.reviewRemark && r.status === 'Returned for Revision' ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
                   '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(from you)</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.') +
-                  '<div class="input-group input-group-sm mb-3">' +
-                      '<input type="file" class="form-control" id="cdr-ref-file" accept=".pdf,.jpg,.jpeg,.png,.docx">' +
-                      '<button class="btn btn-outline-secondary" type="button" onclick="cdrAddReference(' + r.id + ')">Attach</button>' +
+                  // Same drag-and-drop uploader as the other document uploads (CIPRMS.initDropzone, set up below
+                  // once this markup is on the page), then an Attach button like the Draft "Upload" button.
+                  '<div class="mb-3">' +
+                      '<div id="cdr-ref-dropzone-wrap" class="mb-2">' +
+                          '<input type="file" class="form-control" id="cdr-ref-file" accept=".pdf,.jpg,.jpeg,.png,.docx">' +
+                      '</div>' +
+                      '<button type="button" class="btn btn-primary btn-sm px-3 fs-13" id="cdr-ref-attach-btn" onclick="cdrAddReference(' + r.id + ')">' +
+                          '<i class="ri-attachment-2 me-1"></i>Attach</button>' +
                   '</div>' +
                   '<p class="mb-1"><strong>Submitted Documents</strong> <span class="text-muted">(from the Dean)</span></p>' + cdrDocListHtml(r.submittedDocuments, 'Nothing submitted yet.') +
                   '<p class="mb-1 mt-3"><strong>History</strong></p>' + cdrHistoryHtml(r.statusHistory);
+
+              if (window.CIPRMS && CIPRMS.initDropzone) {
+                  window.cdrRefDropzone = CIPRMS.initDropzone({
+                      container: '#cdr-ref-dropzone-wrap',
+                      input: '#cdr-ref-file',
+                      acceptedExtensions: ['.pdf', '.jpg', '.jpeg', '.png', '.docx'],
+                      compact: true,
+                      title: 'Upload Reference Document',
+                      desc: 'PDF, JPG, PNG, or DOCX · Max 10MB'
+                  });
+              }
 
               var footer = document.getElementById('cdr-d-footer');
               if (r.status === 'Submitted') {

@@ -117,8 +117,12 @@
       border: 1px solid #adb5bd; border-radius: var(--vz-border-radius-sm, .2rem); background: #e9ecef; }
     .aud-clear-link:hover, .aud-clear-link:focus { color: #000; text-decoration: none; background: #dee2e6; border-color: #868e96; }
     [data-bs-theme="dark"] .aud-clear-link { color: #fff; background: #3a4252; border-color: #5c6577; }
-    .aud-filter-search { flex: 1 1 150px; min-width: 150px; max-width: 280px; margin-left: auto; display: flex; align-items: center; gap: .4rem; }
+    .aud-filter-search { flex: 1 1 260px; min-width: 260px; max-width: 420px; margin-left: auto; display: flex; align-items: center; gap: .4rem; }
     .aud-filter-search > .search-box { flex: 1 1 auto; min-width: 0; }
+    /* Bigger Audit Trail search box: normal-size input (taller, 14px text) with a matching icon. */
+    .aud-filter-search .search-box .form-control { font-size: .875rem; padding-top: .45rem; padding-bottom: .45rem; padding-left: 2.2rem; }
+    .aud-filter-search .search-box .search-icon { font-size: 1rem; }
+    .aud-filter-search > label { font-size: .875rem !important; font-weight: 500; }
     @media (max-width: 575.98px) { .aud-filter-search { flex: 1 1 100%; max-width: none; margin-left: 0; } }
 </style>
 </head>
@@ -766,7 +770,7 @@
                                                     <div class="aud-filter-search">
                                                         <label class="form-label fs-12 mb-0" for="audit-filter-q">Search</label>
                                                         <div class="search-box">
-                                                            <input type="text" id="audit-filter-q" class="form-control form-control-sm" oninput="applyAuditFilters()">
+                                                            <input type="text" id="audit-filter-q" class="form-control" oninput="applyAuditFilters()">
                                                             <i class="ri-search-line search-icon"></i>
                                                         </div>
                                                     </div>
@@ -1111,8 +1115,8 @@
                     // header instead follows the real stylesheet rules
                     // (assets/libs/gridjs/theme/mermaid.min.css for light,
                     // assets/css/ciprms-bridge.css's dark-mode block for dark).
-                    th: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: '700', border: 'none', padding: '10px 10px' },
-                    td: { border: 'none', padding: '10px 10px', fontSize: '13px' }
+                    th: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: '700', border: '1px solid var(--vz-border-color)', padding: '10px 10px' },
+                    td: { border: '1px solid var(--vz-border-color)', padding: '10px 10px', fontSize: '13px' }   // grid lines on every column, same as Monitoring
                 }
             }).render(document.getElementById('audit-grid'));
         }

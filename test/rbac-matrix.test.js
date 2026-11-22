@@ -13,16 +13,23 @@ const COLUMN_ROLE = { admin: 'Administrator', college: 'Auth. Personnel', partne
 let db, agents, matrix;
 const createdEventIds = [];
 
-const levelOf = (cellHtml) => /bg-success-subtle/.test(cellHtml) ? 'full' : /bg-danger-subtle/.test(cellHtml) ? 'none' : /bg-info-subtle/.test(cellHtml) ? 'scoped' : '?';
+const levelOf = (cellHtml) => /rbac-full/.test(cellHtml) ? 'full' : /rbac-none/.test(cellHtml) ? 'none' : /rbac-scoped/.test(cellHtml) ? 'scoped' : '?';
 const textOf = (html) => html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&ldquo;|&rdquo;/g, '"').replace(/\s+/g, ' ').trim();
 
 function parseMatrix(html) {
   const section = html.slice(html.indexOf('Role Permissions Matrix (RBAC)'));
   const rows = {};
-  const re = /<tr>\s*<td class="fw-medium">([\s\S]*?)<\/td>\s*<td class="text-center">([\s\S]*?)<\/td>\s*<td class="text-center">([\s\S]*?)<\/td>\s*<td class="text-center">([\s\S]*?)<\/td>\s*<td class="text-center">([\s\S]*?)<\/td>\s*<td class="text-muted fs-12">([\s\S]*?)<\/td>\s*<\/tr>/g;
+  // 2026-11 layout: each role cell is <td class="rbac-cell rbac-full|rbac-scoped|rbac-none" data-role data-level>
+  // holding an icon, the access text (.rbac-text) and a level word (.rbac-level). Columns ordered
+  // Administrator, College Dean, Partner, CIRL Staff, LAU, then Notes. Full cells read just "Full".
+  const cell = /<td class="(rbac-cell [^"]*)"[^>]*>([\s\S]*?)<\/td>\s*/.source;
+  const re = new RegExp(/<tr[^>]*>\s*<td class="rbac-feature">([\s\S]*?)<\/td>\s*/.source + cell + cell + cell + cell + cell
+    + /<td class="rbac-note">([\s\S]*?)<\/td>\s*<\/tr>/.source, 'g');
+  const cellText = (html) => { const t = /<span class="rbac-text">([\s\S]*?)<\/span>/.exec(html); return textOf(t ? t[1] : html); };
   let m;
   while ((m = re.exec(section))) {
-    rows[textOf(m[1])] = { admin: { level: levelOf(m[2]), text: textOf(m[2]) }, college: { level: levelOf(m[3]), text: textOf(m[3]) }, partner: { level: levelOf(m[4]), text: textOf(m[4]) }, staff: { level: levelOf(m[5]), text: textOf(m[5]) }, note: textOf(m[6]) };
+    const c = (k) => ({ level: levelOf(m[k]), text: cellText(m[k + 1]) });
+    rows[textOf(m[1])] = { admin: c(2), college: c(4), partner: c(6), staff: c(8), lau: c(10), note: textOf(m[12]) };
   }
   return rows;
 }
@@ -71,7 +78,7 @@ describe('the matrix as rendered', () => {
   });
 
   test('the specific wording for the changes since the last audit', () => {
-    expect(matrix['Calendar'].staff).toEqual({ level: 'full', text: 'Full (create / edit / delete)' });
+    expect(matrix['Calendar'].staff).toEqual({ level: 'full', text: 'Full' });
     expect(matrix['Calendar'].college.text).toBe('View Only');
     expect(matrix['Meetings (invitations & attendance)'].partner.text).toBe('Join When Invited');
     expect(matrix['Dashboard'].college.level).toBe('none');

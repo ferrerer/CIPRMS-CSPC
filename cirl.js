@@ -8061,9 +8061,12 @@ app.post('/api/users', requireStaffAccess, async (req, res) => {
       icon: 'ri-user-star-line',
       color: 'primary',
       title: 'Welcome to CIPRMS',
-      desc: `Hello ${entry.name}, your CIPRMS account has been created with the role "${displayRoleName(entry.role)}". Sign in `
-        + `with Google using this e-mail address (${entry.email}) to get started. If you don't have Google `
-        + `access for this address, or run into trouble signing in, please contact the CIRL office for assistance.`,
+      // Says who set the account up (the signed-in Administrator / CIRL Staff creating it) and points at the
+      // clickable CIPRMS web address printed right under this text (showSystemUrl below).
+      desc: `Hello ${entry.name}, the ${req.session.user && req.session.user.role === 'Administrator' ? 'Administrator' : displayRoleName((req.session.user && req.session.user.role) || 'Administrator')} `
+        + `has finished creating your CIPRMS account with the role "${displayRoleName(entry.role)}". You can now access `
+        + `CIPRMS by clicking the web address below, then sign in with Google using this e-mail address (${entry.email}). `
+        + `If you don't have Google access for this address, or run into trouble signing in, please contact the CIRL office for assistance.`,
       link: '/activate',
       showSystemUrl: true   // the e-mail also prints the CIPRMS web address as visible text (APP_BASE_URL)
     });

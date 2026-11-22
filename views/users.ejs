@@ -13,6 +13,30 @@
     <link href="/velzon/assets/css/custom.min.css" rel="stylesheet" />
     <link href="/velzon/assets/css/ciprms-bridge.css?v=20260925d" rel="stylesheet" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<style>
+    /* Role Permissions Matrix (RBAC): fits the card (no sideways scrolling) so every role column is visible
+       at once. Each cell is tinted by its access level so a role's column reads at a glance:
+       green = Full, blue = Scoped, red = No Access. Theme-aware (Bootstrap subtle colors). */
+    .rbac-table { table-layout: fixed; width: 100%; }
+    .rbac-table th, .rbac-table td { white-space: normal; overflow-wrap: break-word; vertical-align: middle; }
+    .rbac-table td.rbac-feature { font-weight: 600; font-size: .85rem; }
+    .rbac-table td.rbac-note { font-size: .75rem; line-height: 1.4; color: var(--vz-secondary-color, #878a99); }
+    .rbac-cell { text-align: center; padding: .55rem .4rem !important; font-size: .76rem; line-height: 1.3; font-weight: 500; }
+    /* Plain cells (no fill): a colored status icon + the access text in the normal body color. The level
+       word under the text (Full / Scoped / No Access) spells it out, so color is never the only signal. */
+    .rbac-cell i { display: block; font-size: 1.35rem; line-height: 1; margin-bottom: .25rem; }
+    .rbac-cell .rbac-text { display: block; color: var(--vz-body-color, #212529); }
+    .rbac-cell i { cursor: help; }
+    .rbac-full i   { color: var(--vz-success, #0ab39c); }
+    .rbac-scoped i { color: var(--vz-info, #299cdb); }
+    .rbac-none i   { color: var(--vz-danger, #f06548); }
+    .rbac-legend-swatch.rbac-full, .rbac-legend-swatch.rbac-scoped, .rbac-legend-swatch.rbac-none { border: 1px solid var(--vz-border-color, #e9ebec); font-size: 1.35rem; }
+    .rbac-table tbody tr:hover > td { background-color: transparent !important; --vz-table-accent-bg: transparent; box-shadow: none !important; }
+    .rbac-legend { display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: flex-start; }
+    .rbac-legend-item { display: flex; align-items: flex-start; gap: .6rem; max-width: 360px; }
+    .rbac-legend-swatch { flex: 0 0 auto; width: 2rem; height: 2rem; border-radius: .35rem; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
+    @media (max-width: 991.98px) { .rbac-table { min-width: 860px; } }   /* small screens: scroll rather than crush */
+</style>
 </head>
 <body>
 <div id="layout-wrapper">
@@ -91,9 +115,8 @@
                                         <tbody id="usr-tbody"></tbody>
                                     </table>
                                 </div>
-                                <!-- Pagination Container -->
-                                <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 px-3">
-                                    <div id="usr-page-size"></div>
+                                <!-- Previous / Next only (10 per page) — same as the other pages -->
+                                <div class="d-flex justify-content-end px-3">
                                     <div id="usr-pagination" class="py-3"></div>
                                 </div>
                             </div>
@@ -107,20 +130,23 @@
                         <div class="card">
                             <div class="card-header">
                                 <h4 class="card-title mb-0"><i class="ri-lock-2-line me-2 text-primary"></i>Role Permissions Matrix (RBAC)</h4>
-                                <p class="text-muted fs-13 mb-0 mt-1">What each role can do, taken from the page and API gating <code>cirl.js</code> actually enforces &mdash; re-audited 2026-09-20 against every page route and API route, not carried over from earlier documentation. This table only describes the permissions; it does not grant or change any.</p>
+                                <!-- Plain-language summary for users and presentation panels. -->
+                                <p class="text-muted fs-13 mb-0 mt-1">What each user role can see and do in CIPRMS. Access is enforced by the system &mdash; a user cannot open a feature outside their role. This table is for reference only; it does not change anyone&rsquo;s access.</p>
                             </div>
                             <div class="card-body p-0">
                                 <div class="table-responsive">
-                                    <table class="table table-bordered table-centered align-middle mb-0">
+                                    <table class="table table-bordered align-middle mb-0 rbac-table">
+                                        <colgroup><col style="width:16%"><col style="width:11.5%"><col style="width:11.5%"><col style="width:11.5%"><col style="width:11.5%"><col style="width:11.5%"><col style="width:26.5%"></colgroup>
                                         <thead class="text-muted bg-light-subtle">
                                             <tr>
                                                 <th>Feature</th>
                                                 <th class="text-center"><i class="ri-shield-star-line me-1"></i>Administrator</th>
                                                 <th class="text-center"><i class="ri-user-star-line me-1"></i>College Dean</th>
-                                                <th class="text-center"><i class="ri-handshake-line me-1"></i>Partner</th>
+                                                <!-- ri-building-4-line: ri-handshake-line is not in this project's icon set, so Partner had no icon -->
+                                                <th class="text-center"><i class="ri-building-4-line me-1"></i>Partner</th>
                                                 <th class="text-center"><i class="ri-briefcase-line me-1"></i>CIRL Staff</th>
                                                 <th class="text-center"><i class="ri-eye-line me-1"></i>LAU</th>
-                                                <th style="min-width:280px;">Notes</th>
+                                                <th>Notes</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -166,55 +192,75 @@
                                                    N = function (t) { return { t: t || 'No', l: 'none' }; }; %>
                                             <% var perms = [
                                                 { feature: 'Dashboard', admin: F('Full'), college: N(), partner: N(), staff: F('Full'), lau: N(),
-                                                  note: 'College Dean, Partner, and LAU have no Dashboard; they land on Monitoring.' },
+                                                  note: 'Summary charts and figures. College Deans, Partners and LAU go straight to their Monitoring page instead.' },
                                                 { feature: 'Calendar', admin: F('Full (create / edit / delete)'), college: S('View Only'), partner: S('View Only'), staff: F('Full (create / edit / delete)'), lau: N(),
-                                                  note: 'Only Administrator and CIRL Staff manage events. College Dean/Partner see just the events that are public or name them; Administrator sees all. LAU has no Calendar access.' },
+                                                  note: 'Administrators and CIRL Staff create and manage events. College Deans and Partners see only the events shared with them.' },
                                                 { feature: 'Meetings (invitations &amp; attendance)', admin: F('Full (invite, see who joined)'), college: S('Join When Invited'), partner: S('Join When Invited'), staff: F('Full (invite, see who joined)'), lau: N(),
-                                                  note: 'Invitations are e-mailed by Google Calendar once it is connected. Join opens at the meeting start and is checked on the server, which records the join time. LAU has no Calendar access.' },
+                                                  note: 'Invited users receive an e-mail invitation and can join the online meeting once it starts. The system records who attended.' },
                                                 { feature: 'Monitoring', admin: F('Full'), college: S('Personal Records Only'), partner: S('Personal Records Only'), staff: F('Full'), lau: S('View Only — All Requests'),
-                                                  note: 'Administrator and CIRL Staff: partnership overview and registry. College Dean and Partner: only their own submitted requests. LAU: every submitter\'s requests, read-only.' },
+                                                  note: 'Administrators and CIRL Staff see every partnership. College Deans and Partners see only their own requests. LAU sees all partnership requests but cannot change them.' },
                                                 { feature: 'Registry (inside Monitoring)', admin: F('Full (CRUD)'), college: N(), partner: N(), staff: F('Full (CRUD)'), lau: N(),
-                                                  note: 'Add, edit, renew and delete partnerships. LAU\'s monitoring is Partnership Requests only, not the Partnerships registry.' },
+                                                  note: 'The official list of partnerships: add, edit, renew and remove partnership records.' },
                                                 { feature: 'Document Library', admin: S('Personal Uploads + Review Attachments'), college: N(), partner: N(), staff: S('Personal Uploads + Review Attachments'), lau: S('Request Attachments Only'),
-                                                  note: 'The library lists a user\'s own uploads; reviewers can also open any request attachment. College Dean and Partner have no library page, but files they submit are still archived for review. LAU has no library page either, but can open any Partnership Request\'s own supporting documents from its detail view.' },
+                                                  note: 'Stores MOA/MOU and supporting files. Reviewers can open the attachments of any request. LAU can open only the files attached to partnership requests.' },
                                                 { feature: 'User Management', admin: F('Full'), college: N(), partner: N(), staff: S('Full (except Administrator accounts)'), lau: N(),
-                                                  note: 'CIRL Staff cannot create, edit or delete an Administrator account, or grant the Administrator role.' },
+                                                  note: 'Create, edit and deactivate user accounts. CIRL Staff cannot manage Administrator accounts.' },
                                                 { feature: 'Partnership Requests', admin: F('Full (Review / Approve / Reject)'), college: N(), partner: S('Submit Only'), staff: F('Full (Review / Approve / Reject)'), lau: S('View Only — All Requests'),
-                                                  note: 'Partners submit and track their own. College Dean has no Partnership Request page (the submit API itself is still open to the role). LAU reuses the exact same Admin/Staff page, fully read-only — no submit, edit, approve, reject, or delete.' },
+                                                  note: 'Partners submit and track their requests. Administrators and CIRL Staff review, approve or reject them. LAU can view them only.' },
                                                 { feature: 'Document Requests', admin: F('Full (Review / Fulfill / Reject)'), college: S('Submit Only'), partner: S('Submit MOA/MOU Only'), staff: F('Full (Review / Fulfill / Reject)'), lau: N(),
-                                                  note: 'Partners use the &ldquo;Submission Of MOA/MOU&rdquo; form. Reviewers get the printable form and PDF. LAU\'s monitoring scope is Partnership Requests only — the Document Requests tab on that shared page is hidden for this role.' },
+                                                  note: 'College Deans request documents and Partners submit their MOA/MOU. Administrators and CIRL Staff process each request.' },
                                                 { feature: 'Notifications', admin: S('Personal Only'), college: S('Personal Only'), partner: S('Bell Only (Personal)'), staff: S('Personal Only'), lau: N(),
-                                                  note: 'Always the user\'s own notifications. Partner has the header bell but no Notifications page. LAU has neither in this release.' },
+                                                  note: 'Each user sees only their own alerts. Partners receive them through the bell icon at the top of the page.' },
                                                 { feature: 'Reports &amp; Analytics', admin: F('Full'), college: N(), partner: N(), staff: S('Full, Personal Audit Trail Only'), lau: N(),
-                                                  note: 'Audit Trail: Administrator sees every record; CIRL Staff sees only their own actions.' },
+                                                  note: 'Reports, charts and the audit trail of system activity. CIRL Staff see only their own activity in the audit trail.' },
                                                 { feature: 'Settings (personal account)', admin: F('Full'), college: F('Full'), partner: F('Full'), staff: F('Full'), lau: N('No'),
-                                                  note: 'Personal details (Partner: organization profile) and password. LAU has no Settings page in this release — out of scope for the initial read-only monitoring role.' },
+                                                  note: 'Update personal details (Partners: their organization profile).' },
                                                 { feature: 'Google Calendar connection (Admin Settings)', admin: F('Full'), college: N(), partner: N(), staff: N(), lau: N(),
-                                                  note: 'Only Administrator connects, checks or disconnects the organization\'s Google account.' }
+                                                  note: 'Only the Administrator connects the office Google account used to send meeting invitations.' }
                                             ]; %>
-                                            <% function permBadge(c){
-                                                if (c.l === 'full') return '<span class="badge bg-success-subtle text-success"><i class="ri-check-double-line me-1"></i>' + c.t + '</span>';
-                                                if (c.l === 'none') return '<span class="badge bg-danger-subtle text-danger"><i class="ri-close-line me-1"></i>' + c.t + '</span>';
-                                                return '<span class="badge bg-info-subtle text-info"><i class="ri-shield-check-line me-1"></i>' + c.t + '</span>';
+                                            <% /* Plain cell: colored icon + access text + level word. QA hooks on every cell:
+                                                  data-role / data-level (full | scoped | none) and the row's data-feature. */
+                                               function permCell(c, role){
+                                                var cls = c.l === 'full' ? 'rbac-full' : c.l === 'none' ? 'rbac-none' : 'rbac-scoped';
+                                                var icon = c.l === 'full' ? 'ri-checkbox-circle-fill' : c.l === 'none' ? 'ri-close-circle-fill' : 'ri-indeterminate-circle-fill';
+                                                var lvl = c.l === 'full' ? 'Full access' : c.l === 'none' ? 'No access' : 'Scoped access';
+                                                return '<td class="rbac-cell ' + cls + '" data-role="' + role + '" data-level="' + c.l + '">'
+                                                    // hovering the check / line / X shows the access level
+                                                    + '<i class="' + icon + '" title="' + lvl + '" aria-label="' + lvl + '"></i>'
+                                                    // Full shows just "Full"; No Access just "No Access"; Scoped shows what the limit is
+                                                    + '<span class="rbac-text">' + (c.l === 'full' ? 'Full' : c.l === 'none' ? 'No Access' : c.t) + '</span></td>';
                                             } %>
                                             <% perms.forEach(function(p){ %>
-                                            <tr>
-                                                <td class="fw-medium"><%- p.feature %></td>
-                                                <td class="text-center"><%- permBadge(p.admin) %></td>
-                                                <td class="text-center"><%- permBadge(p.college) %></td>
-                                                <td class="text-center"><%- permBadge(p.partner) %></td>
-                                                <td class="text-center"><%- permBadge(p.staff) %></td>
-                                                <td class="text-center"><%- permBadge(p.lau) %></td>
-                                                <td class="text-muted fs-12"><%- p.note %></td>
+                                            <tr data-feature="<%= p.feature.replace(/&amp;/g, '&') %>">
+                                                <td class="rbac-feature"><%- p.feature %></td>
+                                                <%- permCell(p.admin, 'Administrator') %>
+                                                <%- permCell(p.college, 'College Dean') %>
+                                                <%- permCell(p.partner, 'Partner') %>
+                                                <%- permCell(p.staff, 'CIRL Staff') %>
+                                                <%- permCell(p.lau, 'LAU') %>
+                                                <td class="rbac-note"><%- p.note %></td>
                                             </tr>
                                             <% }); %>
                                         </tbody>
                                     </table>
                                 </div>
+                                <!-- Legend -->
                                 <div class="p-3 border-top">
-                                    <span class="badge bg-success-subtle text-success me-2"><i class="ri-check-double-line me-1"></i>Full</span>
-                                    <span class="badge bg-info-subtle text-info me-2"><i class="ri-shield-check-line me-1"></i>Scoped (personal records / view only / submit only / join only)</span>
-                                    <span class="badge bg-danger-subtle text-danger"><i class="ri-close-line me-1"></i>No Access</span>
+                                    <h6 class="fs-13 text-uppercase text-muted mb-3"><i class="ri-information-line me-1"></i>Legend</h6>
+                                    <div class="rbac-legend">
+                                        <div class="rbac-legend-item">
+                                            <span class="rbac-legend-swatch rbac-full"><i class="ri-checkbox-circle-fill"></i></span>
+                                            <div><div class="fw-semibold fs-13">Full Access</div><div class="text-muted fs-12">Can use every part of the feature (view, create, edit, delete, review, approve).</div></div>
+                                        </div>
+                                        <div class="rbac-legend-item">
+                                            <span class="rbac-legend-swatch rbac-scoped"><i class="ri-indeterminate-circle-fill"></i></span>
+                                            <div><div class="fw-semibold fs-13">Scoped Access</div><div class="text-muted fs-12">Limited use only &mdash; personal records, view only, submit only, or join only. The cell text says which.</div></div>
+                                        </div>
+                                        <div class="rbac-legend-item">
+                                            <span class="rbac-legend-swatch rbac-none"><i class="ri-close-circle-fill"></i></span>
+                                            <div><div class="fw-semibold fs-13">No Access</div><div class="text-muted fs-12">The feature is not available to the role.</div></div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -330,7 +376,7 @@
   let bsModal;
   let users = [];
   let currentPage = 1;
-  let itemsPerPage = 10; // selectable (2026-11 panel recommendation)
+  const itemsPerPage = 10; // fixed: Previous / Next only, no "Show N" selector
 
   // â”€â”€ API helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   function apiPost(payload) {
@@ -389,41 +435,17 @@
       : `<span class="badge bg-danger-subtle text-danger"><i class="ri-close-circle-line align-middle me-1"></i>Inactive</span>`;
   }
 
-  // -- Windowed pagination helpers (same pattern as notifications) -----------
-  function buildPageList(current, total, maxVisible) {
-      maxVisible = maxVisible || 5;
-      if (total <= maxVisible + 2) {
-          return Array.from({ length: total }, function (_, i) { return i + 1; });
-      }
-      var start = Math.max(1, current - Math.floor(maxVisible / 2));
-      var end = start + maxVisible - 1;
-      if (end > total) { end = total; start = Math.max(1, end - maxVisible + 1); }
-      var pages = [];
-      for (var i = start; i <= end; i++) pages.push(i);
-      if (start > 1) { pages.unshift('...'); pages.unshift(1); }
-      if (end < total) { pages.push('...'); pages.push(total); }
-      return pages;
-  }
-
+  // -- Previous / Next pagination (no page numbers, no "Show N") — same as the other pages --
   function buildPaginationHtml(current, total, onClickFn) {
       if (total <= 1) return '';
-      var pageItem = function (label, page, opts) {
-          opts = opts || {};
-          var disabled = opts.disabled ? ' disabled' : '';
-          var active = opts.active ? ' active' : '';
-          var isEllipsis = opts.ellipsis ? ' ellipsis-item' : '';
-          var isPrevNext = opts.isPrev ? ' page-link-prev' : (opts.isNext ? ' page-link-next' : '');
-          var click = opts.disabled || opts.ellipsis ? '' : 'onclick="' + onClickFn + '(' + page + ')"';
-          return '<li class="page-item' + disabled + active + isEllipsis + '"><a class="page-link' + isPrevNext + '" href="javascript:void(0)" ' + click + '>' + label + '</a></li>';
+      var pageItem = function (label, page, disabled, cls) {
+          var click = disabled ? '' : 'onclick="' + onClickFn + '(' + page + ')"';
+          return '<li class="page-item' + (disabled ? ' disabled' : '') + '"><a class="page-link ' + cls + '" href="javascript:void(0)" ' + click + '>' + label + '</a></li>';
       };
-      var html = pageItem('&lsaquo; Previous', current - 1, { disabled: current === 1, isPrev: true });
-      buildPageList(current, total).forEach(function (p) {
-          html += (p === '...')
-              ? pageItem('&hellip;', null, { ellipsis: true, disabled: true })
-              : pageItem(p, p, { active: p === current });
-      });
-      html += pageItem('Next &rsaquo;', current + 1, { disabled: current === total, isNext: true });
-      return '<div class="d-flex justify-content-end mb-3"><ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul></div>';
+      return '<ul class="pagination pagination-custom align-items-center m-0">'
+          + pageItem('&lsaquo; Previous', current - 1, current === 1, 'page-link-prev')
+          + pageItem('Next &rsaquo;', current + 1, current === total, 'page-link-next')
+          + '</ul>';
   }
 
   function goToPage(p) { currentPage = p; renderUsers(); }
@@ -476,13 +498,6 @@
 
     // Render pagination controls
     document.getElementById('usr-pagination').innerHTML = buildPaginationHtml(currentPage, totalPages, 'goToPage');
-    if (window.CIPRMSPagination) {
-      CIPRMSPagination.renderPageSizeSelector('usr-page-size', itemsPerPage, [10, 25, 50], function (newSize) {
-        itemsPerPage = newSize;
-        currentPage = 1;
-        renderUsers();
-      });
-    }
   }
 
   // ── Modal helpers ────────────────────────────────────────────────────────────────────────

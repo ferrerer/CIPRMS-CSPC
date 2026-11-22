@@ -10,6 +10,12 @@
     <link href="/velzon/assets/css/icons.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/app.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/custom.min.css" rel="stylesheet" type="text/css" />
+<style>
+  /* Merged profile + settings card: divider between the two columns (right border on wide screens,
+     bottom border when they stack). */
+  .settings-profile-col { border-bottom: 1px solid var(--vz-border-color, #e9ebec); }
+  @media (min-width: 992px) { .settings-profile-col { border-bottom: 0; border-right: 1px solid var(--vz-border-color, #e9ebec); } }
+</style>
 </head>
 <body>
 
@@ -36,9 +42,12 @@
                 </div>
 
                 <div class="row">
-                    <!-- Left: avatar + identity -->
-                    <div class="col-xxl-3 col-lg-4">
+                    <!-- Profile + settings merged into ONE card: profile on the left (divider line), tabs/form on the right. -->
+                    <div class="col-12">
                         <div class="card">
+                         <div class="row g-0">
+                          <!-- Left: avatar + identity -->
+                          <div class="col-xxl-3 col-lg-4 settings-profile-col">
                             <div class="card-body p-4 text-center">
                                 <div class="position-relative d-inline-block mb-3" style="cursor:pointer;" onclick="document.getElementById('avatar-input').click()" title="Change photo">
                                     <div id="avatar-preview" class="avatar-xl mx-auto rounded-circle d-flex align-items-center justify-content-center fs-1 fw-bold text-white"
@@ -65,12 +74,10 @@
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
+                          </div>
 
-                    <!-- Right: tabs -->
-                    <div class="col-xxl-9 col-lg-8">
-                        <div class="card">
+                          <!-- Right: tabs -->
+                          <div class="col-xxl-9 col-lg-8">
                             <div class="card-header border-0">
                                 <ul class="nav nav-tabs-custom rounded card-header-tabs border-bottom-0" role="tablist">
                                     <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-profile"><i class="ri-building-4-line me-1"></i>Organization Profile</a></li>
@@ -109,7 +116,9 @@
 
                                 </div>
                             </div>
-                        </div>
+                          </div><!-- right col -->
+                         </div><!-- row g-0 -->
+                        </div><!-- card -->
                     </div>
                 </div>
 

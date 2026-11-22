@@ -80,7 +80,7 @@ function buildMessage(to, { title, desc, link, tag, time, showSystemUrl }) {
     + (showSystemUrl ? `CIPRMS web address: ${siteUrl}\n` : '')
     + `Open in CIPRMS: ${url}\n\n— CIPRMS, Camarines Sur Polytechnic Colleges (CIRL)\nThis is an automated system notification from CIPRMS.`;
   const siteUrlHtml = showSystemUrl
-    ? `<p style="font-size:14px;line-height:1.5;margin:0 0 18px;padding:10px 12px;background:#f3f6f9;border-radius:4px;"><strong>CIPRMS web address:</strong><br><a href="${esc(siteUrl)}" style="color:#405189;word-break:break-all;">${esc(siteUrl)}</a></p>`
+    ? `<p style="font-size:14px;line-height:1.5;margin:0 0 18px;padding:12px 14px;background:#f3f6f9;border-left:4px solid #405189;border-radius:4px;"><strong>CIPRMS web address:</strong> <span style="color:#878a99;">(click to open)</span><br><a href="${esc(siteUrl)}" target="_blank" rel="noopener" style="color:#405189;font-size:16px;font-weight:bold;text-decoration:underline;word-break:break-all;">${esc(siteUrl)}</a></p>`
     : '';
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#212529;">
   <div style="background:#405189;color:#fff;padding:14px 20px;border-radius:6px 6px 0 0;font-weight:bold;">CIPRMS${tag ? ' · ' + esc(tag) : ''}</div>
