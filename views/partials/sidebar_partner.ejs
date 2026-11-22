@@ -84,6 +84,17 @@
                     </a>
                 </li>
 
+                <!-- Notifications — only this Partner's own notifications. Unread count kept current by the header. -->
+                <li class="nav-item">
+                    <a class="nav-link menu-link <%= (typeof activePage !== 'undefined' && activePage === 'notifications') ? 'active' : '' %>"
+                        href="/partner/notifications">
+                        <i class="ri-notification-3-line"></i>
+                        <span>Notifications</span>
+                        <span class="badge bg-danger rounded-pill" id="sidebar-notif-badge"
+                            style="display:none;margin-left:auto;"></span>
+                    </a>
+                </li>
+
                 <li class="menu-title"><span>Account</span></li>
 
                 <li class="nav-item">

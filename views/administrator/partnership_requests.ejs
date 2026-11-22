@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <%- include('../partials/ui-state-init') %>
-  <% var pageLabel = (typeof user !== 'undefined' && user && user.role === 'LAU') ? 'Monitoring' : 'Requests'; %>
+  <% var pageLabel = (typeof user !== 'undefined' && user && user.role === 'LAU') ? 'Partnership Request Monitoring' : 'Requests'; %>
   <title><%= pageLabel %> | CIPRMS-CSPC-CIRL</title>
   <meta name="description" content="Manage Partnership Requests and Document Requests for CIPRMS CSPC-CIRL">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -59,6 +59,7 @@
 
     /* ── Stat cards ── */
     .stat-card {
+      margin-bottom: 0;   /* the row below already spaces them (mb-3) — no extra gap above the main card */
       border-radius: 12px;
       transition: transform .18s, box-shadow .18s;
     }
@@ -120,6 +121,15 @@
     [data-bs-theme="dark"] .pri-partner-option:hover, [data-bs-theme="dark"] .pri-partner-option.is-active { background: #363c4c; color: #a9bcf5; }
 
     /* ── Filter row ── */
+    /* Every Requests tab (all roles): filters on the left, search bar on the far right. */
+    .filter-row > .search-box { order: 5; margin-left: auto; }
+    /* Request Partnership / Add E-Sign / New Request sit on the right, just BEFORE the search bar. */
+    .filter-row > .btn { order: 4; margin-left: auto !important; }
+    .filter-row:has(> .btn) > .search-box { margin-left: 0; }
+    .filter-row > .ms-auto { margin-left: 0 !important; }
+    /* No request counts beside the filters ("93 of 93 requests", "Showing 1–4 …") on any tab, for any role.
+       The elements stay because renderPR()/renderDR()/the College Requests list still write to them. */
+    #pr-count, #dr-count, #cdr-count, #cdr-page-summary { display: none !important; }
     .filter-row {
       display: flex;
       align-items: center;
@@ -128,10 +138,10 @@
       margin-bottom: 1rem;
     }
 
+    /* Same size as the User Management search box and role filter (normal-size controls). */
     .filter-row .form-control,
     .filter-row .form-select {
       border-radius: 8px;
-      font-size: .82rem;
     }
 
     /* ── Table ── */
@@ -337,9 +347,20 @@
     /* "+N more" tag in Document Type: hover shows the other types in a tooltip. */
     .dr-more-btn { cursor: help; font-size: .73rem; font-weight: 600; }
     .dr-more-btn:hover, .dr-more-btn:focus { background: var(--vz-secondary-bg-subtle, #e9ecef) !important; color: var(--vz-body-color, #212529) !important; outline: none; }
-    .req-fixed-cols .dr-status-select { max-width: 100%; }
+    .req-fixed-cols .dr-status-select { max-width: 100%; min-width: 0; }
+    .dr-types { white-space: nowrap; overflow: hidden; }   /* Document Type: one line; extras fold into "+N more" */
     /* Larger status badges (Pending, Under Review, Approved, …) in the Requests tables. */
     .req-status-cell .badge { font-size: .8125rem; padding: .4em .75em; }
+    /* No colored boxes in the Requests tables: every tag (status, type, "+N more") is plain text, keeping only its
+       text color — except the Submitted By role tag (Admin/Staff, College Dean, Partner…), which keeps its box. */
+    .req-fixed-cols .badge:not(.submitter-tag):not(.dr-more-btn) { background: transparent !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; font-weight: 500; }
+    .req-fixed-cols .req-status-cell .badge { font-size: .8125rem; padding: 0 !important; }
+    /* Status legend under the tables (left of Previous / Next): dot + label in each status's color. */
+    .req-legend { display: flex; flex-wrap: wrap; gap: .35rem 1rem; font-size: .8125rem; }
+    .req-legend-item { display: inline-flex; align-items: center; font-weight: 500; }
+    .req-legend-item::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; margin-right: .4rem; }
+    /* Status indicator: a small dot in the status's own color before the text (Pending, Under Review, Approved…). */
+    .req-fixed-cols .req-status-cell .badge::before { content: ""; display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; margin-right: .4rem; vertical-align: middle; position: relative; top: -1px; }
     /* Document Requests' Status dropdown: same larger text as the status badges above. */
     .req-fixed-cols .dr-status-select { font-size: .8125rem; padding-top: .3rem; padding-bottom: .3rem; }
     .dr-status-select {
@@ -542,7 +563,9 @@
               <div class="row">
                 <div class="col-12">
                   <div class="card border-0 shadow-sm">
-                    <div class="card-header border-0">
+                    <%# LAU only has the one Partnership Requests list, so its one-tab bar is hidden and the list fills the card.
+                        (Kept in the page, not removed: switchSection()/updateStats() update #tab-pr and #tab-cnt-pr.) %>
+                    <div class="card-header border-0<%= (typeof user !== 'undefined' && user && user.role === 'LAU') ? ' d-none' : '' %>">
                       <!-- Section switcher (2026-11) — same nav-tabs-custom markup/classes as Reports &
                            Analytics' own tabs (views/administrator/reports.ejs), reused as-is rather than
                            styled separately. Counts keep the existing tab-cnt-* ids switchSection()/
@@ -579,14 +602,15 @@
 
                       <!-- Partnership Requests Panel -->
                       <div id="panel-pr">
-                        <div class="filter-row">
-                          <div class="search-box" style="width:210px;">
-                            <input class="form-control form-control-sm" id="pr-search" oninput="prCurrentPage=1; renderPR()">
+                        <%# LAU: status filter on the left, search on the right, no "N of N requests" count (.lau-filter-row below). %>
+                        <div class="filter-row<%= (typeof user !== 'undefined' && user && user.role === 'LAU') ? ' lau-filter-row' : '' %>">
+                          <div class="search-box" style="width:320px;max-width:100%;">
+                            <input class="form-control" id="pr-search" oninput="prCurrentPage=1; renderPR()">
                             <i class="ri-search-line search-icon"></i>
                           </div>
                           <!-- Status filter (Partnership Request statuses) — same search + "All Status" layout as the
                                Document Requests and College Requests tabs. -->
-                          <select class="form-select form-select-sm" id="pr-status" style="width:170px;"
+                          <select class="form-select" id="pr-status" style="width:170px;"
                             onchange="setPRStatusFilter(this.value)">
                             <option value="">All Status</option>
                             <option>Pending</option>
@@ -620,7 +644,8 @@
                             <tbody id="pr-tbody"></tbody>
                           </table>
                         </div>
-                        <div class="d-flex justify-content-end pt-3">
+                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 pt-3">
+                          <div class="req-legend" id="pr-legend" aria-label="Status legend"></div>
                           <div id="pr-pagination"></div>
                         </div>
                       </div>
@@ -628,11 +653,11 @@
                       <!-- Document Requests Panel -->
                       <div id="panel-dr" style="display:none;">
                         <div class="filter-row">
-                          <div class="search-box" style="width:210px;">
-                            <input class="form-control form-control-sm" id="dr-search" oninput="drCurrentPage=1; renderDR()">
+                          <div class="search-box" style="width:320px;max-width:100%;">
+                            <input class="form-control" id="dr-search" oninput="drCurrentPage=1; renderDR()">
                             <i class="ri-search-line search-icon"></i>
                           </div>
-                          <select class="form-select form-select-sm" id="dr-status" style="width:170px;"
+                          <select class="form-select" id="dr-status" style="width:170px;"
                             onchange="drCurrentPage=1; renderDR()">
                             <option value="">All Status</option>
                             <option>Received</option>
@@ -643,20 +668,17 @@
                             <option>Completed</option>
                             <option>Rejected</option>
                           </select>
-                          <div class="ms-auto d-flex align-items-center gap-2">
-                            <!-- Document Requests tab only (this button lives inside #panel-dr); LAU never
-                                 reaches this tab at all (see IS_LAU below), so Administrator/Staff is the
-                                 only audience that ever sees it. -->
-                            <button type="button" class="btn btn-sm btn-soft-primary" id="dr-esign-btn" onclick="openEsignModal()">
-                              <i class="ri-quill-pen-line me-1"></i>Add E-Sign
-                            </button>
-                            <span class="text-muted fs-12" id="dr-count"></span>
-                          </div>
+                          <span class="text-muted fs-12" id="dr-count"></span>
+                          <!-- Same layout as the Partnership / College Requests tabs: the button sits right before the search bar.
+                               Document Requests tab only (Administrator/Staff; LAU never reaches this tab). -->
+                          <button type="button" class="btn btn-sm btn-primary" id="dr-esign-btn" onclick="openEsignModal()">
+                            <i class="ri-quill-pen-line me-1"></i>Add E-Sign
+                          </button>
                         </div>
 
                         <div class="table-responsive">
                           <table class="table table-hover req-fixed-cols table-bordered align-middle mb-0">
-                            <colgroup><col style="width:4%"><col style="width:18%"><col style="width:28%"><col style="width:16%"><col style="width:10%"><col style="width:15%"><col style="width:9%"></colgroup>
+                            <colgroup><col style="width:4%"><col style="width:17%"><col style="width:37%"><col style="width:15%"><col style="width:9%"><col style="width:10%"><col style="width:8%"></colgroup>
                             <thead class="table-light">
                               <tr>
                                 <th>#</th>
@@ -680,12 +702,12 @@
                       <% if (typeof user === 'undefined' || !user || user.role !== 'LAU') { %>
                       <div id="panel-cdr" style="display:none;">
                         <div class="filter-row">
-                          <div class="search-box" style="width:210px;">
-                            <input class="form-control form-control-sm" id="cdr-search" oninput="cdrSearchChanged()">
+                          <div class="search-box" style="width:320px;max-width:100%;">
+                            <input class="form-control" id="cdr-search" oninput="cdrSearchChanged()">
                             <i class="ri-search-line search-icon"></i>
                           </div>
                           <!-- Status filter (College Request statuses) -->
-                          <select class="form-select form-select-sm" id="cdr-status" style="width:190px;"
+                          <select class="form-select" id="cdr-status" style="width:190px;"
                             onchange="cdrFilterBy(this.value)">
                             <option value="">All Status</option>
                             <option>Pending</option>
@@ -717,6 +739,7 @@
                           </table>
                         </div>
                         <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-3">
+                          <div class="req-legend" id="cdr-legend" aria-label="Status legend"></div>
                           <div class="fs-12 text-muted" id="cdr-page-summary"></div>
                           <div id="cdr-pagination"></div>
                         </div>
@@ -1139,7 +1162,7 @@
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header bg-light p-3">
-          <h5 class="modal-title"><i class="ri-quill-pen-line me-2 text-primary"></i>Head of CIRL E-Signature</h5>
+          <h5 class="modal-title"><i class="ri-quill-pen-line me-2 text-primary"></i><%= (typeof user !== 'undefined' && user && user.role === 'Staff') ? 'CIRL Staff' : 'Administrator' %> E-Signature</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
@@ -1415,17 +1438,32 @@
     }
     function drDocTypeBadges(r) {
       const items = drDocTypeItems(r);
-      if (!items.length) return '<span class="badge badge-type bg-secondary-subtle text-secondary border border-secondary-subtle">—</span>';
-      const first = `<span class="badge badge-type bg-secondary-subtle text-secondary border border-secondary-subtle" title="${escapeHtml(items.join(', '))}">${escapeHtml(items[0])}</span>`;
-      // "+N more": hovering (or keyboard focus) shows the other document types in a tooltip; it disappears
-      // again when the pointer moves away. The tooltip text is escaped, one type per line.
-      const rest = items.slice(1);
-      const tip = rest.map(t => escapeHtml(t)).join(';<br>');   // ";" after every type except the last
-      const more = rest.length
-        ? ` <span class="badge bg-light text-muted border dr-more-btn" tabindex="0" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title="${escapeHtml(tip)}">+${rest.length} more</span>`
-        : '';
-      return first + more;
+      if (!items.length) return '<span class="text-muted">—</span>';
+      // All types, comma-separated, on ONE line; fitDrDocTypes() (after the rows are on screen) keeps as many as
+      // fit the cell and folds the rest into a light "+N more" tag whose hover tooltip lists them.
+      return '<div class="dr-types" title="' + escapeHtml(items.join(', ')) + '">'
+        + items.map((t, i) => '<span class="dr-type">' + (i ? ', ' : '') + escapeHtml(t) + '</span>').join('')
+        + ' <span class="badge bg-light text-muted border dr-more-btn d-none" tabindex="0" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title=""></span>'
+        + '</div>';
     }
+    function fitDrDocTypes() {
+      document.querySelectorAll('#dr-tbody .dr-types').forEach(box => {
+        const types = Array.from(box.querySelectorAll('.dr-type'));
+        const more = box.querySelector('.dr-more-btn');
+        types.forEach(t => t.classList.remove('d-none'));
+        more.classList.add('d-none');
+        let shown = types.length;
+        while (shown > 1 && box.scrollWidth > box.clientWidth) {
+          types[--shown].classList.add('d-none');
+          const rest = types.slice(shown).map(t => t.textContent.replace(/^,\s*/, ''));
+          more.textContent = '+' + rest.length + ' more';
+          more.setAttribute('data-bs-title', rest.map(escapeHtml).join(';<br>'));
+          more.classList.remove('d-none');
+        }
+      });
+    }
+    let drFitTimer = null;
+    window.addEventListener('resize', () => { clearTimeout(drFitTimer); drFitTimer = setTimeout(fitDrDocTypes, 150); });
     // One delegated tooltip handler covers every "+N more" tag, including rows rendered later (paging, filters, live updates).
     document.addEventListener('DOMContentLoaded', function () {
       if (window.bootstrap && bootstrap.Tooltip) {
@@ -1461,6 +1499,7 @@
       document.getElementById('tab-pr').classList.toggle('active', sec === 'pr');
       if (document.getElementById('tab-dr')) document.getElementById('tab-dr').classList.toggle('active', sec === 'dr');
       if (document.getElementById('tab-cdr')) document.getElementById('tab-cdr').classList.toggle('active', sec === 'cdr');
+      if (sec === 'dr') fitDrDocTypes();   // measured only once the tab is visible
       // "Request Partnership" only makes sense while viewing Partnership Requests.
       if (document.getElementById('pr-initiate-btn')) document.getElementById('pr-initiate-btn').style.display = sec === 'pr' ? '' : 'none';
     }
@@ -1537,14 +1576,14 @@
     // falls back to "Partner", the same default this badge always used before the fix.
     function submittedByBadge(r) {
       if (r.initiatedBy === 'institution') {
-        return ' <span class="badge bg-secondary-subtle text-secondary" title="Started by Admin/Staff on behalf of this partner">Admin/Staff</span>';
+        return ' <span class="badge submitter-tag bg-light text-muted" title="Started by Admin/Staff on behalf of this partner">Admin/Staff</span>';
       }
       const role = USERS_BY_EMAIL[r.submittedByEmail];
       if (role && role !== 'potential_partner') {
         const label = ROLE_LABEL[role] || role;
-        return ` <span class="badge bg-info-subtle text-info" title="Submitted by ${escapeHtml(label)}">${escapeHtml(label)}</span>`;
+        return ` <span class="badge submitter-tag bg-light text-muted" title="Submitted by ${escapeHtml(label)}">${escapeHtml(label)}</span>`;
       }
-      return ' <span class="badge bg-light text-muted" title="Submitted directly by the partner">Partner</span>';
+      return ' <span class="badge submitter-tag bg-light text-muted" title="Submitted directly by the partner">Partner</span>';
     }
 
     // Status filter for Partnership Requests — driven by the #pr-status "All Status" dropdown.
@@ -1949,9 +1988,9 @@
           <td><span class="fw-semibold text-primary fs-13">#REQ-${String(r.id).padStart(3, '0')}</span></td>
           <td class="fw-medium fs-13">${by}${submittedByBadge(r)}</td>
           <td><span class="fw-semibold fs-13">${inst}</span></td>
-          <td class="text-muted fs-13">${country}</td>
-          <td><span class="fs-13">${type}</span>${r.isRenewal ? ' <span class="badge bg-info-subtle text-info">Renewal</span>' : ''}${r.isCollegeReport ? ' <span class="badge bg-success-subtle text-success" title="A college sent CIRL a copy of an MOA/MOU it already signed">College Report</span>' : ''}</td>
-          <td class="text-muted fs-13">${date}</td>
+          <td class="fs-13">${country}</td>
+          <td><span class="fs-13">${type}</span>${r.isRenewal ? ' <span class="badge submitter-tag bg-light text-muted">Renewal</span>' : ''}${r.isCollegeReport ? ' <span class="badge submitter-tag bg-light text-muted" title="A college sent CIRL a copy of an MOA/MOU it already signed">College Report</span>' : ''}</td>
+          <td class="fs-13">${date}</td>
           <td class="req-status-cell">${statusBadge(status)}</td>
           <td>
             <div class="hstack gap-1 justify-content-center">
@@ -2187,7 +2226,7 @@
     }
 
     async function unlinkGoogleDoc(docId) {
-      if (!confirm('Unlink this Google Doc from the request? The document itself stays in Google Drive with its current sharing.')) return;
+      if (!(await askConfirm('Unlink Google Doc', 'Unlink this Google Doc from the request? The document itself stays in Google Drive with its current sharing.', 'Unlink'))) return;
       const res = await CIPRMS.api('/api/google-docs/' + docId, { method: 'DELETE', quiet: true });
       if (!res.ok) { showToast('<i class="ri-error-warning-line me-1"></i>' + escapeHtml(res.error || 'Could not unlink.'), '#f06548'); return; }
       showToast('<i class="ri-checkbox-circle-line me-1"></i>Draft unlinked.', '#0ab39c');
@@ -2224,7 +2263,7 @@
     // Requests, e.g. CIPRMS > Requests > Partnership Request > <institution — #id>
     // [> Draft Collaboration]. Reused via MODAL_REOPEN below: reopening pr-modal/
     // dr-modal through openPRDetail/openDRDetail already re-sets it correctly. ──
-    // LAU sees this page as "Monitoring" (read-only), everyone else as "Requests".
+    // LAU sees this page as "Partnership Requests" (what it lists, read-only), everyone else as "Requests".
     var PAGE_LABEL = <%- JSON.stringify(pageLabel) %>;
     var HOME_HREF = '<%= typeof homeHref !== "undefined" ? homeHref : "/dashboard" %>';
     function setBreadcrumb(labels) {
@@ -2924,7 +2963,7 @@
           <td><span class="fw-semibold fs-13">${escapeHtml(r.institution || '—')}</span></td>
           <td>${drDocTypeBadges(r)}</td>
           <td class="fw-medium fs-13">${escapeHtml(r.requestedBy || '—')}</td>
-          <td class="text-muted fs-13">${r.date || '—'}</td>
+          <td class="fs-13">${r.date || '—'}</td>
           <td class="dr-status-cell">${drStatusSelectHtml(r)}</td>
           <td>
             <div class="hstack gap-1 justify-content-center">
@@ -2935,6 +2974,7 @@
           </td>
         </tr>`;
       }).join('');
+      fitDrDocTypes();
     }
 
     function fmtHistoryWhen(iso) {
@@ -3253,8 +3293,50 @@
       }
     }
 
+    // In-page confirmation (replaces the browser's confirm()). Opens on top of any modal that is already open
+    // (e.g. the E-Sign window), one layer higher. Resolves true on confirm, false on Cancel / ✕ / Esc.
+    function askConfirm(title, message, okLabel, okClass) {
+      let el = document.getElementById('req-confirm-modal');
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'modal fade';
+        el.id = 'req-confirm-modal';
+        el.tabIndex = -1;
+        el.style.zIndex = '1065';
+        el.setAttribute('aria-hidden', 'true');
+        el.innerHTML =
+          '<div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0">' +
+          '<div class="modal-header bg-light" style="padding:.6rem 1rem;"><h5 class="modal-title fs-15 mb-0" id="req-confirm-title"></h5>' +
+          '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+          '<div class="modal-body"><p class="mb-0" id="req-confirm-message"></p></div>' +
+          '<div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>' +
+          '<button type="button" class="btn" id="req-confirm-ok"></button></div></div></div>';
+        document.body.appendChild(el);
+        el.addEventListener('shown.bs.modal', () => {
+          const b = document.querySelectorAll('.modal-backdrop'); if (b.length) b[b.length - 1].style.zIndex = '1060';
+        });
+        el.addEventListener('hidden.bs.modal', () => {
+          if (document.querySelector('.modal.show')) document.body.classList.add('modal-open');   // keep the window below scroll-locked
+        });
+      }
+      el.querySelector('#req-confirm-title').textContent = title;
+      el.querySelector('#req-confirm-message').textContent = message;
+      const ok = el.querySelector('#req-confirm-ok');
+      ok.textContent = okLabel || 'Confirm';
+      ok.className = 'btn ' + (okClass || 'btn-danger');
+      const modal = bootstrap.Modal.getOrCreateInstance(el);
+      return new Promise(resolve => {
+        let result = false;
+        ok.onclick = () => { result = true; modal.hide(); };
+        el.addEventListener('hidden.bs.modal', () => resolve(result), { once: true });
+        modal.show();
+      });
+    }
+
     async function esignRemove() {
-      if (!confirm('Remove the Head of CIRL e-signature? Document Requests already Completed keep showing the signature they were completed with.')) return;
+      // Wording follows who is signed in: Administrator → "Administrator e-signature", CIRL Staff → "CIRL Staff e-signature".
+      const signer = (window.CIPRMS_USER && window.CIPRMS_USER.role === 'Staff') ? 'CIRL Staff' : 'Administrator';
+      if (!(await askConfirm('Remove E-Signature', 'Remove the ' + signer + ' e-signature? Document Requests already Completed keep showing the signature they were completed with.', 'Remove Signature'))) return;
       const btn = document.getElementById('esign-remove-btn');
       btn.disabled = true;
       try {
@@ -3290,6 +3372,18 @@
       'Returned for Revision': 'bg-warning-subtle text-warning',
       'Completed': 'bg-success-subtle text-success'
     };
+    // Legends: the text-color class only (no box), so the dot and label match the status column exactly.
+    function renderStatusLegends() {
+      const textCls = (cls) => (String(cls).match(/\btext-[\w-]+/) || ['text-muted'])[0];
+      const item = (label, cls) => '<span class="req-legend-item ' + textCls(cls) + '">' + escapeHtml(label) + '</span>';
+      const pr = document.getElementById('pr-legend');
+      const title = '<span class="fw-semibold text-body me-1">Legend:</span>';
+      if (pr) pr.innerHTML = title + ['Pending', 'Under Review', 'Approved', 'Rejected'].map(st => item(st, statusClasses(st))).join('');
+      const cdr = document.getElementById('cdr-legend');
+      if (cdr) cdr.innerHTML = title + Object.keys(CDR_BADGE).map(st => item(st, CDR_BADGE[st])).join('');
+    }
+    document.addEventListener('DOMContentLoaded', renderStatusLegends);
+
     function cdrBadge(status) {
       return '<span class="badge ' + (CDR_BADGE[status] || 'bg-secondary-subtle text-secondary') + '">' + escapeHtml(status) + '</span>';
     }

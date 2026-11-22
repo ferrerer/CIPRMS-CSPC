@@ -17,6 +17,10 @@
     /* Role Permissions Matrix (RBAC): fits the card (no sideways scrolling) so every role column is visible
        at once. Each cell is tinted by its access level so a role's column reads at a glance:
        green = Full, blue = Scoped, red = No Access. Theme-aware (Bootstrap subtle colors). */
+    /* System Users table: grid lines + fixed column widths so the layout does not shift between pages; long text wraps. */
+    .usr-fixed-cols { table-layout: fixed; width: 100%; min-width: 900px; }
+    .usr-fixed-cols td, .usr-fixed-cols th { white-space: normal; overflow-wrap: anywhere; }
+    .usr-fixed-cols .hstack { flex-wrap: wrap; }
     .rbac-table { table-layout: fixed; width: 100%; }
     .rbac-table th, .rbac-table td { white-space: normal; overflow-wrap: break-word; vertical-align: middle; }
     .rbac-table td.rbac-feature { font-weight: 600; font-size: .85rem; }
@@ -71,7 +75,7 @@
                                 <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
                                     <h4 class="card-title mb-0"><i class="ri-id-card-line me-2 text-primary"></i>System Users</h4>
                                     <div class="d-flex align-items-center gap-2">
-                                        <span class="text-muted fs-12" id="usr-count"></span>
+                                        <span class="text-muted fs-12 d-none" id="usr-count"></span>
                                         <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
                                         <button class="btn btn-primary btn-sm" onclick="openAddUser()">
                                             <i class="ri-add-line align-bottom me-1"></i>Add User
@@ -79,28 +83,26 @@
                                         <% } %>
                                     </div>
                                 </div>
-                                <div class="row g-2 align-items-end mt-3">
-                                    <div class="col-sm-8 col-md-6 col-lg-4">
-                                        <div class="search-box">
-                                            <input class="form-control" id="usr-filter-email" oninput="currentPage=1;renderUsers()">
-                                            <i class="ri-search-line search-icon"></i>
-                                        </div>
-                                    </div>
-                                    <div class="col-sm-4 col-md-3 col-lg-2">
-                                        <select class="form-select" id="usr-filter-role" onchange="currentPage=1;renderUsers()">
-                                            <option value="">All Roles</option>
-                                            <option value="Administrator">Administrator</option>
-                                            <option value="Auth. Personnel">College Dean</option>
-                                            <option value="potential_partner">Partner</option>
-                                            <option value="Staff">CIRL Staff</option>
-                                            <option value="LAU">LAU</option>
-                                        </select>
+                                <!-- Role filter on the left, search box on the right. -->
+                                <div class="d-flex align-items-center flex-wrap gap-2 mt-3">
+                                    <select class="form-select" id="usr-filter-role" style="width:auto;min-width:170px;" onchange="currentPage=1;renderUsers()">
+                                        <option value="">All Roles</option>
+                                        <option value="Administrator">Administrator</option>
+                                        <option value="Auth. Personnel">College Dean</option>
+                                        <option value="potential_partner">Partner</option>
+                                        <option value="Staff">CIRL Staff</option>
+                                        <option value="LAU">LAU</option>
+                                    </select>
+                                    <div class="search-box ms-auto" style="width:320px;max-width:100%;">
+                                        <input class="form-control" id="usr-filter-email" oninput="currentPage=1;renderUsers()">
+                                        <i class="ri-search-line search-icon"></i>
                                     </div>
                                 </div>
                             </div>
                             <div class="card-body p-0">
                                 <div class="table-responsive">
-                                    <table class="table table-hover table-centered align-middle table-nowrap mb-0">
+                                    <table class="table table-hover table-bordered align-middle mb-0 usr-fixed-cols">
+                                        <colgroup><col style="width:19%"><col style="width:21%"><col style="width:11%"><col style="width:12%"><col style="width:10%"><col style="width:9%"><col style="width:18%"></colgroup>
                                         <thead class="text-muted bg-light-subtle">
                                             <tr>
                                                 <th>Name</th>
@@ -209,8 +211,8 @@
                                                   note: 'Partners submit and track their requests. Administrators and CIRL Staff review, approve or reject them. LAU can view them only.' },
                                                 { feature: 'Document Requests', admin: F('Full (Review / Fulfill / Reject)'), college: S('Submit Only'), partner: S('Submit MOA/MOU Only'), staff: F('Full (Review / Fulfill / Reject)'), lau: N(),
                                                   note: 'College Deans request documents and Partners submit their MOA/MOU. Administrators and CIRL Staff process each request.' },
-                                                { feature: 'Notifications', admin: S('Personal Only'), college: S('Personal Only'), partner: S('Bell Only (Personal)'), staff: S('Personal Only'), lau: N(),
-                                                  note: 'Each user sees only their own alerts. Partners receive them through the bell icon at the top of the page.' },
+                                                { feature: 'Notifications', admin: S('Personal Only'), college: S('Personal Only'), partner: S('Personal Only'), staff: S('Personal Only'), lau: S('Requests & Drafts Only'),
+                                                  note: 'Each user sees only their own alerts, on their Notifications page and the bell icon at the top of the page.' },
                                                 { feature: 'Reports &amp; Analytics', admin: F('Full'), college: N(), partner: N(), staff: S('Full, Personal Audit Trail Only'), lau: N(),
                                                   note: 'Reports, charts and the audit trail of system activity. CIRL Staff see only their own activity in the audit trail.' },
                                                 { feature: 'Settings (personal account)', admin: F('Full'), college: F('Full'), partner: F('Full'), staff: F('Full'), lau: N('No'),
@@ -424,15 +426,15 @@
   }
   function roleBadge(role) {
     const displayRole = formatRole(role);
-    if (role === 'Administrator')   return `<span class="badge bg-info-subtle text-info">${displayRole}</span>`;
-    if (role === 'Auth. Personnel') return `<span class="badge bg-warning-subtle text-warning">${displayRole}</span>`;
-    if (role === 'potential_partner') return `<span class="badge bg-secondary-subtle text-secondary">${displayRole}</span>`;
-    return `<span class="badge bg-secondary-subtle text-secondary">${displayRole}</span>`;
+    // Plain colored text (no box) for Role, Department and Status.
+    if (role === 'Administrator')   return `<span class="fw-medium text-info">${displayRole}</span>`;
+    if (role === 'Auth. Personnel') return `<span class="fw-medium text-warning">${displayRole}</span>`;
+    return `<span class="fw-medium text-secondary">${displayRole}</span>`;
   }
   function statusBadge(s) {
     return s === 'Active'
-      ? `<span class="badge bg-success-subtle text-success"><i class="ri-checkbox-circle-line align-middle me-1"></i>Active</span>`
-      : `<span class="badge bg-danger-subtle text-danger"><i class="ri-close-circle-line align-middle me-1"></i>Inactive</span>`;
+      ? `<span class="fw-medium text-success"><i class="ri-checkbox-circle-line align-middle me-1"></i>Active</span>`
+      : `<span class="fw-medium text-danger"><i class="ri-close-circle-line align-middle me-1"></i>Inactive</span>`;
   }
 
   // -- Previous / Next pagination (no page numbers, no "Show N") — same as the other pages --
@@ -476,7 +478,7 @@
         </td>
         <td class="text-muted">${escapeHtml(u.email)}</td>
         <td>${roleBadge(u.role)}</td>
-        <td>${u.activated === false ? '<span class="badge bg-warning-subtle text-warning"><i class="ri-time-line align-middle me-1"></i>Not yet activated</span>'
+        <td>${u.activated === false ? '<span class="fw-medium text-warning"><i class="ri-time-line align-middle me-1"></i>Not yet activated</span>'
               : u.unit ? escapeHtml(u.unit) : '<span class="text-muted">&mdash;</span>'}</td>
         <td class="text-muted">${u.login || 'Never'}</td>
         <td>${statusBadge(u.status)}</td>

@@ -115,13 +115,12 @@
       /* Filter Partnerships: compact search box + all filters on one row, sharing the remaining width. */
       .mon-filter-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-end; }
       /* Compact, fixed-width filters on the left; the search box sits at the right end and takes the rest. */
-      .mon-filter-search { flex: 1 1 170px; min-width: 170px; max-width: 280px; order: 99; margin-left: auto; }   /* grows into any spare room */
+      .mon-filter-search { flex: 0 0 auto; order: 99; margin-left: auto; }
+      .mon-filter-search > .search-box { width: 320px; max-width: 100%; }   /* same search box as User Management */
       /* "Search" label sits to the LEFT of the search box (same line), not above it. */
       .mon-filter-search { display: flex; align-items: center; gap: .4rem; }
       .mon-filter-search > .form-label { margin-bottom: 0 !important; white-space: nowrap; }
-      .mon-filter-search > .search-box { flex: 1 1 auto; min-width: 0; }
       .mon-filter-clear { flex: 0 0 auto; }
-      .mon-filter-clear .btn { padding-top: .28rem; padding-bottom: .28rem; font-size: .8125rem; }
       /* Plain black "Clear" text (no button background); underline on hover so it still reads as clickable. */
       /* Boxed like the filter dropdowns beside it (same border, radius and height), black text. */
       .mon-clear-link { color: #000; text-decoration: none; padding-left: .75rem; padding-right: .75rem;
@@ -130,11 +129,10 @@
       .mon-clear-link:hover, .mon-clear-link:focus { color: #000; text-decoration: none; background: #dee2e6; border-color: #868e96; }
       [data-bs-theme="dark"] .mon-clear-link { background: #3a4252; border-color: #5c6577; }
       [data-bs-theme="dark"] .mon-clear-link, [data-bs-theme="dark"] .mon-clear-link:hover { color: #fff; }
-      .mon-filter-item { flex: 0 0 98px; width: 98px; }
-      .mon-filter-item.mon-filter-wide { flex-basis: 120px; width: 120px; }   /* Type, Category: longer options ("International") */
-      .mon-filter-row .form-select-sm, .mon-filter-row .form-control-sm { font-size: .8125rem; padding-top: .28rem; padding-bottom: .28rem; }
-      .mon-filter-row .search-box .form-control-sm { padding-left: 1.9rem; }
-      .mon-filter-row .search-box .search-icon { font-size: .8rem; }
+      /* Normal-size filters (same as User Management's role filter), each as wide as its own text. */
+      .mon-filter-item { flex: 0 0 auto; width: auto; }
+      .mon-filter-item .form-select { width: 118px; min-width: 0; text-overflow: ellipsis; }   /* narrower so the filters keep clear of the search box */
+      .mon-filter-item.mon-filter-wide .form-select { width: 138px; }
       @media (max-width: 575.98px) { .mon-filter-search { flex: 1 1 100%; } }
     </style>
 
@@ -257,7 +255,7 @@
             <p class="text-muted fs-12 mb-0 mt-1">Manage and monitor all registered partnerships.</p>
           </div>
           <div class="d-flex align-items-center flex-wrap gap-2">
-            <span class="text-muted fs-12" id="reg-count"></span>
+            <span class="text-muted fs-12 d-none" id="reg-count"></span>
             <button class="btn btn-soft-primary btn-sm" onclick="monitoringGenerateReport()" title="Preview a report with these same filters, right here"><i class="ri-file-chart-2-line me-1"></i>Generate Report</button>
             <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
             <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#addPartnershipModal">
@@ -272,56 +270,55 @@
         <!-- One row: a compact search box, then every filter sharing the rest of the width (wraps on small screens). -->
         <div class="mon-filter-row">
           <div class="mon-filter-search">
-            <label class="form-label fs-12 mb-1">Search</label>
             <div class="search-box">
-              <input type="text" class="form-control form-control-sm" id="reg-search" oninput="applyFilter()">
+              <input type="text" class="form-control" id="reg-search" oninput="applyFilter()">
               <i class="ri-search-line search-icon"></i>
             </div>
           </div>
           <div class="mon-filter-item mon-filter-wide">
             <label class="form-label fs-12 mb-1">Type</label>
-            <select class="form-select form-select-sm" id="reg-type" onchange="applyFilter()">
+            <select class="form-select" id="reg-type" onchange="applyFilter()">
               <option value="">All Types</option><option>MOA</option><option>MOU</option><option>Other</option>
             </select>
           </div>
           <div class="mon-filter-item mon-filter-wide">
             <label class="form-label fs-12 mb-1">Category</label>
-            <select class="form-select form-select-sm" id="reg-cat" onchange="applyFilter()">
+            <select class="form-select" id="reg-cat" onchange="applyFilter()">
               <option value="">All</option><option>International</option><option>Local</option>
             </select>
           </div>
           <div class="mon-filter-item">
             <label class="form-label fs-12 mb-1">Status</label>
-            <select class="form-select form-select-sm" id="reg-status" onchange="applyFilter()">
+            <select class="form-select" id="reg-status" onchange="applyFilter()">
               <option value="">All</option><option>Active</option><option>Expiring Soon</option><option>Expired</option>
             </select>
           </div>
           <div class="mon-filter-item">
             <label class="form-label fs-12 mb-1">Region</label>
-            <select class="form-select form-select-sm" id="reg-region" onchange="applyFilter()">
+            <select class="form-select" id="reg-region" onchange="applyFilter()">
               <option value="">All</option><option>Asia</option><option>Africa</option><option>North America</option><option>South America</option><option>Antarctica</option><option>Europe</option><option>Oceania</option>
             </select>
           </div>
           <div class="mon-filter-item">
             <label class="form-label fs-12 mb-1">Unit</label>
-            <select class="form-select form-select-sm" id="reg-unit" onchange="applyFilter()">
+            <select class="form-select" id="reg-unit" onchange="applyFilter()">
               <option value="">All</option><option>CCS</option><option>CILS</option><option>CETE</option><option>CNAS</option><option>CAMS</option><option>CIRL</option>
             </select>
           </div>
           <div class="mon-filter-item">
             <label class="form-label fs-12 mb-1">Yr Signed</label>
-            <select class="form-select form-select-sm" id="reg-yr-signed" onchange="applyFilter()">
+            <select class="form-select" id="reg-yr-signed" onchange="applyFilter()">
               <option value="">All</option><option>2019</option><option>2020</option><option>2021</option><option>2022</option><option>2023</option><option>2024</option><option>2025</option><option>2026</option>
             </select>
           </div>
           <div class="mon-filter-item">
             <label class="form-label fs-12 mb-1">Yr Expiry</label>
-            <select class="form-select form-select-sm" id="reg-yr-exp" onchange="applyFilter()">
+            <select class="form-select" id="reg-yr-exp" onchange="applyFilter()">
               <option value="">All</option><option>2024</option><option>2025</option><option>2026</option><option>2027</option><option>2028</option><option>2029</option><option>2030</option>
             </select>
           </div>
           <div class="mon-filter-clear">
-            <button type="button" class="btn btn-link btn-sm mon-clear-link" onclick="clearFilters()" title="Clear all filters">Clear</button>
+            <button type="button" class="btn btn-soft-primary" onclick="clearFilters()" title="Clear all filters"><i class="ri-refresh-line me-1"></i>Clear Filters</button>
           </div>
         </div>
         </div>
@@ -422,7 +419,8 @@
             <!-- DSS Smart Alerts — Administrator only, unchanged from the prior Monitoring page (removed
                  for Auth. Personnel 2026-07-23, alongside their loss of Reports access, which is what
                  this card's only action button links to). -->
-            <% if (typeof user !== 'undefined' && user && user.role === 'Administrator') { %>
+            <%# Administrator and CIRL Staff (both have Reports, which the button opens). %>
+            <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
             <div class="col-lg-4">
               <div class="bg-primary-subtle border border-primary text-primary rounded p-3 h-100">
                 <h6 class="fw-semibold mb-2 text-primary"><i class="ri-robot-2-line me-1"></i> DSS Smart Alerts</h6>
@@ -436,7 +434,7 @@
                   <div id="dss-review-text">Loading…</div>
                 </div>
                 <div class="mt-3 text-end">
-                  <a href="/reports" class="btn btn-sm btn-primary">View Full DSS Report <i class="ri-arrow-right-line ms-1"></i></a>
+                  <a href="<%= user.role === 'Staff' ? '/staff/reports' : '/reports' %>" class="btn btn-sm btn-primary">View Full DSS Report <i class="ri-arrow-right-line ms-1"></i></a>
                 </div>
               </div>
             </div>
@@ -995,7 +993,10 @@
       </div>
       <div class="modal-body">
         <div class="mt-2 text-center">
-          <lord-icon src="https://cdn.lordicon.com/gsqxdxog.json" trigger="loop" colors="primary:#f7b84b,secondary:#f06548" style="width:100px;height:100px"></lord-icon>
+          <!-- Built-in icon (the old animated lord-icon came from an external CDN the page cannot load, leaving a blank gap). -->
+          <div class="avatar-lg mx-auto">
+            <span class="avatar-title rounded-circle bg-danger-subtle text-danger" style="font-size:2.75rem;"><i class="ri-delete-bin-line"></i></span>
+          </div>
           <div class="mt-4 pt-2 fs-15 mx-4 mx-sm-5">
             <h4>Are you Sure?</h4>
             <p class="text-muted mx-4 mb-0">Are you sure you want to remove this partnership record?</p>
@@ -1073,7 +1074,9 @@
           </div>
         </div>
       </div>
-      <div class="modal-footer">
+      <div class="modal-footer flex-wrap gap-2">
+        <button type="button" class="btn btn-danger" onclick="monitoringExportReport('pdf')"><i class="ri-file-pdf-line me-1"></i>Export PDF</button>
+        <button type="button" class="btn btn-success" onclick="monitoringExportReport('excel')"><i class="ri-table-line me-1"></i>Export Excel</button>
         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
       </div>
     </div>
@@ -1154,7 +1157,7 @@
 <script src="/velzon/assets/js/shared/status-colors.js?v=20261121b"></script>
 <!-- gridjs init — same script the standalone Registry page used; Monitoring
      is now this page's only home, see docs/SYSTEM_AUDIT_2026-07-16.md -->
-<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261121e"></script>
+<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261123e"></script>
 <!-- App js -->
 <script src="/velzon/assets/js/app.js"></script>
 <script src="/js/ciprms-uploader.js"></script>

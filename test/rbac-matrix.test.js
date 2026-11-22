@@ -86,7 +86,7 @@ describe('the matrix as rendered', () => {
     expect(matrix['Document Library'].college.level).toBe('none');
     expect(matrix['Document Library'].partner.level).toBe('none');
     expect(matrix['Notifications'].college.text).toBe('Personal Only');   // bell + its own Notifications page (reopened 2026-09-26)
-    expect(matrix['Notifications'].partner.text).toBe('Bell Only (Personal)');
+    expect(matrix['Notifications'].partner.text).toBe('Personal Only');
     expect(matrix['Document Requests'].partner.text).toBe('Submit MOA/MOU Only');
     expect(matrix['User Management'].staff.text).toBe('Full (except Administrator accounts)');
     expect(matrix['Reports & Analytics'].staff.text).toBe('Full, Personal Audit Trail Only');

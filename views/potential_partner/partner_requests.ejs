@@ -377,7 +377,7 @@
 <script src="/velzon/assets/libs/feather-icons/feather.min.js"></script>
 <script src="/velzon/assets/js/app.js"></script>
 <script src="/js/ciprms-uploader.js"></script>
-<script src="/velzon/assets/js/pages/idp-ocr-widget.js"></script>
+<script src="/velzon/assets/js/pages/idp-ocr-widget.js?v=3"></script>
 <script>
     /* ─── SECTION SWITCHER ─── */
     function switchSection(sec) {
@@ -620,6 +620,7 @@
             }
             if (window.IDP) {
                 IDP.renderResult('ocr-idp-panel', result, {
+                    hideConfidence: true,   // Partner page: no Confidence Scores row
                     onCancelDuplicate: function (documentId) {
                         if (!documentId) return;
                         fetch('/api/documents/' + documentId + '/organize', {

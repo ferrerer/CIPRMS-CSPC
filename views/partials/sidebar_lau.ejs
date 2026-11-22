@@ -68,6 +68,18 @@
                     </a>
                 </li>
 
+                <!-- Notifications (same as the other roles' sidebars): new Partnership Requests and drafts uploaded by
+                     the Administrator/Staff. The unread count is kept current by the header's paintNotifBadge(). -->
+                <li class="nav-item">
+                    <a class="nav-link menu-link <%= (typeof activePage !== 'undefined' && activePage === 'notifications') ? 'active' : '' %>"
+                        href="/lau/notifications">
+                        <i class="ri-notification-3-line"></i>
+                        <span>Notifications</span>
+                        <span class="badge bg-danger rounded-pill" id="sidebar-notif-badge"
+                            style="display:none;margin-left:auto;"></span>
+                    </a>
+                </li>
+
                 <li class="menu-title"><span>Account</span></li>
 
                 <li class="nav-item">

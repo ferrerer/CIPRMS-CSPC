@@ -81,9 +81,7 @@ describe('Department / Institution / Position are fixed at registration', () => 
   }
 
   test.each([
-    ['College Dean', 'Auth. Personnel', '/api/personnel/profile'],
-    ['CIRL Staff', 'Staff', '/api/staff/profile'],
-    ['Administrator', 'Administrator', '/api/admin/profile']
+    ['College Dean', 'Auth. Personnel', '/api/personnel/profile']   // Administrator / CIRL Staff may edit them (see below)
   ])('%s: Settings shows the registered values and ignores any attempt to change them', async (_label, role, url) => {
     const { agent, user } = await registeredAgent(role);
 
@@ -163,10 +161,28 @@ describe('Department / Institution / Position are fixed at registration', () => 
   });
 });
 
-describe('Contact Number is fixed at registration (Administrator, CIRL Staff, College Dean)', () => {
-  const CASES = [
+describe('Administrator and CIRL Staff can edit every account detail in Settings', () => {
+  test.each([
     ['Administrator', 'Administrator', '/api/admin/profile', '/admin/settings'],
-    ['CIRL Staff', 'Staff', '/api/staff/profile', '/staff/settings'],
+    ['CIRL Staff', 'Staff', '/api/staff/profile', '/staff/settings']
+  ])('%s: saves name, department, designation, institution, contact number and website (validated like account setup)', async (_label, role, url, page) => {
+    const { agent, user } = await agentFor(role);
+    const html = (await agent.get(page)).text;
+    for (const id of ['s-contact', 's-dept', 's-position', 's-institution', 's-website']) {
+      expect(html.match(new RegExp('<input[^>]*id="' + id + '"[^>]*>'))[0]).not.toContain(' readonly');
+    }
+    const ok = await agent.post(url).send({ name: 'jesttest Full Edit', unit: 'CCS', position: 'Coordinator', institution: 'CSPC', contactNumber: '0917-555-1234', website: 'www.cspc.edu.ph' });
+    expect(ok.status).toBe(200);
+    expect(ok.body.profile).toMatchObject({ name: 'jesttest Full Edit', dept: 'CCS', position: 'Coordinator', institution: 'CSPC', contactNumber: '0917-555-1234', website: 'https://www.cspc.edu.ph' });
+    const saved = await getDb().collection('users').findOne({ email: user.email });
+    expect(saved).toMatchObject({ unit: 'CCS', position: 'Coordinator', institution: 'CSPC', contactNumber: '0917-555-1234' });
+    expect((await agent.post(url).send({ name: 'x', unit: 'CCS', position: 'P', institution: 'I', contactNumber: 'abc' })).status).toBe(400);
+    expect((await agent.post(url).send({ name: 'x', unit: 'CCS', position: 'P', institution: 'I', contactNumber: '0917-555-1234', website: 'not a site' })).status).toBe(400);
+  });
+});
+
+describe('Contact Number is fixed at registration (College Dean)', () => {
+  const CASES = [
     ['College Dean', 'Auth. Personnel', '/api/personnel/profile', '/personnel/settings']
   ];
   const REGISTERED_NUMBER = '0917-123-4567';

@@ -872,8 +872,15 @@ function monitoringGenerateReport() {
   if (status) params.set('status', status);
   if (unit) params.set('unit', unit);
 
+  _monReportParams = new URLSearchParams(params);   // kept for Export PDF / Export Excel in the preview
   var modalEl = document.getElementById('monReportPreviewModal');
   var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+  // Lock the page behind the report while it is open (the report itself still scrolls inside its window).
+  if (!modalEl.dataset.scrollLock) {
+    modalEl.dataset.scrollLock = '1';
+    modalEl.addEventListener('show.bs.modal', function () { document.documentElement.style.overflow = 'hidden'; document.body.style.overflow = 'hidden'; });
+    modalEl.addEventListener('hidden.bs.modal', function () { document.documentElement.style.overflow = ''; document.body.style.overflow = ''; });
+  }
   monShowRpmLoading();
   modal.show();
 
@@ -896,6 +903,16 @@ function monitoringGenerateReport() {
 }
 
 var _monPreviewRequestSeq = 0; // same stale-response guard as reports.ejs's _previewRequestSeq
+var _monReportParams = null;
+
+// Export the report shown in the preview — same filters, same export endpoint the Reports page's Custom Report
+// Builder uses (GET /api/reports/partnerships/pdf|excel), opened in a new tab.
+function monitoringExportReport(format) {
+  if (!_monReportParams) return;
+  var q = new URLSearchParams(_monReportParams);
+  q.set('source', 'builder');   // the PDF prints the applied filters, like the Reports page
+  window.open('/api/reports/partnerships/' + format + '?' + q.toString(), '_blank');
+}
 
 function monShowRpmLoading() {
   document.getElementById('mon-rpm-loading').style.display = '';
@@ -928,7 +945,7 @@ function monRenderReportPreview(data) {
     var LABELS = { reportType: 'Report Type', category: 'Category', dateFrom: 'Date From', dateTo: 'Date To', unit: 'College / Unit', agreementType: 'Agreement Type', country: 'Country', status: 'Status', compareBy: 'Compare By', groupBy: 'Group By' };
     Object.entries(data.filters).forEach(function (pair) {
       var label = LABELS[pair[0]] || pair[0];
-      badgesHtml += '<span class="badge bg-secondary-subtle text-secondary me-1 mb-1"><strong class="text-secondary-emphasis">' + escapeHtml(label) + ':</strong> ' + escapeHtml(pair[1]) + '</span>';
+      badgesHtml += '<span class="badge bg-light text-body border me-1 mb-1"><strong>' + escapeHtml(label) + ':</strong> ' + escapeHtml(pair[1]) + '</span>';
     });
   }
   filtersEl.innerHTML = badgesHtml;
@@ -972,9 +989,14 @@ function monRenderReportPreview(data) {
         + '<td class="fw-semibold">' + escapeHtml(p.inst) + '</td>'
         + '<td>' + escapeHtml(p.country || '—') + '</td>'
         + '<td>' + escapeHtml(p.region || '—') + '</td>'
-        + '<td><span class="badge bg-primary-subtle text-primary">' + escapeHtml(p.type || '—') + '</span></td>'
-        + '<td>' + escapeHtml((Array.isArray(p.nature) ? p.nature.join(', ') : p.nature) || '—') + '</td>'
-        + '<td><span class="badge bg-secondary-subtle text-secondary">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
+        + '<td>' + escapeHtml(p.type || '—') + '</td>'
+        + '<td>' + (function (n) {
+                            n = (Array.isArray(n) ? n : String(n || '').split(',')).map(function (x) { return String(x).trim(); }).filter(Boolean);
+                            if (!n.length) return '—';
+                            return '<span title="' + escapeHtml(n.join(', ')) + '">' + escapeHtml(n[0]) + '</span>'
+                                + (n.length > 1 ? ' <span class="badge bg-light text-muted border nature-more-btn" tabindex="0" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title="' + escapeHtml(n.slice(1).map(escapeHtml).join(';<br>')) + '">+' + (n.length - 1) + ' more</span>' : '');
+                        })(p.nature) + '</td>'
+        + '<td><span class="badge bg-light text-body border">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
         + '<td>' + escapeHtml(p.start || '—') + '</td>'
         + '<td>' + escapeHtml(p.end || '—') + '</td>'
         + '<td><span class="badge ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span></td>'
@@ -1064,7 +1086,7 @@ function buildGrid() {
     var endColor    = p.status==='Expired'?'#dc2626':p.status==='Expiring Soon'?'#ea580c':'#15803d';
     var instHtml    = escapeHtml(p.inst)+(p.coordinator?'<div class="text-muted fs-11"><i class="ri-user-line me-1"></i>'+escapeHtml(p.coordinator)+'</div>':'');
     var countryHtml = escapeHtml(p.country)+'<div class="text-muted fs-11"><i class="ri-map-pin-line me-1"></i>'+escapeHtml(p.region)+'</div>';
-    var endHtml     = '<span style="color:'+endColor+';font-weight:600">'+p.end+'</span>';
+    var endHtml     = '<span class="text-body">'+p.end+'</span>';   // End date in plain black text
     // Mutation controls (Edit/Approve/Renew/Delete) are Administrator- and
     // Staff-only — the View button always shows for every other role.
     // POST/PATCH/DELETE /api/partnerships enforce this server-side regardless.
@@ -1078,10 +1100,17 @@ function buildGrid() {
         ?'<button class="btn btn-sm btn-soft-warning" title="Renew" aria-label="Renew" onclick="openRenewModal('+p.id+')"><i class="ri-refresh-line"></i></button>':''))
       +(canManage ? '<button class="btn btn-sm btn-soft-danger" title="Delete" aria-label="Delete" onclick="openDeleteModal('+p.id+')"><i class="ri-delete-bin-line"></i></button>' : '')
       +'</div>';
-    // nature can be an array (multi-select, 2026-09-19) — join for display,
-    // same treatment as Unit already gets in the View modal below.
-    var natureDisplay = Array.isArray(p.nature) ? p.nature.join(', ') : p.nature;
-    return [gridjs.html(instHtml), gridjs.html(countryHtml), natureDisplay, p.start, gridjs.html(endHtml), gridjs.html(daysBadge), gridjs.html(statusBadge), gridjs.html(actions)];
+    // Nature (can be several): the first one, then a light "+N more" tag whose hover tooltip lists the rest —
+    // same as the Requests page's Document Type column. The cell never wraps onto extra lines.
+    var natures = (Array.isArray(p.nature) ? p.nature : String(p.nature || '').split(',')).map(function (n) { return String(n).trim(); }).filter(Boolean);
+    var natureHtml = natures.length
+      ? '<span title="' + escapeHtml(natures.join(', ')) + '">' + escapeHtml(natures[0]) + '</span>'
+        + (natures.length > 1 ? ' <span class="badge bg-light text-muted border nature-more-btn" tabindex="0" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title="' + escapeHtml(natures.slice(1).map(escapeHtml).join(';<br>')) + '">+' + (natures.length - 1) + ' more</span>' : '')
+      : '—';
+    if (!window.__natureMoreTooltip && window.bootstrap && bootstrap.Tooltip) {
+      window.__natureMoreTooltip = new bootstrap.Tooltip(document.body, { selector: '.nature-more-btn', trigger: 'hover focus', container: 'body' });
+    }
+    return [gridjs.html(instHtml), gridjs.html(countryHtml), gridjs.html(natureHtml), p.start, gridjs.html(endHtml), gridjs.html(daysBadge), gridjs.html(statusBadge), gridjs.html(actions)];
   });
 
   var totalPages = Math.ceil(data.length / regPageSize);

@@ -16,6 +16,10 @@
 <style>
   /* Merged profile + settings card: divider between the two columns (right border on wide screens,
      bottom border when they stack). */
+  /* More breathing room: profile info lines and form fields were too compact. */
+  .settings-profile-col .border-top > .d-flex { margin-bottom: 1rem !important; }
+  .settings-profile-col .border-top > .d-flex:last-child { margin-bottom: 0 !important; }
+  .settings-profile-col .border-top { padding-top: 1.25rem !important; }
   .settings-profile-col { border-bottom: 1px solid var(--vz-border-color, #e9ebec); }
   @media (min-width: 992px) { .settings-profile-col { border-bottom: 0; border-right: 1px solid var(--vz-border-color, #e9ebec); } }
 </style>
@@ -81,6 +85,10 @@
                     <i class="ri-phone-line text-primary"></i>
                     <span id="info-phone">—</span>
                   </div>
+                  <div class="d-flex align-items-center gap-2 mt-2 text-muted small">
+                    <i class="ri-global-line text-primary"></i>
+                    <span id="info-website" class="text-truncate">—</span>
+                  </div>
                 </div>
               </div>
               </div>
@@ -113,27 +121,31 @@
                           <input type="text" class="form-control" id="s-name" oninput="updateCard()">
                         </div>
                         <div class="col-md-6">
-                          <label class="form-label" for="s-email">Email Address <span class="text-danger">*</span></label>
+                          <label class="form-label" for="s-email">Email Address</label>
                           <input type="email" class="form-control" id="s-email" value="<%= userEmail %>" disabled title="Email is tied to your login and cannot be changed here.">
                         </div>
                         <div class="col-md-6">
                           <label class="form-label" for="s-contact">Contact Number</label>
-                          <input type="text" class="form-control" id="s-contact" readonly title="Set when your account was registered and cannot be changed here.">
+                          <input type="text" class="form-control" id="s-contact" oninput="updateCard()">
                         </div>
                         <div class="col-md-6">
                           <label class="form-label" for="s-dept">Department / College</label>
-                          <input type="text" class="form-control" id="s-dept" readonly title="Set when your account was registered and cannot be changed here.">
+                          <input type="text" class="form-control" id="s-dept" oninput="updateCard()">
                         </div>
                         <div class="col-md-6">
                           <label class="form-label" for="s-position">Designation / Position</label>
-                          <input type="text" class="form-control" id="s-position" readonly title="Set when your account was registered and cannot be changed here.">
+                          <input type="text" class="form-control" id="s-position" oninput="updateCard()">
                         </div>
                         <div class="col-md-6">
                           <label class="form-label" for="s-institution">Institution / School</label>
-                          <input type="text" class="form-control" id="s-institution" readonly title="Set when your account was registered and cannot be changed here.">
+                          <input type="text" class="form-control" id="s-institution" oninput="updateCard()">
                         </div>
                         <div class="col-12">
-                          <div class="form-text"><i class="ri-lock-line me-1"></i>Department, position, institution and contact number are set when your account is registered and cannot be changed here. Contact the CIRL Administrator if they need updating.</div>
+                          <label class="form-label" for="s-website">School / Institution Website</label>
+                          <div class="input-group">
+                            <input type="text" class="form-control" id="s-website">
+                            <a class="btn btn-outline-secondary d-none" id="s-website-open" href="#" target="_blank" rel="noopener noreferrer"><i class="ri-external-link-line me-1"></i>Open</a>
+                          </div>
                         </div>
                       </div>
                       <div class="d-flex justify-content-end gap-2 mt-4 pt-3 border-top">
@@ -282,6 +294,8 @@
       if (data.dept)        document.getElementById('s-dept').value        = data.dept;
       if (data.position)    document.getElementById('s-position').value    = data.position;
       if (data.institution) document.getElementById('s-institution').value = data.institution;
+      (function (w) { var i = document.getElementById('s-website'), a = document.getElementById('s-website-open'); i.value = w || ''; var l = document.getElementById('info-website'); if (l) { l.textContent = ''; if (/^https?:\/\//i.test(w || '')) { var x = document.createElement('a'); x.href = w; x.target = '_blank'; x.rel = 'noopener noreferrer'; x.textContent = w.replace(/^https?:\/\//i, '').replace(/\/$/, ''); l.appendChild(x); } else { l.textContent = '—'; } }
+        if (/^https?:\/\//i.test(w || '')) { a.href = w; a.classList.remove('d-none'); } else { a.classList.add('d-none'); } })(data.website);
       document.getElementById('s-contact').value = data.contactNumber || '';
       updateCard();
     } catch(err) {
@@ -292,7 +306,7 @@
 
   async function saveSettings() {
     const name = document.getElementById('s-name').value.trim();
-    // Only the name is editable: department, position, institution and contact number are fixed when the account is registered.
+    // Every field is editable for Administrator / CIRL Staff (the server validates them like account setup).
     if (!name)
       return showToast('<i class="ri-error-warning-line me-1"></i>Please enter your full name.', '#f06548');
     const btn = document.getElementById('save-btn');
@@ -302,7 +316,15 @@
       // and cannot be changed from this form (server ignores it either way).
       const res = await fetch('/api/admin/profile', {
         method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ name })
+        // Administrator / CIRL Staff edit every account detail here (validated server-side like account setup).
+        body: JSON.stringify({
+          name,
+          unit: document.getElementById('s-dept').value.trim(),
+          position: document.getElementById('s-position').value.trim(),
+          institution: document.getElementById('s-institution').value.trim(),
+          contactNumber: document.getElementById('s-contact').value.trim(),
+          website: document.getElementById('s-website').value.trim()
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Save failed.');
@@ -318,7 +340,7 @@
   }
 
   function resetForm() {
-    loadProfile();   // Cancel: back to the saved name; the other fields are read-only
+    loadProfile();   // Cancel: back to the saved details
   }
 
   function showToast(msg, bg = '#405189') {

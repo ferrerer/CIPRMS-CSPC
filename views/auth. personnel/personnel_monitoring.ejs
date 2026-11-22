@@ -10,6 +10,11 @@
     <link href="/velzon/assets/css/icons.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/app.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/custom.min.css" rel="stylesheet" type="text/css" />
+<style>
+    /* Cancel-request confirmation opens over the Document Request Details modal: one layer above it and its backdrop. */
+    .modal.dr-cancel-stack { z-index: 1065; }
+    .modal-backdrop.dr-cancel-backdrop { z-index: 1060; }
+</style>
 </head>
 <body>
 
@@ -248,6 +253,26 @@
                     <div class="modal-footer">
                         <a href="#" id="draft-preview-download-btn" class="btn btn-success btn-sm"><i class="ri-download-2-line me-1"></i>Download</a>
                         <button type="button" class="btn btn-light btn-sm" data-bs-dismiss="modal">Close</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cancel-request confirmation (replaces the browser's confirm() pop-up). Opens ON TOP of the
+             Document Request Details modal, so it sits one layer higher (see .dr-cancel-stack below). -->
+        <div class="modal fade dr-cancel-stack" id="dr-cancel-modal" tabindex="-1" aria-hidden="true" aria-labelledby="dr-cancel-title">
+            <div class="modal-dialog modal-dialog-centered modal-sm">
+                <div class="modal-content border-0">
+                    <div class="modal-body text-center p-4">
+                        <div class="avatar-md mx-auto mb-3">
+                            <span class="avatar-title rounded-circle bg-danger-subtle text-danger fs-1"><i class="ri-close-circle-line"></i></span>
+                        </div>
+                        <h5 class="mb-2" id="dr-cancel-title">Cancel this request?</h5>
+                        <p class="text-muted mb-0">This document request will be withdrawn and CIRL will no longer process it. This cannot be undone.</p>
+                    </div>
+                    <div class="modal-footer justify-content-center border-0 pt-0 pb-4">
+                        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Keep Request</button>
+                        <button type="button" class="btn btn-danger" id="dr-cancel-confirm-btn"><i class="ri-close-circle-line me-1"></i>Yes, Cancel It</button>
                     </div>
                 </div>
             </div>
@@ -763,8 +788,33 @@
         if (!draftDetailReturnTo && draftPreviewReturnTo !== 'dr-detail-modal') resetBreadcrumb();
     });
 
+    // Cancel asks in the in-page confirmation modal (#dr-cancel-modal) instead of the browser's confirm().
+    var drCancelPending = null;   // { id, btn } waiting for "Yes, Cancel It"
+    (function () {
+        var el = document.getElementById('dr-cancel-modal');
+        // Stacked on top of the open details modal: lift this modal's backdrop above the first one.
+        el.addEventListener('shown.bs.modal', function () {
+            var backdrops = document.querySelectorAll('.modal-backdrop');
+            if (backdrops.length) backdrops[backdrops.length - 1].classList.add('dr-cancel-backdrop');
+        });
+        el.addEventListener('hidden.bs.modal', function () {
+            drCancelPending = null;
+            // Bootstrap removed the details modal's scroll lock with this one; put it back if that modal is still open.
+            if (document.querySelector('#dr-detail-modal.show')) document.body.classList.add('modal-open');
+        });
+        document.getElementById('dr-cancel-confirm-btn').addEventListener('click', function () {
+            var pending = drCancelPending;
+            bootstrap.Modal.getOrCreateInstance(el).hide();
+            if (pending) doCancelDocRequest(pending.id, pending.btn);
+        });
+    })();
+
     function cancelDocRequest(id, btn) {
-        if (!confirm('Cancel this document request?')) return;
+        drCancelPending = { id: id, btn: btn };
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('dr-cancel-modal')).show();
+    }
+
+    function doCancelDocRequest(id, btn) {
         return CIPRMS.busy(btn, function () {
             return CIPRMS.api('/api/document-requests/' + id, { method: 'DELETE', quiet: true }).then(function (res) {
                 if (res.ok) {

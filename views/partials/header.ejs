@@ -10,8 +10,8 @@
             <div class="d-flex">
                 <!-- LOGO -->
     <div class="navbar-brand-box horizontal-logo">
-        <% var homeDashboard = (typeof user !== 'undefined' && user) ? (user.role === 'Administrator' ? '/dashboard' : user.role === 'Auth. Personnel' ? '/personnel/monitoring' : user.role === 'potential_partner' ? '/partner/monitoring' : '/staff/dashboard') : '/'; %>
-        <% var notificationsHref = (typeof user !== 'undefined' && user) ? (user.role === 'Auth. Personnel' ? '/personnel/notifications' : user.role === 'potential_partner' ? '/partner/notifications' : user.role === 'Staff' ? '/staff/notifications' : '/notifications') : '/notifications'; %>
+        <% var homeDashboard = (typeof user !== 'undefined' && user) ? (user.role === 'Administrator' ? '/dashboard' : user.role === 'Auth. Personnel' ? '/personnel/monitoring' : user.role === 'potential_partner' ? '/partner/monitoring' : user.role === 'LAU' ? '/lau/monitoring' : '/staff/dashboard') : '/'; %>
+        <% var notificationsHref = (typeof user !== 'undefined' && user) ? (user.role === 'Auth. Personnel' ? '/personnel/notifications' : user.role === 'potential_partner' ? '/partner/notifications' : user.role === 'Staff' ? '/staff/notifications' : user.role === 'LAU' ? '/lau/notifications' : '/notifications') : '/notifications'; %>
         <%
             // College Dean (backend role "Auth. Personnel") and Potential Partner: no Search bar. Partner also has no link to a
             // Notifications PAGE (it has none); College Dean's page is open again (2026-09-26), so its bell shows
@@ -25,6 +25,13 @@
             Document Library. Linked for every page so the bell looks the same everywhere; the rules are identical to the
             bridge's, so pages that load both are unaffected. %>
         <link rel="stylesheet" href="/velzon/assets/css/header-notifications.css">
+        <% if (true) { %>
+        <%# Every role, every page: every box (card) is a sharp-cornered rectangle. %>
+        <style>
+            .page-content .card, .page-content .card > .card-header, .page-content .card > .card-body,
+            .page-content .card > .card-footer, .page-content .card-header-tabs .nav-link { border-radius: 0 !important; }
+        </style>
+        <% } %>
         <link rel="stylesheet" href="/velzon/assets/css/status-expiring.css?v=20261121g">
 
         <a href="<%= homeDashboard %>" class="logo logo-dark">
@@ -167,7 +174,7 @@
                                     <div class="text-center text-muted py-4 fs-13">Loading…</div>
                                 </div>
 <%# College Dean gets "View All Notifications" too (its Notifications page is open again); Partner still has no such page. %>
-<% if (!isPartnerUser) { %>
+<% if (true) { /* every role now has a Notifications page (Partner's is back, 2026-11) */ %>
                                 <div class="my-3 text-center view-all">
                                     <a href="<%= notificationsHref %>" class="btn btn-soft-success waves-effect waves-light">View All Notifications <i class="ri-arrow-right-line align-middle"></i></a>
                                 </div>
@@ -189,10 +196,15 @@
                         </span>
                     </button>
                     <div class="dropdown-menu dropdown-menu-end">
-                        <h6 class="dropdown-header">Welcome!</h6>
+                        <% if (!(user && user.role === 'LAU')) { %>
+                            <h6 class="dropdown-header">Welcome!</h6>
+                        <% } %>
                 <% var settingsHref = (typeof user !== 'undefined' && user) ? (user.role === 'Administrator' ? '/admin/settings' : user.role === 'Auth. Personnel' ? '/personnel/settings' : user.role === 'potential_partner' ? '/partner/settings' : user.role === 'Staff' ? '/staff/settings' : '/') : '/'; %>
 <% // Every role gets only Settings and Logout here (Profile duplicated Settings; Notifications has the bell icon). %>
+<% // LAU has no Settings page (the link only bounced back to the home page), so it gets Logout only. %>
+                <% if (!(user && user.role === 'LAU')) { %>
                 <a class="dropdown-item" href="<%= settingsHref %>"><i class="mdi mdi-cog-outline text-muted fs-16 align-middle me-1"></i> <span class="align-middle">Settings</span></a>
+                <% } %>
                 <a class="dropdown-item" href="#" onclick="event.preventDefault(); fetch('/logout', {method:'POST'}).then(function(){ location.href='/'; });"><i class="mdi mdi-logout text-muted fs-16 align-middle me-1"></i> <span class="align-middle">Logout</span></a>
                     </div>
                 </div>
