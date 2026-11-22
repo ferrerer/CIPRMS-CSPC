@@ -705,9 +705,11 @@
     }
 
     function updateStats() {
-        const total = allDocs.length;
-        const moa = allDocs.filter(d => d.type === 'MOA').length;
-        const mou = allDocs.filter(d => d.type === 'MOU').length;
+        // Archived documents are not counted in Total / MOA / MOU (they still show under the Archived folder).
+        const live = allDocs.filter(d => !d.archived);
+        const total = live.length;
+        const moa = live.filter(d => d.type === 'MOA').length;
+        const mou = live.filter(d => d.type === 'MOU').length;
         
         document.getElementById('stat-total').textContent = total;
         document.getElementById('stat-moa').textContent = moa;

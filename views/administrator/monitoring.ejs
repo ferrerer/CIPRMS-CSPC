@@ -113,6 +113,10 @@
       [data-bs-theme="dark"] #ac-dropdown, [data-bs-theme="dark"] #e-ac-dropdown { box-shadow: 0 10px 28px rgba(0,0,0,.4); }
 
       /* Filter Partnerships: compact search box + all filters on one row, sharing the remaining width. */
+      /* Partnerships about to expire (14 days or less): alarming red Status with a gentle pulse. */
+      .status-alarm { animation: statusAlarmPulse 1.6s ease-in-out infinite; }
+      @keyframes statusAlarmPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(240, 101, 72, .55); } 50% { box-shadow: 0 0 0 5px rgba(240, 101, 72, 0); } }
+      @media (prefers-reduced-motion: reduce) { .status-alarm { animation: none; } }
       .mon-filter-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-end; }
       /* Compact, fixed-width filters on the left; the search box sits at the right end and takes the rest. */
       .mon-filter-search { flex: 0 0 auto; order: 99; margin-left: auto; }
@@ -1157,7 +1161,7 @@
 <script src="/velzon/assets/js/shared/status-colors.js?v=20261121b"></script>
 <!-- gridjs init — same script the standalone Registry page used; Monitoring
      is now this page's only home, see docs/SYSTEM_AUDIT_2026-07-16.md -->
-<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261123e"></script>
+<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261123j"></script>
 <!-- App js -->
 <script src="/velzon/assets/js/app.js"></script>
 <script src="/js/ciprms-uploader.js"></script>

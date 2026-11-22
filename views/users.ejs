@@ -36,7 +36,8 @@
     .rbac-none i   { color: var(--vz-danger, #f06548); }
     .rbac-legend-swatch.rbac-full, .rbac-legend-swatch.rbac-scoped, .rbac-legend-swatch.rbac-none { border: 1px solid var(--vz-border-color, #e9ebec); font-size: 1.35rem; }
     .rbac-table tbody tr:hover > td { background-color: transparent !important; --vz-table-accent-bg: transparent; box-shadow: none !important; }
-    .rbac-legend { display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: flex-start; }
+    .rbac-legend { display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: center; }
+    .rbac-legend-title { font-size: .9rem; }
     .rbac-legend-item { display: flex; align-items: flex-start; gap: .6rem; max-width: 360px; }
     .rbac-legend-swatch { flex: 0 0 auto; width: 2rem; height: 2rem; border-radius: .35rem; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
     @media (max-width: 991.98px) { .rbac-table { min-width: 860px; } }   /* small screens: scroll rather than crush */
@@ -248,8 +249,9 @@
                                 </div>
                                 <!-- Legend -->
                                 <div class="p-3 border-top">
-                                    <h6 class="fs-13 text-uppercase text-muted mb-3"><i class="ri-information-line me-1"></i>Legend</h6>
+                                    <!-- "Legend:" first, then the three levels on the same row. -->
                                     <div class="rbac-legend">
+                                        <span class="rbac-legend-title fw-semibold">Legend:</span>
                                         <div class="rbac-legend-item">
                                             <span class="rbac-legend-swatch rbac-full"><i class="ri-checkbox-circle-fill"></i></span>
                                             <div><div class="fw-semibold fs-13">Full Access</div><div class="text-muted fs-12">Can use every part of the feature (view, create, edit, delete, review, approve).</div></div>
@@ -630,10 +632,41 @@
   // â”€â”€ Toggle Active/Inactive â€” persists to MongoDB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Permanently removes the account (the person can no longer sign in at all). Unlike Deactivate this cannot be
   // undone, so it asks first. Their past requests, documents and audit-trail entries are kept.
-  function deleteUser(id) {
+  // In-page confirmation (replaces the browser's confirm()). Resolves true on "Yes, Delete", false otherwise.
+  function askDeleteUser(u) {
+    let el = document.getElementById('usr-delete-modal');
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'modal fade';
+      el.id = 'usr-delete-modal';
+      el.tabIndex = -1;
+      el.setAttribute('aria-hidden', 'true');
+      el.innerHTML =
+        '<div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0"><div class="modal-body text-center p-4">' +
+        '<div class="avatar-lg mx-auto mb-3"><span class="avatar-title rounded-circle bg-danger-subtle text-danger" style="font-size:2.75rem;"><i class="ri-delete-bin-line"></i></span></div>' +
+        '<h4 class="mb-2">Delete this account?</h4>' +
+        '<p class="mb-1"><strong id="usr-del-name"></strong> <span class="text-muted" id="usr-del-email"></span></p>' +
+        '<p class="text-muted mb-0">This permanently removes the account and cannot be undone. To only block access for now, use <strong>Deactivate</strong> instead.</p>' +
+        '<div class="d-flex gap-2 justify-content-center mt-4"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>' +
+        '<button type="button" class="btn btn-danger" id="usr-del-ok"><i class="ri-delete-bin-line me-1"></i>Yes, Delete</button></div>' +
+        '</div></div></div>';
+      document.body.appendChild(el);
+    }
+    el.querySelector('#usr-del-name').textContent = u.name || '';
+    el.querySelector('#usr-del-email').textContent = u.email ? '(' + u.email + ')' : '';
+    const modal = bootstrap.Modal.getOrCreateInstance(el);
+    return new Promise(resolve => {
+      let ok = false;
+      el.querySelector('#usr-del-ok').onclick = () => { ok = true; modal.hide(); };
+      el.addEventListener('hidden.bs.modal', () => resolve(ok), { once: true });
+      modal.show();
+    });
+  }
+
+  async function deleteUser(id) {
     const u = users.find(x => x.id === id);
     if (!u) return;
-    if (!confirm(`Delete the account of ${u.name} (${u.email})?\n\nThis permanently removes the account and cannot be undone. To only block access for now, use Deactivate instead.`)) return;
+    if (!(await askDeleteUser(u))) return;
     apiDelete(id)
       .then(data => {
         if (data.success) {

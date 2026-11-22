@@ -782,7 +782,7 @@ function sbadge(s) {
 // consolidation), so that validity information isn't lost when the two
 // tables were merged into one.
 function daysBadgeHtml(d, s) {
-  if (s === 'Expired') return '<span class="badge bg-danger-subtle text-danger">Expired</span>';
+  if (s === 'Expired') return '<span class="badge bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>';   // matches the Expired status
   if (d <= 14)         return '<span class="badge bg-danger">Critical (' + d + 'd)</span>';
   if (d <= 90)         return '<span class="badge bg-expiring-subtle text-expiring">' + d + ' days</span>';
   return '<span class="badge bg-success-subtle text-success">' + d + ' days</span>';
@@ -1081,7 +1081,14 @@ function buildGrid() {
     // View/Preview modal (openViewModal below) and everywhere else (Edit
     // form, Reports, filters); this table just no longer duplicates them.
     // .table-pill (assets/css/status-expiring.css) makes the table's Days Left / Status badges larger.
-    var statusBadge = sbadge(p.status).replace('class="badge ', 'class="badge table-pill ');
+    // On the verge of expiring (Expiring Soon with 14 days or less): the Status itself raises the alarm —
+    // solid red, alarm icon and a gentle pulse — instead of the ordinary orange 'Expiring Soon'.
+    var critical = p.status === 'Expiring Soon' && p.days <= 14;
+    var statusBadge = (critical
+      ? '<span class="badge bg-danger status-alarm" title="Critical: ' + p.days + ' day(s) left"><i class="ri-alarm-warning-fill me-1"></i>' + p.status + '</span>'
+      : p.status === 'Expired'   // already expired: solid red with a stop icon (no pulse — it has happened, not about to)
+        ? '<span class="badge bg-danger" title="This partnership has expired"><i class="ri-close-circle-fill me-1"></i>Expired</span>'
+        : sbadge(p.status)).replace('class="badge ', 'class="badge table-pill ');
     var daysBadge   = daysBadgeHtml(p.days, p.status).replace('class="badge ', 'class="badge table-pill ');
     var endColor    = p.status==='Expired'?'#dc2626':p.status==='Expiring Soon'?'#ea580c':'#15803d';
     var instHtml    = escapeHtml(p.inst)+(p.coordinator?'<div class="text-muted fs-11"><i class="ri-user-line me-1"></i>'+escapeHtml(p.coordinator)+'</div>':'');
