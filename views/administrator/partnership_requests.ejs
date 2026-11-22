@@ -790,6 +790,16 @@
               <i class="ri-upload-2-line me-1"></i>Upload
             </button>
             <p class="text-muted fs-12 mt-2 mb-0">A file, a note, or both — at least one is required. A file (PDF, JPG, PNG, or DOCX, max 10MB) is archived to the Document Library; collaborators are notified automatically.</p>
+            <!-- 2026-11 (first-upload-goes-missing fix): POST /api/requests/:id/documents holds the file
+                 (duplicateWarningGate) instead of archiving/attaching it when findPossibleDuplicates
+                 matches something — previously only res.ok was checked (still true on a held response), so
+                 the upload silently vanished while a "New draft version uploaded." success toast still showed. -->
+            <div id="pr-draft-duplicate-box" class="alert alert-warning mt-2 mb-0 py-2 fs-13" style="display:none">
+              <div class="fw-semibold mb-1"><i class="ri-error-warning-line me-1"></i><span id="pr-draft-duplicate-heading"></span></div>
+              <div id="pr-draft-duplicate-matches" class="mb-2"></div>
+              <button type="button" class="btn btn-sm btn-warning" onclick="prAcknowledgeDuplicateAndContinue()">Upload Anyway</button>
+              <button type="button" class="btn btn-sm btn-light" onclick="prCancelDuplicateUpload()">Cancel</button>
+            </div>
           </div>
           <div id="pr-draft-closed-note" class="alert alert-secondary fs-13 mb-0" style="display:none;">
             <i class="ri-lock-line me-1"></i>This request has already been decided — no further documents can be added.
@@ -1011,6 +1021,16 @@
                 <span class="badge bg-success-subtle text-success"><i class="ri-checkbox-circle-line me-1"></i>Document attached — form auto-filled below</span>
                 <button type="button" class="btn btn-sm btn-light ms-2" onclick="priApplyOcrToForm()">Re-apply suggested values</button>
                 <div id="pri-ocr-idp-panel" class="mt-3" style="display:none"></div>
+              </div>
+              <!-- 2026-11 (first-upload-goes-missing fix): POST /api/ocr/confirm holds the file instead of
+                   archiving it when findPossibleDuplicates matches something — this was previously ignored
+                   entirely (the client only checked res.ok, which is still true), so the file sat under its
+                   OCR job until the job's TTL silently deleted it, with no attachmentLink ever set. -->
+              <div id="pri-ocr-duplicate-box" class="alert alert-warning mt-3 mb-0 py-2 fs-13" style="display:none">
+                <div class="fw-semibold mb-1"><i class="ri-error-warning-line me-1"></i><span id="pri-ocr-duplicate-heading"></span></div>
+                <div id="pri-ocr-duplicate-matches" class="mb-2"></div>
+                <button type="button" class="btn btn-sm btn-warning" onclick="priAcknowledgeDuplicateAndContinue()">Upload Anyway</button>
+                <button type="button" class="btn btn-sm btn-light" onclick="priCancelDuplicateUpload()">Cancel — Don't Attach</button>
               </div>
               <div id="pri-ocr-error-box" class="alert alert-danger mt-3 mb-0 py-2 fs-13" style="display:none"></div>
             </div>
@@ -1549,11 +1569,18 @@
       ['pri-type', 'pri-nature', 'pri-cat', 'pri-region'].forEach(id => { document.getElementById(id).value = ''; });
       document.getElementById('pri-start').value = '';
       document.getElementById('pri-end').value = '';
+      // A duplicate held from a previous open of this modal that was never resolved (closed without
+      // "Upload Anyway"/"Cancel") would otherwise just leak until its own job TTL — discard it here too.
+      if (priOcrJobId) {
+        fetch('/api/ocr/discard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: priOcrJobId }) }).catch(() => {});
+      }
       priOcrExtractedResult = null;
+      priOcrJobId = null;
       document.getElementById('pri-ocr-file-input').value = '';
       if (window._priOcrDropzone && typeof window._priOcrDropzone.reset === 'function') window._priOcrDropzone.reset();
       document.getElementById('pri-ocr-progress-wrap').style.display = 'none';
       document.getElementById('pri-ocr-result-box').style.display = 'none';
+      document.getElementById('pri-ocr-duplicate-box').style.display = 'none';
       document.getElementById('pri-ocr-error-box').style.display = 'none';
       document.getElementById('pri-ocr-idp-panel').style.display = 'none';
       document.getElementById('pri-type-warn').style.display = 'none';
@@ -1659,6 +1686,7 @@
        "New Partnership Request" form (partner_requests.ejs's startOcrExtraction/pollOcrStatus/ocrSucceed/
        applyOcrToForm). Target Partner is never autofilled — it must always be picked from the list. */
     var priOcrExtractedResult = null;
+    var priOcrJobId = null; // held for "Upload Anyway"/"Cancel" when /api/ocr/confirm reports duplicateFound
 
     // Same date-only, local-timezone parsing as the Partner form's ocrIsoDate() — a plain Date-string
     // extracted value like "March 3, 2026" must not roll back a day in UTC+ timezones via toISOString().
@@ -1719,16 +1747,29 @@
 
     function priOcrSucceed(jobId, result) {
       priOcrExtractedResult = result;
+      priOcrJobId = jobId;
       priApplyOcrToForm();
       document.getElementById('pri-ocr-stage-text').textContent = 'Saving to Document Library…';
-      // POST /api/ocr/confirm (same endpoint the Document Library's own OCR upload already uses) — this is
-      // what actually archives the file and runs duplicate detection; documentType agrees with whatever
-      // priApplyOcrToForm() just set, same as the "Add New Partnership" form's own confirm call does.
+      priConfirmOcr(jobId, false, result);
+    }
+
+    // 2026-11 (first-upload-goes-missing fix): POST /api/ocr/confirm holds the file (archives nothing,
+    // returns duplicateFound instead) when findPossibleDuplicates matches something — previously the only
+    // thing checked here was res.ok/res.data, which is still true on a held response, so fileLink/documentId
+    // were silently left undefined and submitPRInitiate() created the request with NO attachment at all.
+    // Split out of priOcrSucceed so "Upload Anyway" can re-call this exact same step with acknowledgeDuplicate.
+    function priConfirmOcr(jobId, acknowledgeDuplicate, result) {
       CIPRMS.api('/api/ocr/confirm', {
         method: 'POST', quiet: true,
-        json: { jobId, documentType: document.getElementById('pri-type').value || undefined }
+        json: { jobId, documentType: document.getElementById('pri-type').value || undefined, acknowledgeDuplicate: !!acknowledgeDuplicate }
       }).then(res => {
         document.getElementById('pri-ocr-progress-wrap').style.display = 'none';
+        if (res.ok && res.data && res.data.duplicateFound) {
+          document.getElementById('pri-ocr-result-box').style.display = 'none';
+          priRenderOcrDuplicateWarning(res.data);
+          return;
+        }
+        document.getElementById('pri-ocr-duplicate-box').style.display = 'none';
         document.getElementById('pri-ocr-result-box').style.display = '';
         if (res.ok && res.data) {
           priOcrExtractedResult.fileLink = res.data.fileLink;
@@ -1746,6 +1787,38 @@
           });
         }
       });
+    }
+
+    // Authoritative duplicate-warning box (from /api/ocr/confirm's own response) — plain-text match list,
+    // same information documents.ejs's own renderServerDuplicateWarning() shows, kept minimal here since
+    // this modal's own result box already carries the extracted fields separately.
+    function priRenderOcrDuplicateWarning(data) {
+      document.getElementById('pri-ocr-duplicate-heading').textContent = data.matchLevel === 'exact'
+        ? 'This file already exists in the Document Library.' : 'This document looks similar to existing documents.';
+      const list = document.getElementById('pri-ocr-duplicate-matches');
+      list.innerHTML = (data.genericOnly || !data.matches || !data.matches.length)
+        ? '<span class="text-muted">A similar document may already exist.</span>'
+        : data.matches.map(m => '<div>• ' + escapeHtml(m.title || 'Untitled Document') + (m.institution ? ' — ' + escapeHtml(m.institution) : '') + '</div>').join('');
+      document.getElementById('pri-ocr-duplicate-box').style.display = '';
+    }
+
+    // "Upload Anyway" — nothing was archived until this click; same mechanism as documents.ejs's
+    // acknowledgeDuplicateAndContinue() but for this form's own OCR job.
+    function priAcknowledgeDuplicateAndContinue() {
+      if (!priOcrJobId) return;
+      priConfirmOcr(priOcrJobId, true, priOcrExtractedResult);
+    }
+
+    // "Cancel — Don't Attach" — discards the held temp file; the request can still be submitted, just
+    // with no attachment (same as choosing not to attach anything in the first place).
+    function priCancelDuplicateUpload() {
+      if (priOcrJobId) {
+        fetch('/api/ocr/discard', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: priOcrJobId }) }).catch(() => {});
+      }
+      priOcrJobId = null;
+      if (priOcrExtractedResult) { priOcrExtractedResult.fileLink = undefined; priOcrExtractedResult.documentId = undefined; }
+      document.getElementById('pri-ocr-duplicate-box').style.display = 'none';
+      showToast('Upload cancelled — nothing was attached.');
     }
 
     // Same rule as the Partner form's applyOcrToForm(): a field is only set when OCR actually found a
@@ -1782,6 +1855,12 @@
     function submitPRInitiate(btn) {
       const partnerId = document.getElementById('pri-partner-id').value;
       if (!partnerId) { showToast('Choose a target partner from the list.'); return; }
+      // The user must explicitly resolve a duplicate warning (Upload Anyway / Cancel) before submitting —
+      // otherwise the attachment is silently left off the request with no indication why.
+      if (document.getElementById('pri-ocr-duplicate-box').style.display !== 'none') {
+        showToast('Resolve the duplicate-document warning above before submitting.');
+        return;
+      }
       const payload = {
         initiatedBy: 'institution',
         targetPartnerId: partnerId ? Number(partnerId) : '',
@@ -2566,6 +2645,13 @@
       // this just keeps the UI from offering an action that would 403.
       document.getElementById('pr-draft-upload-wrap').style.display = (closed || IS_LAU) ? 'none' : '';
       document.getElementById('pr-draft-closed-note').style.display = (closed && !IS_LAU) ? '' : 'none';
+      // A duplicate held from a previous request's upload that was never resolved — cancel it rather than
+      // leaving it to leak until its own TTL (same convention as discarding an abandoned OCR job elsewhere).
+      if (prDraftPendingId) {
+        CIPRMS.api('/api/uploads/pending/' + prDraftPendingId + '/cancel', { method: 'POST', quiet: true }).catch(() => {});
+        prDraftPendingId = null;
+      }
+      document.getElementById('pr-draft-duplicate-box').style.display = 'none';
       document.getElementById('pr-draft-file').value = '';
       if (window.prDraftDropzone) window.prDraftDropzone.removeFile();
       document.getElementById('pr-draft-note').value = '';
@@ -2589,6 +2675,8 @@
       swapToModal('pr-draft-modal', 'pr-modal');
     }
 
+    var prDraftPendingId = null; // held upload awaiting "Upload Anyway"/"Cancel" (duplicateWarningGate)
+
     async function uploadDraftDocument() {
       const fileInput = document.getElementById('pr-draft-file');
       const noteInput = document.getElementById('pr-draft-note');
@@ -2602,6 +2690,7 @@
       const originalBtnHtml = btn.innerHTML;
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Uploading…';
+      document.getElementById('pr-draft-duplicate-box').style.display = 'none';
       const formData = new FormData();
       if (file) formData.append('document', file);
       formData.append('note', note);
@@ -2609,21 +2698,73 @@
         const res = await CIPRMS.api('/api/requests/' + currentPRId + '/documents', { method: 'POST', body: formData, quiet: true });
         if (!res.ok) throw new Error(res.error || 'Upload failed.');
         const data = res.data;
-        const idx = prData.findIndex(x => String(x.id) === currentPRId);
-        if (idx !== -1 && data.request) prData[idx] = data.request;
-        renderDraftTimeline(prData.find(x => String(x.id) === currentPRId));
-        renderPR();
-        updateStats();
-        fileInput.value = '';
-        if (window.prDraftDropzone) window.prDraftDropzone.removeFile();
-        noteInput.value = '';
-        showToast('<i class="ri-checkbox-circle-line me-1"></i>New draft version uploaded.', '#0ab39c');
+        if (data.duplicateFound) {
+          prRenderDraftDuplicateWarning(data);
+          return;
+        }
+        prFinishDraftUpload(data);
       } catch (e) {
         showToast('<i class="ri-error-warning-line me-1"></i>' + e.message, '#f06548');
       } finally {
         btn.disabled = false;
         btn.innerHTML = originalBtnHtml;
       }
+    }
+
+    // Shared by a plain (non-duplicate) upload and by "Upload Anyway" — updates the cached request, the
+    // visible timeline/stats, and resets the form, same as the original unconditional success path did.
+    function prFinishDraftUpload(data) {
+      const fileInput = document.getElementById('pr-draft-file');
+      const noteInput = document.getElementById('pr-draft-note');
+      const idx = prData.findIndex(x => String(x.id) === currentPRId);
+      // A plain upload's own response calls this field `request`; the generic pending-upload accept route
+      // (POST /api/uploads/pending/:id/accept, shared across several routes) passes through whatever the
+      // originating route's finishUpload() returned verbatim — this one's own field is named `updated`.
+      const updatedRequest = data.request || data.updated;
+      if (idx !== -1 && updatedRequest) prData[idx] = updatedRequest;
+      renderDraftTimeline(prData.find(x => String(x.id) === currentPRId));
+      renderPR();
+      updateStats();
+      fileInput.value = '';
+      if (window.prDraftDropzone) window.prDraftDropzone.removeFile();
+      noteInput.value = '';
+      showToast('<i class="ri-checkbox-circle-line me-1"></i>New draft version uploaded.', '#0ab39c');
+    }
+
+    function prRenderDraftDuplicateWarning(data) {
+      prDraftPendingId = data.pendingId;
+      document.getElementById('pr-draft-duplicate-heading').textContent = data.matchLevel === 'exact'
+        ? 'This file already exists in the Document Library.' : 'This document looks similar to existing documents.';
+      const list = document.getElementById('pr-draft-duplicate-matches');
+      list.innerHTML = (data.genericOnly || !data.matches || !data.matches.length)
+        ? '<span class="text-muted">A similar document may already exist.</span>'
+        : data.matches.map(m => '<div>• ' + escapeHtml(m.title || 'Untitled Document') + (m.institution ? ' — ' + escapeHtml(m.institution) : '') + '</div>').join('');
+      document.getElementById('pr-draft-duplicate-box').style.display = '';
+    }
+
+    async function prAcknowledgeDuplicateAndContinue() {
+      if (!prDraftPendingId) return;
+      const pendingId = prDraftPendingId;
+      prDraftPendingId = null;
+      document.getElementById('pr-draft-duplicate-box').style.display = 'none';
+      try {
+        const res = await CIPRMS.api('/api/uploads/pending/' + pendingId + '/accept', { method: 'POST', quiet: true });
+        if (!res.ok) throw new Error(res.error || 'Upload failed.');
+        prFinishDraftUpload(res.data);
+      } catch (e) {
+        showToast('<i class="ri-error-warning-line me-1"></i>' + e.message, '#f06548');
+      }
+    }
+
+    function prCancelDuplicateUpload() {
+      if (prDraftPendingId) {
+        CIPRMS.api('/api/uploads/pending/' + prDraftPendingId + '/cancel', { method: 'POST', quiet: true }).catch(() => {});
+        prDraftPendingId = null;
+      }
+      document.getElementById('pr-draft-duplicate-box').style.display = 'none';
+      document.getElementById('pr-draft-file').value = '';
+      if (window.prDraftDropzone) window.prDraftDropzone.removeFile();
+      showToast('Upload cancelled — nothing was attached.');
     }
 
     // LAU Internal Review (2026-11) — POST /api/requests/:id/lau-review returns only the new review entry
@@ -2675,7 +2816,10 @@
       return CIPRMS.busy(button, async () => {
         const res = await CIPRMS.api('/api/requests/' + r.id, { method: 'PATCH', json: payload, quiet: true });
         if (!res.ok) {
-          showToast('<i class="ri-error-warning-line me-1"></i>' + res.error, '#f06548');
+          // 2026-11 Batch 1 follow-up: a 409 means someone else's decision won the race (see cirl.js's
+          // conditional updateOne) — the server's own error text is accurate but generic ("already been
+          // updated"), so this shows the specific, friendlier wording the audit asked for instead.
+          showToast('<i class="ri-error-warning-line me-1"></i>' + (res.status === 409 ? 'This request was already updated by someone else. Refreshing…' : res.error), '#f06548');
           if (res.status === 400 || res.status === 404 || res.status === 409) { await refreshLive(); refreshOpenModals(); }
           return false;
         }
@@ -2890,7 +3034,9 @@
       try {
         const res = await CIPRMS.api('/api/document-requests/' + id, { method: 'PATCH', json: body, quiet: true });
         if (!res.ok) {
-          showToast('<i class="ri-error-warning-line me-1"></i>' + res.error, '#f06548');
+          // 2026-11 Batch 1 follow-up: see the identical note in applyPRStatus() above — a 409 here gets
+          // the same specific, friendlier wording instead of the server's generic "already updated" text.
+          showToast('<i class="ri-error-warning-line me-1"></i>' + (res.status === 409 ? 'This request was already updated by someone else. Refreshing…' : res.error), '#f06548');
           // when the server says the request has moved on / is gone, re-read the list; the row is rebuilt below either way
           if (res.status === 400 || res.status === 404 || res.status === 409) { await refreshLive(); refreshOpenModals(); }
           return;

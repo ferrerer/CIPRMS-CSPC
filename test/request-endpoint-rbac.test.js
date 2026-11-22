@@ -199,4 +199,30 @@ describe('Administrator and CIRL Staff keep their request functionality', () => 
     expect((await agents.college.patch(`/api/requests/${target}`).send({ status: 'Approved' })).status).toBe(302);
     expect((await db.collection('requests').findOne({ id: target })).status).toBe('Pending');
   });
+
+  // 2026-11 audit fix (Critical #1): the updateOne filter is now conditioned on the exact status just
+  // read, so the loser of a race gets matchedCount 0 -> 409, instead of both racers silently succeeding
+  // and double-applying side effects (notifications, Document Library marking, renewal extension).
+  test('two simultaneous Approve calls on the same request: exactly one succeeds (200), the other gets 409, and the side effect (logActivity/notification) fires only once', async () => {
+    const id = await insertRequest('partner', { status: 'Pending' });
+    const [a, b] = await Promise.all([
+      agents.admin.patch(`/api/requests/${id}`).send({ status: 'Approved' }),
+      agents.staff.patch(`/api/requests/${id}`).send({ status: 'Approved' })
+    ]);
+    // Exactly one must win; the other is rejected either by the race guard itself (409, if both requests'
+    // findOne genuinely interleaved) or by the pre-existing "already decided" pre-check (400, if the
+    // loser's own findOne happened to run after the winner had already fully committed) — both are
+    // correct outcomes of the same fix, and which one fires is a real timing detail, not a contract.
+    const winner = a.status === 200 ? a : b;
+    const loser = a.status === 200 ? b : a;
+    expect(winner.status).toBe(200);
+    expect([400, 409]).toContain(loser.status);
+    expect(winner.body.request.status).toBe('Approved');
+    expect(loser.body.error).toMatch(/already (been decided|updated)/);
+
+    const stored = await db.collection('requests').findOne({ id });
+    expect(stored.status).toBe('Approved');
+    const logs = await db.collection('activitylogs').find({ action: 'APPROVE', record: { $regex: `ID #${id}|jesttest RBAC inserted ${id}` } }).toArray();
+    expect(logs.length).toBe(1);
+  });
 });

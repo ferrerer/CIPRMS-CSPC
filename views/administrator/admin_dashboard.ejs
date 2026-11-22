@@ -144,9 +144,9 @@
                                         class="page-title-box d-sm-flex align-items-center justify-content-between bg-galaxy-transparent">
                                         <h4 class="mb-sm-0">Dashboard</h4>
                                         <div class="page-title-right d-flex align-items-center gap-2">
-                                            <button type="button" class="btn btn-soft-warning btn-sm material-shadow-none" data-bs-toggle="modal" data-bs-target="#achievements-modal">
-                                                <i class="ri-trophy-line align-middle me-1"></i>Achievements
-                                            </button>
+                                            <!-- 2026-11: the "Achievements" header button/modal trigger was removed — Institutional
+                                                 Achievements now lives as its own always-visible section at the bottom of this page
+                                                 (see "Row 5" below), so this was a second, redundant entry point to the same list. -->
                                             <ol class="breadcrumb m-0">
                                                 <li class="breadcrumb-item"><a href="<%= typeof homeHref !== 'undefined' ? homeHref : '/dashboard' %>">CIPRMS</a></li>
                                                 <li class="breadcrumb-item active">Dashboard</li>
@@ -657,6 +657,46 @@
                                                     </tbody>
                                                 </table>
                                                 </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- end row -->
+
+                            <!-- Row 5: Institutional Achievements (2026-11 — moved out of the header-triggered
+                                 modal into its own always-visible section at the bottom of the Dashboard, below
+                                 Executive Briefing). The modal below is kept as the "See more" full list — see
+                                 achOpenFullList(). -->
+                            <div class="row">
+                                <div class="col-xl-12">
+                                    <div class="card shadow-none border mb-4" id="ach-section-card">
+                                        <div class="card-header align-items-center d-flex flex-wrap gap-2 bg-transparent">
+                                            <h4 class="card-title mb-0 flex-grow-1">
+                                                <i class="ri-trophy-line me-2 text-warning"></i>Institutional Achievements
+                                            </h4>
+                                            <button type="button" class="btn btn-primary btn-sm" onclick="achOpenForm()">
+                                                <i class="ri-add-line me-1"></i>Add Achievement
+                                            </button>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="ach-filter-tabs mb-3" id="ach-section-filter-tabs">
+                                                <span class="ach-filter-tab active" data-category="all" onclick="achFilterBy('all', this)"><i class="ri-list-check-2"></i> All</span>
+                                                <span class="ach-filter-tab" data-category="QS Ranking" onclick="achFilterBy('QS Ranking', this)">QS Ranking</span>
+                                                <span class="ach-filter-tab" data-category="TUV Certification" onclick="achFilterBy('TUV Certification', this)">TÜV Certification</span>
+                                                <span class="ach-filter-tab" data-category="PQA" onclick="achFilterBy('PQA', this)">PQA</span>
+                                                <span class="ach-filter-tab" data-category="Accreditation" onclick="achFilterBy('Accreditation', this)">Accreditation</span>
+                                                <span class="ach-filter-tab" data-category="Ranking" onclick="achFilterBy('Ranking', this)">Ranking</span>
+                                                <span class="ach-filter-tab" data-category="Award" onclick="achFilterBy('Award', this)">Award</span>
+                                                <span class="ach-filter-tab" data-category="Other" onclick="achFilterBy('Other', this)">Other</span>
+                                            </div>
+                                            <div id="ach-section-list" class="row g-3">
+                                                <div class="col-12 text-center text-muted py-4">Loading&hellip;</div>
+                                            </div>
+                                            <div class="text-center mt-3 d-none" id="ach-section-see-more">
+                                                <button type="button" class="btn btn-soft-primary btn-sm" onclick="achOpenFullList()">
+                                                    See more <i class="ri-arrow-right-line align-middle ms-1"></i>
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -1869,6 +1909,10 @@
         var ACH_EDIT_ID = null;      // non-null while the form modal is editing an existing achievement
         var ACH_DELETE_ID = null;    // pending id for the delete-confirmation modal
         var ACH_REMOVE_FILE = false; // set when the user clicks "Remove file" while editing
+        // true only when Add/Edit/Delete was opened from the "See more" list modal (which this then hides
+        // first, same as before) — false when opened directly from the dashboard section, in which case
+        // closing the form/confirming delete must NOT pop the list modal open on top of the section.
+        var ACH_RETURN_TO_MODAL = false;
         var achievementsModalEl = document.getElementById('achievements-modal');
         var achievementFormModalEl = document.getElementById('achievement-form-modal');
         var achievementDeleteModalEl = document.getElementById('achievement-delete-modal');
@@ -1890,9 +1934,11 @@
             var d = new Date(iso);
             return isNaN(d) ? esc(iso) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
         }
+        var ACH_DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
         function achFileIcon(fileType) {
             if (fileType === 'application/pdf') return 'ri-file-pdf-2-line';
             if (fileType === 'image/jpeg' || fileType === 'image/png') return 'ri-image-2-line';
+            if (fileType === ACH_DOCX_MIME) return 'ri-file-word-2-line';
             return 'ri-file-line';
         }
         function achIsImage(fileType) { return fileType === 'image/jpeg' || fileType === 'image/png'; }
@@ -1905,59 +1951,96 @@
             img.replaceWith(ph);
         }
 
-        function achRenderList() {
-            var el = document.getElementById('ach-list');
-            var rows = ACH_ACTIVE_FILTER === 'all' ? ACH_ALL : ACH_ALL.filter(function (a) { return a.category === ACH_ACTIVE_FILTER; });
-            if (!rows.length) {
-                el.innerHTML = '<div class="col-12 text-center text-muted py-5">' +
-                    '<i class="ri-trophy-line display-5 d-block mb-2"></i>' +
-                    (ACH_ALL.length ? 'No achievements in this category yet.' : 'No achievements recorded yet. Click "Add Achievement" to get started.') +
-                    '</div>';
-                return;
-            }
-            el.innerHTML = rows.map(function (a) {
-                var fileHtml = a.fileLink
-                    ? '<a class="btn btn-sm btn-soft-secondary" href="' + a.fileLink + '" target="_blank" rel="noopener"><i class="' + achFileIcon(a.fileType) + ' me-1"></i>View File</a>'
-                    : '';
-                var imageHtml = a.fileLink && achIsImage(a.fileType)
-                    ? '<img class="ach-card-image" src="' + a.fileLink + '" alt="" onerror="achImgError(this)">'
-                    : '<div class="ach-card-image-placeholder"><i class="' + (a.fileLink ? achFileIcon(a.fileType) : 'ri-trophy-line') + '"></i></div>';
-                return '<div class="col-md-6 col-lg-4">' +
-                    '<div class="ach-card">' +
-                        imageHtml +
-                        '<div class="ach-card-body">' +
-                            '<div class="mb-2">' + achCategoryBadge(a.category) + '</div>' +
-                            '<div class="ach-card-title">' + esc(a.title) + '</div>' +
-                            '<div class="ach-card-meta">' +
-                                (a.organization ? esc(a.organization) : '<span class="text-muted">No organization specified</span>') +
-                                (a.dateAchieved ? ' &middot; ' + achFmtDate(a.dateAchieved) : '') +
-                            '</div>' +
-                            '<div class="ach-card-desc">' + (a.description ? esc(a.description) : '<span class="text-muted">No description provided.</span>') + '</div>' +
-                            '<div class="ach-card-actions">' +
-                                fileHtml +
-                                '<button type="button" class="btn btn-sm btn-soft-primary" onclick="achOpenForm(' + a.id + ')"><i class="ri-edit-line me-1"></i>Edit</button>' +
-                                '<button type="button" class="btn btn-sm btn-soft-danger ms-auto" onclick="achOpenDelete(' + a.id + ')"><i class="ri-delete-bin-line"></i></button>' +
-                            '</div>' +
+        // Shared by achRenderSection() (dashboard, capped) and achRenderList() (the "see more" modal,
+        // unlimited) — one card template, two callers, each wrapping it in their own grid column class.
+        function achCardHtml(a) {
+            var fileHtml = a.fileLink
+                ? '<a class="btn btn-sm btn-soft-secondary" href="' + a.fileLink + '" target="_blank" rel="noopener"><i class="' + achFileIcon(a.fileType) + ' me-1"></i>View File</a>'
+                : '';
+            var imageHtml = a.fileLink && achIsImage(a.fileType)
+                ? '<img class="ach-card-image" src="' + a.fileLink + '" alt="" onerror="achImgError(this)">'
+                : '<div class="ach-card-image-placeholder"><i class="' + (a.fileLink ? achFileIcon(a.fileType) : 'ri-trophy-line') + '"></i></div>';
+            return '<div class="ach-card">' +
+                    imageHtml +
+                    '<div class="ach-card-body">' +
+                        '<div class="mb-2">' + achCategoryBadge(a.category) + '</div>' +
+                        '<div class="ach-card-title">' + esc(a.title) + '</div>' +
+                        '<div class="ach-card-meta">' +
+                            (a.organization ? esc(a.organization) : '<span class="text-muted">No organization specified</span>') +
+                            (a.dateAchieved ? ' &middot; ' + achFmtDate(a.dateAchieved) : '') +
+                        '</div>' +
+                        '<div class="ach-card-desc">' + (a.description ? esc(a.description) : '<span class="text-muted">No description provided.</span>') + '</div>' +
+                        '<div class="ach-card-actions">' +
+                            fileHtml +
+                            '<button type="button" class="btn btn-sm btn-soft-primary" onclick="achOpenForm(' + a.id + ')"><i class="ri-edit-line me-1"></i>Edit</button>' +
+                            '<button type="button" class="btn btn-sm btn-soft-danger ms-auto" onclick="achOpenDelete(' + a.id + ')"><i class="ri-delete-bin-line"></i></button>' +
                         '</div>' +
                     '</div>' +
                 '</div>';
-            }).join('');
         }
 
-        function achFilterBy(cat, el) {
+        function achFilteredRows() {
+            return ACH_ACTIVE_FILTER === 'all' ? ACH_ALL : ACH_ALL.filter(function (a) { return a.category === ACH_ACTIVE_FILTER; });
+        }
+
+        function achEmptyStateHtml(hasAny, addButtonHtml) {
+            return '<div class="col-12 text-center text-muted py-5">' +
+                '<i class="ri-trophy-line display-5 d-block mb-2"></i>' +
+                (hasAny ? 'No achievements in this category yet.' : 'No achievements yet.') +
+                (hasAny ? '' : (addButtonHtml || '')) +
+                '</div>';
+        }
+
+        var ACH_SECTION_LIMIT = 4; // dashboard section shows at most this many; "See more" opens the full list
+
+        function achRenderSection() {
+            var el = document.getElementById('ach-section-list');
+            var seeMoreBox = document.getElementById('ach-section-see-more');
+            var rows = achFilteredRows();
+            var shown = rows.slice(0, ACH_SECTION_LIMIT);
+            el.innerHTML = shown.length
+                ? shown.map(function (a) { return '<div class="col-12 col-md-6 col-xl-3">' + achCardHtml(a) + '</div>'; }).join('')
+                : achEmptyStateHtml(ACH_ALL.length > 0, '<div class="mt-2"><button type="button" class="btn btn-sm btn-primary" onclick="achOpenForm()"><i class="ri-add-line me-1"></i>Add Achievement</button></div>');
+            seeMoreBox.classList.toggle('d-none', rows.length <= ACH_SECTION_LIMIT);
+        }
+
+        function achRenderList() {
+            var el = document.getElementById('ach-list');
+            var rows = achFilteredRows();
+            el.innerHTML = rows.length
+                ? rows.map(function (a) { return '<div class="col-md-6 col-lg-4">' + achCardHtml(a) + '</div>'; }).join('')
+                : achEmptyStateHtml(ACH_ALL.length > 0);
+        }
+
+        // Ignores which specific pill element was clicked and instead matches by data-category — the
+        // section and the "see more" modal each render their OWN set of filter pills (two separate DOM
+        // trees, same shared ACH_ACTIVE_FILTER state), so both stay visually in sync regardless of which
+        // one the user actually clicked.
+        function achFilterBy(cat) {
             ACH_ACTIVE_FILTER = cat;
-            document.querySelectorAll('.ach-filter-tab').forEach(function (t) { t.classList.remove('active'); });
-            if (el) el.classList.add('active');
+            document.querySelectorAll('.ach-filter-tab').forEach(function (t) {
+                t.classList.toggle('active', t.getAttribute('data-category') === cat);
+            });
+            achRenderSection();
             achRenderList();
+        }
+
+        // "See more" (shown only when the active filter has more than ACH_SECTION_LIMIT matches) reuses
+        // the existing list modal as the full view, already showing whatever filter is currently active.
+        function achOpenFullList() {
+            bootstrap.Modal.getOrCreateInstance(achievementsModalEl).show();
         }
 
         function achLoadList() {
             return CIPRMS.api('/api/achievements', { quiet: true }).then(function (res) {
                 if (!res.ok) {
-                    document.getElementById('ach-list').innerHTML = '<div class="col-12 text-center text-danger py-4">Unable to load achievements.</div>';
+                    var msg = '<div class="col-12 text-center text-danger py-4">Unable to load achievements.</div>';
+                    document.getElementById('ach-section-list').innerHTML = msg;
+                    document.getElementById('ach-list').innerHTML = msg;
                     return false;
                 }
                 ACH_ALL = Array.isArray(res.data) ? res.data : [];
+                achRenderSection();
                 achRenderList();
                 return true;
             });
@@ -2004,8 +2087,10 @@
             }
             // Bootstrap modals stacking reliably means showing one at a time: hide the list modal first (it
             // re-shows, refreshed, once the form closes — see achCloseForm()/achSave()), same pattern already
-            // used for the College Requests create/detail modals on the Requests pages.
+            // used for the College Requests create/detail modals on the Requests pages. Only actually true
+            // when the list modal was the opener in the first place (see ACH_RETURN_TO_MODAL above).
             var listInstance = bootstrap.Modal.getInstance(achievementsModalEl);
+            ACH_RETURN_TO_MODAL = !!listInstance;
             if (listInstance) listInstance.hide();
             bootstrap.Modal.getOrCreateInstance(achievementFormModalEl).show();
         }
@@ -2018,7 +2103,7 @@
 
         function achCloseForm() {
             bootstrap.Modal.getOrCreateInstance(achievementFormModalEl).hide();
-            bootstrap.Modal.getOrCreateInstance(achievementsModalEl).show();
+            if (ACH_RETURN_TO_MODAL) bootstrap.Modal.getOrCreateInstance(achievementsModalEl).show();
         }
 
         function achSave() {
@@ -2066,6 +2151,7 @@
             ACH_DELETE_ID = id;
             document.getElementById('ach-del-title').textContent = a.title;
             var listInstance = bootstrap.Modal.getInstance(achievementsModalEl);
+            ACH_RETURN_TO_MODAL = !!listInstance;
             if (listInstance) listInstance.hide();
             bootstrap.Modal.getOrCreateInstance(achievementDeleteModalEl).show();
         }
@@ -2080,7 +2166,7 @@
                 btn.disabled = false;
                 btn.innerHTML = orig;
                 bootstrap.Modal.getOrCreateInstance(achievementDeleteModalEl).hide();
-                bootstrap.Modal.getOrCreateInstance(achievementsModalEl).show();
+                if (ACH_RETURN_TO_MODAL) bootstrap.Modal.getOrCreateInstance(achievementsModalEl).show();
                 if (!res.ok) { CIPRMS.toast(res.error || 'Could not delete the achievement.', 'error'); return; }
                 CIPRMS.toast('Achievement deleted.', 'success');
                 ACH_DELETE_ID = null;
@@ -2170,9 +2256,10 @@
             });
         }
 
-        // Loaded once the list modal is opened (not eagerly on page load — it's behind a click, unlike the
-        // always-visible dashboard widgets above) and every time it's reopened, so edits made elsewhere are
-        // never stale.
+        // 2026-11: loaded eagerly now — Institutional Achievements is an always-visible dashboard section,
+        // not something behind a click anymore. Still re-loaded every time the "see more" list modal is
+        // reopened too, so edits made elsewhere are never stale.
+        achLoadList();
         if (achievementsModalEl) {
             achievementsModalEl.addEventListener('show.bs.modal', function () { achLoadList(); });
         }

@@ -738,28 +738,36 @@
     }
 
     const PARTNER_ACTIVITIES_OPTION = '__partner_activities';
+    // Achievements (2026-11) — a certificate archived from the Dashboard's Institutional Achievements
+    // section (see POST/PATCH /api/achievements in cirl.js). Same reasoning and mechanism as Partner
+    // Activities above: it's a document type, not a MOA/MOU nature, so it rides along in this same
+    // dropdown as its own sentinel option rather than needing a separate filter control.
+    const ACHIEVEMENTS_OPTION = '__achievements';
     function filterTag(tag) {
-        // "Partner Activities" is a document type, not a nature: filter by type and clear the nature filter.
+        // "Partner Activities"/"Achievements" are document types, not a nature: filter by type and clear
+        // the nature filter.
         if (tag === PARTNER_ACTIVITIES_OPTION) { currentType = 'Partner Activities'; currentTag = 'All'; }
+        else if (tag === ACHIEVEMENTS_OPTION) { currentType = 'Achievements'; currentTag = 'All'; }
         else {
-            // Keep an MOA/MOU choice from the Type dropdown; only drop the Partner Activities type.
-            if (currentType === 'Partner Activities') currentType = 'All';
+            // Keep an MOA/MOU choice from the Type dropdown; only drop a Partner Activities/Achievements type.
+            if (currentType === 'Partner Activities' || currentType === 'Achievements') currentType = 'All';
             currentTag = tag || 'All';
         }
         syncTypeSelect();
         docPage = 1;
         const sel = document.getElementById('nature-filter');
-        const want = currentType === 'Partner Activities' ? PARTNER_ACTIVITIES_OPTION : currentTag;
+        const want = currentType === 'Partner Activities' ? PARTNER_ACTIVITIES_OPTION
+            : currentType === 'Achievements' ? ACHIEVEMENTS_OPTION : currentTag;
         if (sel && sel.value !== want) sel.value = want;
         loadPage();
     }
 
     // MOA / MOU Type dropdown. Combines with the Nature dropdown; picking MOA/MOU clears a
-    // "Partner Activities" choice there (that one is a document type too, so the two can't both apply).
+    // "Partner Activities"/"Achievements" choice there (those are document types too, so they can't both apply).
     function filterDocType(type) {
         currentType = (type === 'MOA' || type === 'MOU') ? type : 'All';
         const sel = document.getElementById('nature-filter');
-        if (sel && sel.value === PARTNER_ACTIVITIES_OPTION) sel.value = 'All';
+        if (sel && (sel.value === PARTNER_ACTIVITIES_OPTION || sel.value === ACHIEVEMENTS_OPTION)) sel.value = 'All';
         docPage = 1;
         loadPage();
     }
@@ -799,13 +807,15 @@
         // Dropdown options (was a row of colored pills): "All Nature" plus one option per nature.
         let html = '<option value="All">All Nature</option>';
         const paOption = '<option value="' + PARTNER_ACTIVITIES_OPTION + '">Partner Activities</option>';
+        const achOption = '<option value="' + ACHIEVEMENTS_OPTION + '">Achievements</option>';
         natures.forEach(nature => {
-            if (nature === 'Other') html += paOption;   // Partner Activities sits just before "Other"
+            if (nature === 'Other') html += paOption + achOption;   // Partner Activities/Achievements sit just before "Other"
             html += `<option value="${escHtml(nature)}">${escHtml(nature)}</option>`;
         });
-        if (!natures.includes('Other')) html += paOption;
+        if (!natures.includes('Other')) html += paOption + achOption;
         container.innerHTML = html;
-        container.value = currentType === 'Partner Activities' ? PARTNER_ACTIVITIES_OPTION : currentTag;
+        container.value = currentType === 'Partner Activities' ? PARTNER_ACTIVITIES_OPTION
+            : currentType === 'Achievements' ? ACHIEVEMENTS_OPTION : currentTag;
     }
 
     // ── Folders — real, per-owner, backed by /api/document-folders* ─────────────
@@ -962,6 +972,7 @@
                          doc.type === 'MOU' ? 'ri-file-list-3-line text-info' :
                          isAccred ? 'ri-award-line text-warning' :
                          doc.type === 'Partner Activities' ? 'ri-calendar-check-line text-success' :
+                         doc.type === 'Achievements' ? 'ri-trophy-line text-warning' :
                          'ri-file-paper-2-line text-secondary';
             const nature = docNatureLabel(doc);
             const natureBadge = docNatureBadge(nature);
@@ -1052,6 +1063,7 @@
                          doc.type === 'MOU' ? 'ri-file-list-3-line text-info' :
                          isAccred ? 'ri-award-line text-warning' :
                          doc.type === 'Partner Activities' ? 'ri-calendar-check-line text-success' :
+                         doc.type === 'Achievements' ? 'ri-trophy-line text-warning' :
                          'ri-file-paper-2-line text-secondary';
             const nature = docNatureLabel(doc);
             const natureBadge = docNatureBadge(nature);

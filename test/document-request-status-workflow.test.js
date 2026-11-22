@@ -284,3 +284,33 @@ describe('Terminal states cannot be advanced further', () => {
     }
   });
 });
+
+// 2026-11 audit fix (Critical #1): the updateOne filter is now conditioned on the exact status just read
+// (current.status), so the loser of a race gets matchedCount 0 -> 409 instead of silently applying a
+// transition validated against data that's already stale.
+describe('Race condition fix: concurrent status changes on the same document request', () => {
+  test('two simultaneous "advance to Preparing" calls: exactly one succeeds (200), the other gets 409, and only one statusHistory entry is appended', async () => {
+    const r = await submitDocRequest(personnelAgent);
+    try {
+      const [a, b] = await Promise.all([
+        adminAgent.patch(`/api/document-requests/${r.id}`).send({ status: 'Preparing' }),
+        staffAgent.patch(`/api/document-requests/${r.id}`).send({ status: 'Preparing' })
+      ]);
+      // Exactly one must win; the other is rejected either by the race guard itself (409, if both
+      // requests' findOne genuinely interleaved) or by the pre-existing pipeline pre-check (400, "can
+      // only move to X next" — if the loser's own findOne ran after the winner had already committed
+      // "Preparing" and its own next-step check no longer matches) — both are correct outcomes of the
+      // same fix; which one fires is a timing detail, not a contract.
+      const winner = a.status === 200 ? a : b;
+      const loser = a.status === 200 ? b : a;
+      expect(winner.status).toBe(200);
+      expect([400, 409]).toContain(loser.status);
+
+      const stored = await (await connectDB()).collection('documentrequests').findOne({ id: r.id });
+      expect(stored.status).toBe('Preparing');
+      expect(stored.statusHistory.filter((h) => h.to === 'Preparing').length).toBe(1);
+    } finally {
+      await (await connectDB()).collection('documentrequests').deleteOne({ id: r.id });
+    }
+  });
+});

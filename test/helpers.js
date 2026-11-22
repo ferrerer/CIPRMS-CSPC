@@ -106,6 +106,12 @@ async function cleanupAll() {
   await db.collection('users').deleteMany({ createdAt: TEST_TAG });
   await db.collection('partnerships').deleteMany({ remarks: { $regex: TEST_TAG } });
   await db.collection('requests').deleteMany({ notes: { $regex: TEST_TAG } });
+  // 2026-11 audit fix (test hygiene #8): targets was never swept here at all — every target-creating test
+  // file had to track and delete its own ids manually, with zero fallback. Every target already carries
+  // `createdBy: "jesttest <Role>"` (see createTestUser()'s own name format above), the same TEST_TAG this
+  // whole function keys off everywhere else, so this is the safety net a leaked id (e.g. a failed
+  // assertion that ran before its own file pushed the id to its cleanup array) now falls back to.
+  await db.collection('targets').deleteMany({ createdBy: { $regex: TEST_TAG, $options: 'i' } });
   // `record` alone misses logs whose actor was a jesttest user but whose
   // record text describes a differently-named fixture (e.g. "Partnership
   // added: Jest Report Filter University" — no literal "jesttest" substring

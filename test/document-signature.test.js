@@ -37,6 +37,9 @@ beforeAll(async () => {
 afterAll(async () => {
   if (requestIds.length) await db.collection('documentrequests').deleteMany({ id: { $in: requestIds } });
   await db.collection('headsignature').deleteOne({ _id: 'current' });
+  // 2026-11 audit fix: signature bytes now live in MongoDB (`signatureversions`), not on local disk —
+  // every version this file's uploads created (one per upload across every test) is swept here.
+  await db.collection('signatureversions').deleteMany({ uploadedByEmail: { $regex: 'jesttest', $options: 'i' } });
   await cleanupAll();
   await closeDB();
 });
@@ -199,5 +202,97 @@ describe('Applied only when Completed, with a frozen snapshot', () => {
     const printRes = await personnelAgent.get(`/document-requests/${blankId}/print`);
     expect(printRes.status).toBe(200);
     expect(printRes.text).not.toContain('signature-image');
+  });
+});
+
+// 2026-11 Batch 1 follow-up: ETag is derived from signatureFileIdAtCompletion, frozen the moment a
+// request becomes Completed — so a cache based on it is exactly as safe as the snapshot guarantee
+// already is (the bytes behind that fileId can never change again), and replacing the ORG's current
+// signature afterward must NOT change an already-Completed request's own ETag (the opposite of the
+// avatar case, where a new upload is SUPPOSED to invalidate the old URL/ETag).
+describe('ETag / Cache-Control on the signature-image route', () => {
+  // This describe block runs after one above that deliberately ends with no org signature on file —
+  // every test here re-uploads its own, rather than depending on leftover state from earlier tests.
+  beforeEach(async () => {
+    const res = await adminAgent.post('/api/settings/signature').attach('signature', pngBuffer('etag-setup'), 'etag-setup.png');
+    expect(res.status).toBe(200);
+  });
+
+  test('a matching If-None-Match gets a 304; Cache-Control/ETag are only set once Completed', async () => {
+    const id = await makeDocumentRequest('jesttest Signature Office F-etag');
+    const notYet = await adminAgent.get(`/api/document-requests/${id}/signature-image`);
+    expect(notYet.status).toBe(404);
+    expect(notYet.headers['cache-control']).toBe('no-store');
+    expect(notYet.headers.etag).toBeFalsy();
+
+    await completeRequest(id);
+    const first = await adminAgent.get(`/api/document-requests/${id}/signature-image`);
+    expect(first.status).toBe(200);
+    const etag = first.headers.etag;
+    expect(etag).toBeTruthy();
+    expect(first.headers['cache-control']).toMatch(/private/);
+    expect(first.headers['cache-control']).toMatch(/max-age=86400/);
+
+    const second = await adminAgent.get(`/api/document-requests/${id}/signature-image`).set('If-None-Match', etag);
+    expect(second.status).toBe(304);
+  });
+
+  test('replacing the org signature does not change an already-Completed request\'s own ETag; a new Completed request gets a different one', async () => {
+    const oldId = await makeDocumentRequest('jesttest Signature Office G-etag-old');
+    await completeRequest(oldId);
+    const oldEtagBefore = (await adminAgent.get(`/api/document-requests/${oldId}/signature-image`)).headers.etag;
+
+    const replaceRes = await adminAgent.post('/api/settings/signature').attach('signature', pngBuffer('etag-replacement'), 'etag-v2.png');
+    expect(replaceRes.status).toBe(200);
+
+    const oldEtagAfter = (await adminAgent.get(`/api/document-requests/${oldId}/signature-image`)).headers.etag;
+    expect(oldEtagAfter).toBe(oldEtagBefore); // unchanged — this form's snapshot is frozen
+
+    const newId = await makeDocumentRequest('jesttest Signature Office G-etag-new');
+    await completeRequest(newId);
+    const newEtag = (await adminAgent.get(`/api/document-requests/${newId}/signature-image`)).headers.etag;
+    expect(newEtag).not.toBe(oldEtagBefore); // a different snapshot really is a different resource
+  });
+});
+
+// 2026-11 audit fix (Critical/High #3): the signature image used to live only on local disk, which
+// Render's free plan wipes on every redeploy — silently deleting the signature backing every
+// already-Completed Document Request form. Bytes now live in MongoDB (signatureversions); this proves
+// it by actually deleting the entire local uploads/signatures/ directory (test-only — never done
+// outside this file) and confirming both the org signature and an already-Completed form's frozen
+// snapshot keep working exactly as before.
+describe('Survives local disk being wiped (e.g. a Render redeploy)', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const SIGNATURE_DIR = path.join(__dirname, '..', 'uploads', 'signatures');
+
+  test('deleting uploads/signatures/ entirely does not affect the current signature or an already-Completed form', async () => {
+    const id = await makeDocumentRequest('jesttest Signature Office E-disk-wipe');
+    const uploadRes = await adminAgent.post('/api/settings/signature').attach('signature', pngBuffer('disk-wipe'), 'disk-wipe.png');
+    expect(uploadRes.status).toBe(200);
+    await completeRequest(id);
+
+    // Simulate a Render redeploy wiping ephemeral local disk entirely.
+    fs.rmSync(SIGNATURE_DIR, { recursive: true, force: true });
+    try {
+      const check = await adminAgent.get('/api/settings/signature');
+      expect(check.status).toBe(200);
+      expect(check.body.hasSignature).toBe(true);
+      expect(check.body.dataUri).toMatch(/^data:image\/png;base64,/);
+
+      const imgRes = await adminAgent.get(`/api/document-requests/${id}/signature-image`).buffer(true)
+        .parse((r, cb) => { const chunks = []; r.on('data', c => chunks.push(c)); r.on('end', () => cb(null, Buffer.concat(chunks))); });
+      expect(imgRes.status).toBe(200);
+      expect(imgRes.body.slice(0, 8)).toEqual(PNG_SIG);
+
+      const printRes = await personnelAgent.get(`/document-requests/${id}/print`);
+      expect(printRes.status).toBe(200);
+      expect(printRes.text).toContain(`/api/document-requests/${id}/signature-image`);
+    } finally {
+      // Restore the directory AND its git-tracked .gitkeep — rmSync above deletes that file too, and
+      // leaving it gone would show up as an unintended real deletion in git status after this suite runs.
+      fs.mkdirSync(SIGNATURE_DIR, { recursive: true });
+      fs.writeFileSync(path.join(SIGNATURE_DIR, '.gitkeep'), '');
+    }
   });
 });

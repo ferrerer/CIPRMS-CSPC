@@ -1558,15 +1558,26 @@ function discardOcrJob() {
 // archives the upload to the Document Library, tagged with the partnership it supports, with the user's
 // own saved Institution/Agreement Type values (not whatever OCR merely guessed) — overrides take
 // precedence server-side exactly like documents.ejs's saveDocument() already does.
-function confirmOcrDocument(jobId, institution, docType, partnershipId) {
+function confirmOcrDocument(jobId, institution, docType, partnershipId, acknowledgeDuplicate) {
   fetch('/api/ocr/confirm', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jobId: jobId, institution: institution, documentType: docType, partnershipId: partnershipId })
+    body: JSON.stringify({ jobId: jobId, institution: institution, documentType: docType, partnershipId: partnershipId, acknowledgeDuplicate: !!acknowledgeDuplicate })
   }).then(function (r) { return r.json(); }).then(function (data) {
     if (!data.success) {
       // The partnership itself is already saved — this only ever reports a SEPARATE problem: its
       // supporting document did not make it into the Document Library. Never silently dropped.
       showToast('Partnership saved, but the uploaded document could not be added to the Document Library: ' + (data.error || 'unknown error') + '. You can upload it again from the Document Library page.', '#f06548');
+      return;
+    }
+    // 2026-11 (first-upload-goes-missing fix): data.success is true for a HELD duplicate too
+    // ({success:true, duplicateFound:true, ...}, no documentId/fileLink) — this used to be treated as
+    // plain success and silently dropped (never archived, held under the job's own 10-minute TTL until it
+    // was gone for good). The modal is already closed by the time this runs (fire-and-forget, see
+    // submitPartnership() above), so there's no live UI left to show a blocking "Upload Anyway" choice in
+    // — attach it regardless (never silently lose it) and tell the user it matched something, once.
+    if (data.duplicateFound && !acknowledgeDuplicate) {
+      confirmOcrDocument(jobId, institution, docType, partnershipId, true);
+      showToast('"' + institution + '": the supporting document looked similar to one already in the Document Library — it was saved anyway. Review it there if needed.', '#f7b84b');
     }
   }).catch(function () {
     showToast('Partnership saved, but the uploaded document could not be added to the Document Library (network error). You can upload it again from the Document Library page.', '#f06548');
