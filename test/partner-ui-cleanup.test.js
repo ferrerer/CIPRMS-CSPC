@@ -36,7 +36,7 @@ describe('Partner: post-login landing and the three removed pages', () => {
     }
   });
 
-  test.each(['/partner/dashboard', '/partner/documents', '/partner/notifications'])('%s redirects to Monitoring — never a 404/500 — and Monitoring then renders', async (path) => {
+  test.each(['/partner/dashboard', '/partner/documents'])('%s redirects to Monitoring — never a 404/500 — and Monitoring then renders', async (path) => {
     const res = await agent.get(path);
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe('/partner/monitoring');
@@ -44,14 +44,14 @@ describe('Partner: post-login landing and the three removed pages', () => {
   });
 
   test('a logged-out visitor is sent to login, and other roles who wander onto these URLs go to their OWN home', async () => {
-    for (const path of ['/partner/dashboard', '/partner/documents', '/partner/notifications']) {
+    for (const path of ['/partner/dashboard', '/partner/documents']) {
       const anon = await request(app).get(path);
       expect(anon.status).toBe(302);
       expect(anon.headers.location).toBe('/');
     }
     for (const [role, home] of [['Administrator', '/dashboard'], ['Staff', '/staff/dashboard'], ['Auth. Personnel', '/personnel/monitoring']]) {
       const other = (await agentFor(role)).agent;
-      for (const path of ['/partner/dashboard', '/partner/documents', '/partner/notifications']) {
+      for (const path of ['/partner/dashboard', '/partner/documents']) {
         const res = await other.get(path);
         expect(res.status).toBe(302);
         expect(res.headers.location).toBe(home);
@@ -68,12 +68,12 @@ describe('Partner: sidebar and header on every remaining page', () => {
   let agent;
   beforeAll(async () => { ({ agent } = await agentFor('potential_partner')); });
 
-  test('sidebar is Requests, Monitoring, Calendar, Settings, Logout — no Dashboard, Document Library or Notifications item or badge', async () => {
+  test('sidebar is Requests, Monitoring, Calendar, Notifications, Settings, Logout — no Dashboard or Document Library item', async () => {
     for (const path of PARTNER_PAGES) {
       const html = (await agent.get(path)).text;
-      expect(navHrefs(html)).toEqual(['/partner/requests', '/partner/monitoring', '/partner/calendar', '/partner/settings', '#']);
-      expect(html).not.toContain('id="sidebar-notif-badge"');
-      for (const gone of ['/partner/dashboard', '/partner/documents', '/partner/notifications']) expect(html).not.toContain('href="' + gone + '"');
+      expect(navHrefs(html)).toEqual(['/partner/requests', '/partner/monitoring', '/partner/calendar', '/partner/notifications', '/partner/settings', '#']);
+      expect(html).toContain('id="sidebar-notif-badge"');
+      for (const gone of ['/partner/dashboard', '/partner/documents']) expect(html).not.toContain('href="' + gone + '"');
       expect(html).not.toMatch(/ri-dashboard-2-line/);
     }
   });
@@ -111,13 +111,10 @@ describe('Partner: sidebar and header on every remaining page', () => {
     }
   });
 
-  test('the bell has no "See All" (its page is gone) and the profile menu is only Settings and Logout', async () => {
+  test('the bell has "View All Notifications" (Partner has its own Notifications page again) and the profile menu is only Settings and Logout', async () => {
     for (const path of PARTNER_PAGES) {
       const html = (await agent.get(path)).text;
-      expect(html).not.toMatch(/class="[^"]*view-all[^"]*"/);
-      // (the phrase also appears in a code comment inside the header's <script>, so judge visible markup only)
-      expect(html.replace(/<script[\s\S]*?<\/script>/gi, '')).not.toContain('View All Notifications');
-      expect(html).not.toContain('/partner/notifications');
+      expect(html).toMatch(/href="\/partner\/notifications" class="btn btn-soft-success[^"]*">View All Notifications/);
       const menu = html.slice(html.indexOf('page-header-user-dropdown'), html.indexOf('</header>'));
       expect(menu).not.toMatch(/class="align-middle">Notifications</);
       expect(menu).not.toMatch(/class="align-middle">Profile</);

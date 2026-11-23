@@ -104,6 +104,19 @@
         .ai-stat-tile .ai-stat-value { font-size: 1.15rem; font-weight: 600; line-height: 1.2; }
         .ai-stat-tile .ai-stat-label { font-size: .68rem; text-transform: uppercase; color: var(--vz-secondary-color, #878a99); letter-spacing: .02em; }
         [data-bs-theme="dark"] .ai-stat-tile { background: #262d3d; border-color: rgba(255,255,255,.1); }
+        /* ── Square corners (2026-11): every white box on the Dashboard — stat cards, insight cards,
+           chart cards, briefing tiles, achievement cards — is a sharp-cornered rectangle. Dashboard page
+           only; icon circles, badges and buttons keep their own shape. ── */
+        .page-content .card,
+        .page-content .card > .card-header,
+        .page-content .card > .card-body,
+        .page-content .card > .card-footer,
+        .page-content .ai-stat-tile,
+        .ach-card { border-radius: 0 !important; }
+        /* Decision Support & Insights: visible white box like the other dashboard cards, and a thin outline on
+           each of its three insight cards (their colored left edge stays). */
+        .dsi-card { background: var(--vz-secondary-bg, #fff); border: 1px solid var(--vz-border-color, #e9ebec); box-shadow: 0 1px 2px rgba(56,65,74,.15); }
+        .dsi-inner { border: 1px solid var(--vz-border-color, #e9ebec); }
         #ai-briefing-print-root { display: none; }
         @media print {
             body.ai-printing-briefing > *:not(#ai-briefing-print-root) { display: none !important; }
@@ -270,7 +283,7 @@
                             <!-- Row 1.5: AI Insights -->
                             <div class="row">
                                 <div class="col-xl-12">
-                                    <div class="card bg-light-subtle shadow-none border-0 mb-4">
+                                    <div class="card dsi-card mb-4">
                                         <div class="card-header align-items-center d-flex bg-transparent border-0 pb-0">
                                             <h4 class="card-title mb-0 flex-grow-1">
                                                 <i class="ri-lightbulb-flash-line me-2 text-primary"></i>Decision
@@ -281,7 +294,7 @@
                                             <div class="row g-3">
                                                 <!-- High Renewal Priority -->
                                                 <div class="col-md-4">
-                                                    <div class="card h-100 border-0 shadow-sm"
+                                                    <div class="card h-100 dsi-inner shadow-sm"
                                                         style="background: var(--vz-warning-bg-subtle); border-left: 4px solid #f7b84b !important;">
                                                         <div class="card-body p-4">
                                                             <div class="d-flex align-items-center mb-3">
@@ -305,7 +318,7 @@
                                                 </div>
                                                 <!-- Yearly Target (2026-11, replaces Expansion Opportunity) -->
                                                 <div class="col-md-4">
-                                                    <div class="card h-100 border-0 shadow-sm"
+                                                    <div class="card h-100 dsi-inner shadow-sm"
                                                         style="background: var(--vz-info-bg-subtle); border-left: 4px solid #299cdb !important;">
                                                         <div class="card-body p-4" id="yearly-target-card"
                                                             data-year="<%= yearlyTargetYear %>"
@@ -382,7 +395,7 @@
                                                 </div>
                                                 <!-- Resource Optimization -->
                                                 <div class="col-md-4">
-                                                    <div class="card h-100 border-0 shadow-sm"
+                                                    <div class="card h-100 dsi-inner shadow-sm"
                                                         style="background: var(--vz-success-bg-subtle); border-left: 4px solid #0ab39c !important;">
                                                         <div class="card-body p-4">
                                                             <div class="d-flex align-items-center mb-3">
@@ -600,10 +613,13 @@
                                                 class="btn btn-soft-success btn-sm material-shadow-none">View
                                                 Lifecycle</a>
                                         </div>
-                                        <div class="card-body">
-                                            <div class="table-responsive table-card align-items-center d-flex">
+                                        <!-- p-0 + plain table-responsive: the table fills the card. (No .table-card here —
+                                             ciprms-bridge.css styles that class as a separate rounded, shadowed card,
+                                             which drew a second box inside this one.) -->
+                                        <div class="card-body p-0">
+                                                <div class="table-responsive">
                                                 <table
-                                                    class="table table-borderless table-hover table-centered align-middle table-nowrap mb-0">
+                                                    class="table table-borderless table-hover table-centered align-middle table-nowrap mb-0 w-100">
                                                     <thead class="text-muted bg-light-subtle">
                                                         <tr>
                                                             <th>Institution</th>
@@ -640,7 +656,7 @@
                                                                 <% }); } %>
                                                     </tbody>
                                                 </table>
-                                            </div>
+                                                </div>
                                         </div>
                                     </div>
                                 </div>

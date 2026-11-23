@@ -120,21 +120,6 @@
                                     </div>
                                 </div>
 
-                                <% /* Approval Progress — College Dean only (2026-11), moved here from the College Dean's
-                                     own Monitoring page, directly under Upcoming Events. Same data source and calculation
-                                     (GET /api/document-requests/mine, "Approved" = that status or anything past it in the
-                                     6-stage workflow) as before — see loadApprovalProgress() below — this template is
-                                     shared by every role's Calendar, so the card itself is gated the same way the
-                                     Administrator/Staff-only "Create New Event" controls above already are. */ %>
-                                <% if (typeof user !== 'undefined' && user && user.role === 'Auth. Personnel') { %>
-                                <div class="card">
-                                    <div class="card-header"><h5 class="card-title mb-0 fs-14"><i class="ri-progress-4-line me-2"></i>Approval Progress</h5></div>
-                                    <div class="card-body" id="approval-progress-body">
-                                        <div class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></div>
-                                    </div>
-                                </div>
-                                <% } %>
-
                             </div><!-- end col-xl-3 -->
 
                             <!-- col-xl-9 main calendar — exact from apps-calendar.html -->
@@ -695,43 +680,6 @@ function upcomingEvent(){
   document.getElementById('upcoming-event-list').innerHTML = html || '<p class="text-muted fs-12">No upcoming events.</p>';
 }
 
-// ── Approval Progress (College Dean only) ─────────────────────────────────────
-// Moved here from the College Dean's own Monitoring page (2026-11), under Upcoming Events — #approval-
-// progress-body only exists in the DOM when this template rendered it (the EJS role guard above), so this
-// is a no-op on every other role's Calendar. Same endpoint and exact same 6-stage-workflow calculation
-// personnel_monitoring.ejs used before this move: "Approved" and everything after it (Release, Completed)
-// counts toward Approved, since the request was approved and just continues through fulfillment.
-function loadApprovalProgress() {
-  var box = document.getElementById('approval-progress-body');
-  if (!box) return;
-  var DR_WORKFLOW_STATUSES = ['Received', 'Preparing', 'Awaiting for Approval', 'Approved', 'Release', 'Completed'];
-  var DR_APPROVED_IDX = DR_WORKFLOW_STATUSES.indexOf('Approved');
-  function drWorkflowIdx(r) { return DR_WORKFLOW_STATUSES.indexOf(r.canonicalStatus || r.status); }
-  function drIsApproved(r) { return drWorkflowIdx(r) >= DR_APPROVED_IDX; }
-  function drIsInProgress(r) { var idx = drWorkflowIdx(r); return idx > -1 && idx < DR_APPROVED_IDX; }
-
-  CIPRMS.api('/api/document-requests/mine', { quiet: true }).then(function (res) {
-    if (!res.ok || !Array.isArray(res.data)) {
-      box.innerHTML = '<p class="text-muted fs-12 mb-0">Could not load approval progress.</p>';
-      return;
-    }
-    var all = res.data;
-    var total = all.length;
-    var approved = all.filter(drIsApproved).length;
-    var inProgress = all.filter(drIsInProgress).length;
-    var pct = total ? Math.round((approved / total) * 100) : 0;
-    box.innerHTML =
-      '<div class="d-flex justify-content-between mb-1"><span>Approved</span><span>' + approved + ' / ' + total + '</span></div>' +
-      '<div class="progress mb-3" style="height:10px"><div class="progress-bar bg-success" style="width:' + pct + '%"></div></div>' +
-      '<div class="row g-2 text-center">' +
-        '<div class="col-6"><div class="border rounded p-2"><h5 class="mb-0">' + inProgress + '</h5><small class="text-muted">In Progress</small></div></div>' +
-        '<div class="col-6"><div class="border rounded p-2"><h5 class="mb-0 text-success">' + approved + '</h5><small class="text-muted">Approved</small></div></div>' +
-      '</div>';
-  }).catch(function () {
-    box.innerHTML = '<p class="text-muted fs-12 mb-0">Could not load approval progress.</p>';
-  });
-}
-
 // â”€â”€ API helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Every write goes through CIPRMS.api: a timeout, a dropped connection, an expired session or a server error comes back as
 // { success:false, error:<plain-language message> } - the shape the callers below already handle (a failed drag reverts,
@@ -1215,7 +1163,6 @@ document.addEventListener('DOMContentLoaded', function(){
     }).catch(function(e){ console.error(e); restore('Error deleting event.'); });
   });
 
-  loadApprovalProgress();
 });
 
 function showToast(msg, bg) {

@@ -143,7 +143,7 @@
     var detectedType = result.documentType || 'Other';
     var typeConf = result.documentTypeConfidence || 0;
     html += '<div class="mb-3"><label class="form-label fs-13 fw-semibold mb-1">Document Type</label><div class="d-flex align-items-center gap-2 flex-wrap">';
-    html += confidenceBadge('Detected', typeConf) || '';
+    if (!opts.hideConfidence) html += confidenceBadge('Detected', typeConf) || '';
     html += '<select class="form-select form-select-sm" style="max-width:280px" id="' + containerId + '-doctype-select">';
     DOC_TYPE_OPTIONS.forEach(function (t) {
       html += '<option value="' + esc(t) + '"' + (t === detectedType ? ' selected' : '') + '>' + esc(t) + '</option>';
@@ -159,11 +159,11 @@
       var pct = result[pair[0] + 'Confidence'];
       if (pct) confHtml += confidenceBadge(pair[1], pct);
     });
-    if (confHtml) html += '<div class="mb-3"><label class="form-label fs-13 fw-semibold mb-1">Confidence Scores</label><div class="idp-conf-grid">' + confHtml + '</div></div>';
+    if (confHtml && !opts.hideConfidence) html += '<div class="mb-3"><label class="form-label fs-13 fw-semibold mb-1">Confidence Scores</label><div class="idp-conf-grid">' + confHtml + '</div></div>';
 
     // ✓ Expiration Date / ✓ Renewal Reminder Status
     if (result.endDate) {
-      var expClass = result.expirationLabel === 'Expired' ? 'danger' : result.expirationLabel === 'Expiring Soon' ? 'warning' : 'success';
+      var expClass = result.expirationLabel === 'Expired' ? 'danger' : result.expirationLabel === 'Expiring Soon' ? 'expiring' : 'success';   // orange, same as everywhere else
       var expText = result.expirationLabel === 'Expired'
         ? 'Already expired'
         : (result.remainingDays != null ? result.remainingDays + ' day(s) remaining' : result.expirationLabel || '');

@@ -10,6 +10,20 @@
     <link href="/velzon/assets/css/icons.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/app.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/custom.min.css" rel="stylesheet" type="text/css" />
+<style>
+  /* Merged profile + settings card: divider between the two columns (right border on wide screens,
+     bottom border when they stack). */
+  /* More breathing room: profile info lines and form fields were too compact. */
+  .settings-profile-col .border-top > .d-flex { margin-bottom: 1rem !important; }
+  .settings-profile-col .border-top > .d-flex:last-child { margin-bottom: 0 !important; }
+  .settings-profile-col .border-top { padding-top: 1.25rem !important; }
+  .settings-profile-col { border-bottom: 1px solid var(--vz-border-color, #e9ebec); }
+  /* Text under the profile photo: one size up. */
+  .settings-profile-col #display-org { font-size: 1.15rem; }
+  .settings-profile-col #display-contact { font-size: .95rem; }
+  .settings-profile-col .border-top .small { font-size: .9rem !important; }
+  @media (min-width: 992px) { .settings-profile-col { border-bottom: 0; border-right: 1px solid var(--vz-border-color, #e9ebec); } }
+</style>
 </head>
 <body>
 
@@ -36,9 +50,12 @@
                 </div>
 
                 <div class="row">
-                    <!-- Left: avatar + identity -->
-                    <div class="col-xxl-3 col-lg-4">
+                    <!-- Profile + settings merged into ONE card: profile on the left (divider line), tabs/form on the right. -->
+                    <div class="col-12">
                         <div class="card">
+                         <div class="row g-0">
+                          <!-- Left: avatar + identity -->
+                          <div class="col-xxl-3 col-lg-4 settings-profile-col">
                             <div class="card-body p-4 text-center">
                                 <div class="position-relative d-inline-block mb-3" style="cursor:pointer;" onclick="document.getElementById('avatar-input').click()" title="Change photo">
                                     <div id="avatar-preview" class="avatar-xl mx-auto rounded-circle d-flex align-items-center justify-content-center fs-1 fw-bold text-white"
@@ -59,18 +76,24 @@
                                         <i class="ri-phone-line text-primary"></i>
                                         <span id="display-phone">—</span>
                                     </div>
+                                    <div class="d-flex align-items-start gap-2 mb-2 text-muted small">
+                                        <i class="ri-map-pin-line text-primary"></i>
+                                        <span id="display-address" style="white-space:pre-line;">—</span>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-2 mb-2 text-muted small">
+                                      <i class="ri-global-line text-primary"></i>
+                                      <span id="display-website" class="text-truncate">—</span>
+                                    </div>
                                     <div class="d-flex align-items-center gap-2 text-muted small">
                                         <i class="ri-shield-user-line text-primary"></i>
                                         <span>Partner</span>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </div>
+                          </div>
 
-                    <!-- Right: tabs -->
-                    <div class="col-xxl-9 col-lg-8">
-                        <div class="card">
+                          <!-- Right: tabs -->
+                          <div class="col-xxl-9 col-lg-8">
                             <div class="card-header border-0">
                                 <ul class="nav nav-tabs-custom rounded card-header-tabs border-bottom-0" role="tablist">
                                     <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tab-profile"><i class="ri-building-4-line me-1"></i>Organization Profile</a></li>
@@ -91,7 +114,10 @@
                                             </div>
                                             <div class="col-md-6">
                                                 <label class="form-label">Contact Number</label>
-                                                <input type="text" class="form-control" id="p-phone" oninput="updateCard()">
+                                                <input type="text" class="form-control" id="p-phone" readonly
+                                                    style="background-color: var(--vz-tertiary-bg); cursor: not-allowed;"
+                                                    title="Set when your account was set up and cannot be changed here.">
+                                                <div class="form-text"><i class="ri-lock-line me-1"></i>Set during account setup. Contact the CIRL Administrator if it needs updating.</div>
                                             </div>
                                             <div class="col-md-6">
                                                 <label class="form-label">Email</label>
@@ -99,8 +125,17 @@
                                             </div>
                                             <div class="col-12">
                                                 <label class="form-label">Address</label>
-                                                <textarea class="form-control" id="p-address" rows="2"></textarea>
+                                                <textarea class="form-control" id="p-address" rows="2" oninput="updateCard()"></textarea>
                                             </div>
+                        <div class="col-12">
+                          <label class="form-label" for="p-website">School / Institution Website</label>
+                          <div class="input-group">
+                            <input type="text" class="form-control" id="p-website" readonly
+                              style="background-color: var(--vz-tertiary-bg); cursor: not-allowed;"
+                              title="Set during account setup and cannot be changed here.">
+                            <a class="btn btn-outline-secondary d-none" id="p-website-open" href="#" target="_blank" rel="noopener noreferrer"><i class="ri-external-link-line me-1"></i>Open</a>
+                          </div>
+                        </div>
                                         </div>
                                         <div class="d-flex justify-content-end mt-4 pt-3 border-top">
                                             <button type="button" class="btn btn-success" onclick="saveProfile()"><i class="ri-save-3-line me-1"></i>Save Changes</button>
@@ -109,7 +144,9 @@
 
                                 </div>
                             </div>
-                        </div>
+                          </div><!-- right col -->
+                         </div><!-- row g-0 -->
+                        </div><!-- card -->
                     </div>
                 </div>
 
@@ -153,6 +190,7 @@
         document.getElementById('display-org').textContent = org || 'Your Organization';
         document.getElementById('display-contact').textContent = contact || '—';
         document.getElementById('display-phone').textContent = phone || '—';
+        document.getElementById('display-address').textContent = document.getElementById('p-address').value.trim() || '—';
 
         var avatar = document.getElementById('avatar-preview');
         if (!avatar.dataset.hasPhoto) {
@@ -181,6 +219,8 @@
             document.getElementById('p-contact').value = p.contactName || '';
             document.getElementById('p-phone').value = p.contactNumber || '';
             document.getElementById('p-address').value = p.address || '';
+            (function (w) { var i = document.getElementById('p-website'), a = document.getElementById('p-website-open'); i.value = w || '—'; var l = document.getElementById('display-website'); if (l) { l.textContent = ''; if (/^https?:\/\//i.test(w || '')) { var x = document.createElement('a'); x.href = w; x.target = '_blank'; x.rel = 'noopener noreferrer'; x.textContent = w.replace(/^https?:\/\//i, '').replace(/\/$/, ''); l.appendChild(x); } else { l.textContent = '—'; } }
+              if (/^https?:\/\//i.test(w || '')) { a.href = w; a.classList.remove('d-none'); } else { a.classList.add('d-none'); } })(p.website);
             if (p.avatarUrl) applyAvatar(p.avatarUrl);
             updateCard();
 

@@ -16,7 +16,7 @@ const passport = require('passport');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
-const { Binary } = require('mongodb');
+const { Binary, ObjectId } = require('mongodb');
 const PDFDocument = require('pdfkit');
 const ExcelJS = require('exceljs');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
@@ -122,7 +122,10 @@ app.disable('x-powered-by');
 
 // ── PASSWORD SECURITY HELPERS ─────────────────────────────────────────────────
 const BCRYPT_SALT_ROUNDS = 12;
-const SESSION_IDLE_TIMEOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
+// 10 minutes without a request ends the session (server-side backstop, e.g. a closed tab). The page itself signs
+// the user out after 10 minutes without mouse/keyboard/scroll/touch (public/js/ciprms-idle-logout.js) and, while they
+// ARE active, pings GET /api/session/ping so the session never expires mid-work.
+const SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 function hashPassword(plain) {
   return bcrypt.hash(plain, BCRYPT_SALT_ROUNDS);
@@ -848,7 +851,9 @@ app.get('/', async (req, res) => {
     error: lockedUntil ? loginLockoutService.lockoutMessage(Math.ceil((new Date(lockedUntil).getTime() - Date.now()) / 1000)) : undefined,
     lockedUntil,
     // set by the Settings pages after a password change, which ends the session
-    notice: req.query.passwordChanged === '1' ? 'Your password was changed. Please log in again with your new password.' : undefined
+    notice: req.query.passwordChanged === '1' ? 'Your password was changed. Please log in again with your new password.' : undefined,
+    // set by public/js/ciprms-idle-logout.js after an automatic sign-out
+    timedOut: req.query.timeout === '1'
   });
 });
 
@@ -1322,6 +1327,11 @@ app.post('/logout', (req, res) => {
     res.json({ success: true });
   });
 });
+
+// ── SESSION KEEP-ALIVE ─────────────────────────────────────────────────────────
+// Sent by public/js/ciprms-idle-logout.js only while the person is actively using the page; touching the session
+// (rolling cookie) resets its 10-minute idle expiry. No body, no side effects.
+app.get('/api/session/ping', requireAuth, (req, res) => res.status(204).end());
 
 // ── SESSION USER API ──────────────────────────────────────────────────────────
 app.get('/api/me', requireAuth, (req, res) => {
@@ -2172,7 +2182,8 @@ app.post('/api/requests', requireRequesterOrInstitutionInitiator, denyCollegeSta
       // actionable by them. The submitter doesn't notify themselves.
       // Institution-initiated: the actor (Admin/Staff) is also a reviewer, but the submitter doesn't
       // notify themselves (same principle as every other submission path here) — exclude them.
-      const reviewerFilter = { role: { $in: REQUEST_REVIEWER_ROLES } };
+      // LAU (read-only monitoring) is told about every new Partnership Request too, never a College Partnership Report.
+      const reviewerFilter = { role: { $in: collegeReport ? REQUEST_REVIEWER_ROLES : [...REQUEST_REVIEWER_ROLES, 'LAU'] } };
       if (institutionInitiated) reviewerFilter.id = { $ne: req.session.user.id };
       const reviewers = await db.collection('users')
         .find(reviewerFilter)
@@ -2362,8 +2373,8 @@ app.post('/api/requests/:id/submit', requireRequester, denyCollegeStaffPartnersh
     await logActivity(db, req.session.user, 'SUBMIT',
       `Partnership request submitted: ${updated.institution} (${updated.type}) by ${updated.requestedBy}`);
 
-    // Same alerts as a request submitted directly (POST /api/requests): the reviewers, and a receipt to the submitter.
-    const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
+    // Same alerts as a request submitted directly (POST /api/requests): the reviewers (and LAU), and a receipt to the submitter.
+    const reviewers = await db.collection('users').find({ role: { $in: [...REQUEST_REVIEWER_ROLES, 'LAU'] } }).toArray();
     await notifyReviewers(db, reviewers, {
       module: 'request',
       tag: updated.isRenewal ? 'Renewal Request' : 'Partnership Request',
@@ -2749,6 +2760,20 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
             link: prLinkForRole(submitter && submitter.role, id),
             downloadLink: fileLink
           });
+        }
+        // LAU monitors every Partnership Request, so a draft the Administrator/Staff uploads is announced to LAU too.
+        if (isReviewer) {
+          const lauUsers = await db.collection('users').find({ role: 'LAU', status: { $ne: 'Inactive' } }).toArray();
+          await notifyReviewers(db, lauUsers, {
+            module: 'request',
+            tag: target.isRenewal ? 'Renewal Request' : 'Partnership Request',
+            icon: 'ri-file-upload-line',
+            color: 'info',
+            title: `New draft uploaded: ${target.institution}`,
+            desc: req.file
+              ? `${actor.name} uploaded "${req.file.originalname}" for the request of ${target.institution}.${note ? ' Note: ' + note : ''}`
+              : `${actor.name} added new notes to the request of ${target.institution}.${note ? ' Note: ' + note : ''}`
+          }, role => prLinkForRole(role, id));
         } else if (isOwner && !initialSubmissionFile) {
           const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
           await notifyReviewers(db, reviewers, {
@@ -4269,11 +4294,29 @@ const OWN_SCOPE_ROLES = ['Auth. Personnel', 'potential_partner'];
 // its list. Safe to open to any authenticated role: the query below is
 // already own-scoped by targetEmail, same protection GET
 // /api/notifications/mine already relies on.
+// The signed-in user's own notifications. LAU (read-only Partnership Request monitoring) only ever sees
+// Partnership/Renewal Request notifications — new requests and uploaded drafts — so anything else that was ever
+// addressed to an LAU account (calendar, lifecycle, account updates…) is left out of its list, badge and
+// "Mark all as read". Nothing is deleted; it is simply not shown.
+const LAU_NOTIFICATION_TAGS = ['Partnership Request', 'Renewal Request'];
+// Also: only notifications received since the account's CURRENT role began (users.notificationsSince, set when an
+// administrator changes the role) — a notification's ObjectId carries its creation time.
+async function myNotificationsFilter(db, user, extra) {
+  const filter = { targetEmail: user ? user.email : '', ...(extra || {}) };
+  if (user && user.role === 'LAU') { filter.module = 'request'; filter.tag = { $in: LAU_NOTIFICATION_TAGS }; }
+  if (user && user.id != null) {
+    const doc = await db.collection('users').findOne({ id: user.id }, { projection: { notificationsSince: 1 } });
+    const since = doc && doc.notificationsSince ? new Date(doc.notificationsSince) : null;
+    if (since && !isNaN(since)) filter._id = { $gte: ObjectId.createFromTime(Math.floor(since.getTime() / 1000)) };
+  }
+  return filter;
+}
+
 app.get('/api/notifications', requireAuth, async (req, res) => {
   try {
     const db = getDb();
     const docs = await db.collection('notifications')
-      .find({ targetEmail: req.session.user.email })
+      .find(await myNotificationsFilter(db, req.session.user))
       .sort({ id: -1 })
       .toArray();
     res.json(withNotificationHref(docs, req.session.user.role));
@@ -4294,7 +4337,7 @@ app.get('/api/notifications/unread-count', requireAuth, async (req, res) => {
   try {
     const db = getDb();
     const email = req.session.user ? req.session.user.email : '';
-    const count = await db.collection('notifications').countDocuments({ targetEmail: email, unread: true });
+    const count = await db.collection('notifications').countDocuments(await myNotificationsFilter(db, req.session.user, { unread: true }));
     res.json({ count });
   } catch (err) {
     res.json({ count: 0 });
@@ -4308,7 +4351,7 @@ app.get('/api/notifications/mine', requireAuth, async (req, res) => {
   try {
     const db = getDb();
     const docs = await db.collection('notifications')
-      .find({ targetEmail: email })
+      .find(await myNotificationsFilter(db, req.session.user))
       .sort({ id: -1 })
       .toArray();
     res.json(withNotificationHref(docs, req.session.user.role));
@@ -5598,6 +5641,31 @@ const PARTNERSHIP_COLUMNS = [
 // (No. | Name of Schools | Address/Country | Date of Signing | Date of
 // Expiration) exactly; only the structure is templated — every value below
 // is read live from the partnerships collection, nothing is hardcoded.
+// Report PDF summary line — "Total · Active · Expiring Soon · Expired · Inactive" — with each status's count in its
+// own color (green Active, orange Expiring Soon, red Expired, grey Inactive; shared statusColors mapping), centered.
+function drawStatusSummaryLine(doc, s, left, width) {
+  const parts = [
+    ['Total: ' + s.totalCount, '#444444'],
+    ['Active: ' + s.activeCount, statusColors.hex('Active')],
+    ['Expiring Soon: ' + s.expiringSoonCount, statusColors.hex('Expiring Soon')],
+    ['Expired: ' + s.expiredCount, statusColors.hex('Expired')],
+    ['Inactive: ' + s.inactiveCount, statusColors.hex('Inactive')]
+  ];
+  const sep = '   ·   ';
+  doc.font('Helvetica-Bold').fontSize(8.5);
+  const total = parts.reduce((w, [t], i) => w + doc.widthOfString(t) + (i ? doc.widthOfString(sep) : 0), 0);
+  let x = left + Math.max(0, (width - total) / 2);
+  const y = doc.y;
+  parts.forEach(([t, color], i) => {
+    if (i) { doc.fillColor('#999999').text(sep, x, y, { lineBreak: false }); x += doc.widthOfString(sep); }
+    doc.fillColor(color).text(t, x, y, { lineBreak: false });
+    x += doc.widthOfString(t);
+  });
+  doc.fillColor('#000');
+  doc.x = left;
+  doc.y = y + doc.currentLineHeight(true);
+}
+
 const PARTNERSHIP_REPORT_COLUMNS = [
   { key: 'inst', label: 'Name of Schools/Institutions', width: 180 },
   { key: 'country', label: 'Address/Country', width: 170 },
@@ -5865,9 +5933,7 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     // raw total, with no status breakdown, even though computeCustomReportData already computes one.
     if (customReportData.summary) {
       const s = customReportData.summary;
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#444')
-        .text(`Total: ${s.totalCount}   ·   Active: ${s.activeCount}   ·   Expiring Soon: ${s.expiringSoonCount}   ·   Expired: ${s.expiredCount}   ·   Inactive: ${s.inactiveCount}`,
-          left, doc.y, { width: contentWidth, align: 'center' });
+      drawStatusSummaryLine(doc, s, left, contentWidth);
     } else {
       doc.font('Helvetica').fontSize(8.5).fillColor('#444')
         .text(`Total Partnerships in Report: ${customReportData.totalRecords}`, left, doc.y, { width: contentWidth, align: 'center' });
@@ -5960,9 +6026,7 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     // Fixed gap before the summary line — same font-independent fix as the letterhead/table-header gap above.
     pdfTableHelper.sectionGap(doc, 10);
     const s = customReportData.summary;
-    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#444')
-      .text(`Total: ${s.totalCount}   ·   Active: ${s.activeCount}   ·   Expiring Soon: ${s.expiringSoonCount}   ·   Expired: ${s.expiredCount}   ·   Inactive: ${s.inactiveCount}`,
-        left, doc.y, { width: contentWidth, align: 'center' });
+    drawStatusSummaryLine(doc, s, left, contentWidth);
     doc.fillColor('#000');
   }
 
@@ -7491,7 +7555,7 @@ function parseComparisonConfigs(req) {
 // consistent-looking across the feature, without hardcoding exactly two.
 // Reserved for a comparison that is NOT restricted to one specific status
 // (e.g. compared by Unit, Country or date range) — see multiComparisonColor().
-const MULTI_COMPARISON_COLORS = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
+const MULTI_COMPARISON_COLORS = ['#0a3d91', '#6d28d9', '#0891b2', '#c026d3', '#4f46e5'];   // navy, purple, cyan, magenta, indigo — never a status color (grey/red/orange/green)
 
 // Root cause of the panel-reported "Active is red in one comparison, blue in another" bug: color used to be
 // assigned purely by the result's ARRAY POSITION (idx % MULTI_COMPARISON_COLORS.length), so the same status
@@ -7506,6 +7570,9 @@ const MULTI_COMPARISON_COLORS = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6
 function multiComparisonColor(r, idx) {
   const status = r.filters && r.filters.status;
   if (status && status !== 'All' && statusColors.isKnownStatus(status)) return statusColors.hex(status);
+  // A slice/row whose own label IS a status (e.g. compared by Status) always gets that status's color too:
+  // green Active, orange Expiring Soon, red Expired, grey Inactive — never a position-based palette color.
+  if (r && statusColors.isKnownStatus(r.label)) return statusColors.hex(r.label);
   return MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
 }
 
@@ -8177,9 +8244,12 @@ app.post('/api/users', requireStaffAccess, async (req, res) => {
       icon: 'ri-user-star-line',
       color: 'primary',
       title: 'Welcome to CIPRMS',
-      desc: `Hello ${entry.name}, your CIPRMS account has been created with the role "${displayRoleName(entry.role)}". Sign in `
-        + `with Google using this e-mail address (${entry.email}) to get started. If you don't have Google `
-        + `access for this address, or run into trouble signing in, please contact the CIRL office for assistance.`,
+      // Says who set the account up (the signed-in Administrator / CIRL Staff creating it) and points at the
+      // clickable CIPRMS web address printed right under this text (showSystemUrl below).
+      desc: `Hello ${entry.name}, the ${req.session.user && req.session.user.role === 'Administrator' ? 'Administrator' : displayRoleName((req.session.user && req.session.user.role) || 'Administrator')} `
+        + `has finished creating your CIPRMS account with the role "${displayRoleName(entry.role)}". You can now access `
+        + `CIPRMS by clicking the web address below, then sign in with Google using this e-mail address (${entry.email}). `
+        + `If you don't have Google access for this address, or run into trouble signing in, please contact the CIRL office for assistance.`,
       link: '/activate',
       showSystemUrl: true   // the e-mail also prints the CIPRMS web address as visible text (APP_BASE_URL)
     });
@@ -8328,8 +8398,15 @@ app.patch('/api/users/:id', requireStaffAccess, async (req, res) => {
         { $ifNull: ['$sessionVersion', 0] }
       ]
     };
+    // A real role change starts a fresh notification history: notifications received under the previous role
+    // (e.g. a reviewer's "New request submitted" alerts on an account that is now a Partner) are not this role's
+    // and stop being shown (see myNotificationsFilter). Compared against the document's own current role inside
+    // the same atomic update, like sessionVersion above.
+    const roleSinceExpr = updateData.role !== undefined
+      ? { $cond: [{ $ne: ['$role', updateData.role] }, '$$NOW', '$notificationsSince'] }
+      : '$notificationsSince';
     await db.collection('users').updateOne({ id }, [
-      { $set: { ...updateData, sessionVersion: sessionVersionExpr } }
+      { $set: { ...updateData, sessionVersion: sessionVersionExpr, notificationsSince: roleSinceExpr } }
     ]);
     const updated = await db.collection('users').findOne({ id }, { projection: { password: 0 } });
     if (!updated) return res.status(404).json({ error: 'The user account you are trying to update could not be found.' });
@@ -8782,7 +8859,9 @@ const NOTIFICATION_PAGES = {
   'Administrator': { fallback: '/notifications', dashboard: '/dashboard', requests: '/partnership-requests', calendar: '/calendar', monitoring: '/lifecycle' },
   'Staff': { fallback: '/staff/notifications', dashboard: '/staff/dashboard', requests: '/staff/requests', calendar: '/staff/calendar', monitoring: '/staff/lifecycle' },
   'Auth. Personnel': { fallback: '/personnel/monitoring', requests: '/personnel/requests', calendar: '/personnel/calendar', monitoring: '/personnel/monitoring' },
-  'potential_partner': { fallback: '/partner/monitoring', requests: '/partner/requests', calendar: '/partner/calendar', monitoring: '/partner/monitoring' }
+  'potential_partner': { fallback: '/partner/monitoring', requests: '/partner/requests', calendar: '/partner/calendar', monitoring: '/partner/monitoring' },
+  // LAU (read-only Partnership Request monitoring): everything opens on its Monitoring page (the shared Requests page).
+  'LAU': { fallback: '/lau/notifications', requests: '/lau/monitoring', monitoring: '/lau/monitoring', dashboard: '/lau/monitoring', calendar: '/lau/monitoring' }
 };
 const NOTIFICATION_LINK_KINDS = [
   [/^\/(?:staff\/|personnel\/|partner\/)?calendar$/, 'calendar'],
@@ -8820,6 +8899,7 @@ function notificationHref(role, n) {
   if (reqKind !== 'pr' && reqKind !== 'dr' && reqKind !== 'cdr') reqKind = /partnership/i.test(n.tag || '') ? 'pr' : /document/i.test(n.tag || '') ? 'dr' : /college/i.test(n.tag || '') ? 'cdr' : null;
   if ((kind === 'requests' || kind === 'monitoring') && reqKind) {
     if ((role === 'Administrator' || role === 'Staff') && id) return pages.requests + '?open=' + reqKind + '&id=' + id;
+    if (role === 'LAU') return id && reqKind === 'pr' ? pages.requests + '?open=pr&id=' + id : pages.requests;
     if (role === 'Auth. Personnel' && id) {
       if (reqKind === 'cdr') return pages.requests + '?open=cdr&id=' + id;           // College Requests tab on this Dean's own Requests page
       return reqKind === 'dr' ? pages.monitoring + '?type=dr&id=' + id : pages.monitoring;   // no Partnership Request page for College Dean
@@ -8868,6 +8948,7 @@ function prLinkForRole(role, id) {
   // Monitoring page (2026-07-25), matching the potential_partner convention
   // above — the Requests page now only holds the submission forms.
   if (role === 'Auth. Personnel') return '/personnel/monitoring?type=pr&id=' + id;
+  if (role === 'LAU') return '/lau/monitoring?open=pr&id=' + id;
   return '/partnership-requests?open=pr&id=' + id;
 }
 
@@ -9181,7 +9262,7 @@ app.patch('/api/notifications/markallread/mine', requireAuth, announce('notifica
   try {
     const db = getDb();
     const email = req.session.user ? req.session.user.email : '';
-    await db.collection('notifications').updateMany({ targetEmail: email }, { $set: { unread: false } });
+    await db.collection('notifications').updateMany(await myNotificationsFilter(db, req.session.user), { $set: { unread: false } });
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Mark notifications read error:', err);
@@ -10516,7 +10597,7 @@ function registeredProfile(userDoc) {
   return {
     name: userDoc.name || '', email: userDoc.email || '',
     dept: userDoc.unit || '', position: userDoc.position || '', institution: userDoc.institution || '',
-    contactNumber: userDoc.contactNumber || '', website: userDoc.website || ''
+    contactNumber: userDoc.contactNumber || '', website: userDoc.website || '', address: userDoc.address || ''
   };
 }
 
@@ -10584,6 +10665,48 @@ async function saveOwnName(req, res) {
   }
 }
 
+// Administrator / CIRL Staff Settings (2026-11): full edit of their own account details — name, Department/College,
+// Designation, Institution, Contact Number and School / Institution Website — validated exactly like the account
+// setup form (POST /api/activate). Email is never taken from the request. College Dean keeps saveOwnName (name only).
+async function saveOwnProfileFull(req, res) {
+  // Partial update: a field that is not sent is left as it is (so a name-only save still works); a field that IS
+  // sent is validated like account setup — required ones cannot be blanked, contact number / website must be valid.
+  const text = (v) => (typeof v === 'string' ? v.trim() : '');
+  const name = text(req.body.name);
+  if (!name) return res.status(400).json({ error: 'Name is required.' });
+  const $set = { name };
+  for (const [key, label] of [['unit', 'Department/College'], ['position', 'Designation'], ['institution', 'Institution']]) {
+    if (req.body[key] === undefined) continue;
+    const v = text(req.body[key]);
+    if (!v) return res.status(400).json({ error: label + ' is required.' });
+    $set[key] = v;
+  }
+  if (req.body.contactNumber !== undefined) {
+    const contact = parseContactNumber(typeof req.body.contactNumber === 'string' ? req.body.contactNumber : '');
+    if (contact.error) return res.status(400).json({ error: contact.error });
+    if (!contact.value) return res.status(400).json({ error: 'Contact number is required.' });
+    $set.contactNumber = contact.value;
+  }
+  if (req.body.address !== undefined) $set.address = text(req.body.address).slice(0, 300);   // optional
+  if (req.body.website !== undefined) {
+    const site = parseWebsite(typeof req.body.website === 'string' ? req.body.website : '');
+    if (site.error) return res.status(400).json({ error: site.error });
+    $set.website = site.value || '';
+  }
+  try {
+    const db = getDb();
+    await db.collection('users').updateOne({ id: req.session.user.id }, { $set });
+    await propagateRequestorName(db, req.session.user.email, name);
+    req.session.user.name = name;
+    if ($set.unit) req.session.user.unit = $set.unit;
+    const userDoc = await db.collection('users').findOne({ id: req.session.user.id }, { projection: { password: 0 } });
+    res.json({ success: true, profile: registeredProfile(userDoc) });
+  } catch (err) {
+    console.error('❌ saveOwnProfileFull error:', err);
+    res.status(503).json({ error: 'Unable to save your name right now. Please try again.', code: 'SERVICE_UNAVAILABLE' });
+  }
+}
+
 // After the password is changed the current session ends: the person has to sign in again with the new password.
 // (Same teardown as POST /logout — the session is destroyed, its live connections closed and the cookie cleared.)
 function endSessionAfterPasswordChange(req, res) {
@@ -10598,7 +10721,7 @@ function endSessionAfterPasswordChange(req, res) {
 
 // Admin profile GET / POST
 app.get('/api/admin/profile', requireAdmin, readOwnProfile);
-app.post('/api/admin/profile', requireAdmin, saveOwnName);
+app.post('/api/admin/profile', requireAdmin, saveOwnProfileFull);
 
 // Admin password POST
 app.post('/api/admin/password', adminPasswordLimiter, requireAdmin, async (req, res) => {
@@ -10662,7 +10785,7 @@ app.post('/api/personnel/password', personnelPasswordLimiter, requirePersonnel, 
 
 // Staff profile GET / POST — name only; see registeredProfile() above.
 app.get('/api/staff/profile', requireStaffAccess, readOwnProfile);
-app.post('/api/staff/profile', requireStaffAccess, saveOwnName);
+app.post('/api/staff/profile', requireStaffAccess, saveOwnProfileFull);
 
 // Staff password POST
 app.post('/api/staff/password', staffPasswordLimiter, requireStaffAccess, async (req, res) => {
@@ -11289,7 +11412,9 @@ app.post('/api/ai-insights', aiInsightsLimiter, requireStaffAccess, async (req, 
       generate: req.body.generate, forceRefresh: req.body.forceRefresh, targetsWithProgress
     });
     const outcome = result.aiBlocked ? 'blocked' : (result.error ? 'error' : (result.ai ? 'success' : 'cache_miss'));
-    await logActivity(db, req.session.user, 'AI_INSIGHT_REQUEST', `AI strategic insights requested (${result.cacheStatus || 'n/a'})`, {
+    // Only a real request (Generate / Refresh) is audited. The Reports page's automatic cache check on every
+    // load never reaches the AI and used to add an audit entry each time, flooding the Audit Trail.
+    if (req.body.generate || req.body.forceRefresh) await logActivity(db, req.session.user, 'AI_INSIGHT_REQUEST', `AI strategic insights requested (${result.cacheStatus || 'n/a'})`, {
       category: 'AI_INSIGHT', status: outcome,
       details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
     });
@@ -11310,7 +11435,9 @@ app.post('/api/ai-insights/executive-briefing', aiInsightsLimiter, requireStaffA
       scope: 'briefing', generate: req.body.generate, forceRefresh: req.body.forceRefresh, targetsWithProgress
     });
     const outcome = result.aiBlocked ? 'blocked' : (result.error ? 'error' : (result.ai ? 'success' : 'cache_miss'));
-    await logActivity(db, req.session.user, 'AI_BRIEFING_REQUEST', `Executive briefing requested (${result.cacheStatus || 'n/a'})`, {
+    // Only a real request (Generate Briefing / Refresh) is audited. The Dashboard's automatic cache check on
+    // every page load never reaches the AI and used to add an audit entry each time, flooding the Audit Trail.
+    if (req.body.generate || req.body.forceRefresh) await logActivity(db, req.session.user, 'AI_BRIEFING_REQUEST', `Executive briefing requested (${result.cacheStatus || 'n/a'})`, {
       category: 'AI_INSIGHT', status: outcome,
       details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
     });
@@ -12116,6 +12243,15 @@ app.get('/staff/college-requests', requireStaffAccess, (req, res) => {
 // Partnership Requests tab only, since Document Requests is a separate, out-of-scope workflow bundled into
 // the same page. This is also LAU's home/landing page (homeForRole above) — like potential_partner, LAU has
 // no separate Dashboard.
+// LAU's Notifications page — the same page every other role uses; it only ever lists the user's own notifications.
+app.get('/lau/notifications', requireLau, (req, res) => {
+  res.render('administrator/notifications', {
+    activePage: 'notifications',
+    sidebarPartial: 'sidebar_lau',
+    user: req.session.user
+  });
+});
+
 app.get('/lau/monitoring', requireLau, (req, res) => {
   res.render('administrator/partnership_requests', {
     activePage: 'access-requests',
@@ -12186,9 +12322,17 @@ app.get('/staff/settings', requireStaffAccess, (req, res) => {
 // notification link can never 404/500. The shared notification system, its APIs
 // and the document APIs are untouched — Administrator/Staff/Department use them.
 app.get('/partner', requirePartner, (req, res) => res.redirect(homeForRole(req.session.user.role)));
-for (const removedPartnerPage of ['/partner/dashboard', '/partner/documents', '/partner/notifications']) {
+for (const removedPartnerPage of ['/partner/dashboard', '/partner/documents']) {
   app.get(removedPartnerPage, requirePartner, (req, res) => res.redirect(homeForRole(req.session.user.role)));
 }
+
+// Partner's Notifications page (2026-11, back again) — the same page every role uses; it only ever lists the
+// Partner's OWN notifications (GET /api/notifications/mine is scoped to the signed-in user's e-mail).
+app.get('/partner/notifications', requirePartner, (req, res) => {
+  res.render('administrator/notifications', {
+    activePage: 'notifications', sidebarPartial: 'sidebar_partner', user: req.session.user
+  });
+});
 
 app.get('/partner/requests', requirePartner, (req, res) => {
   res.render('potential_partner/partner_requests', {
@@ -12223,8 +12367,9 @@ app.get('/api/partner/profile', requirePartner, async (req, res) => {
   try {
     const db = getDb();
     const doc = await db.collection('profiles').findOne({ email: req.session.user.email });
-    const userDoc = await db.collection('users').findOne({ id: req.session.user.id }, { projection: { avatarUrl: 1, googleAvatarUrl: 1 } });
-    res.json({ ...(doc ? doc.profile : {}), avatarUrl: avatarUrlFor(userDoc) });
+    const userDoc = await db.collection('users').findOne({ id: req.session.user.id }, { projection: { avatarUrl: 1, googleAvatarUrl: 1, contactNumber: 1, website: 1 } });
+    // Contact Number and School / Institution Website are set during account setup and read-only here.
+    res.json({ ...(doc ? doc.profile : {}), contactNumber: (userDoc && userDoc.contactNumber) || '', website: (userDoc && userDoc.website) || '', avatarUrl: avatarUrlFor(userDoc) });
   } catch (err) {
     console.error('❌ Partner profile load error:', err);
     res.status(500).json({ error: 'Unable to load your profile right now. Please try again.' });
@@ -12232,14 +12377,16 @@ app.get('/api/partner/profile', requirePartner, async (req, res) => {
 });
 
 app.post('/api/partner/profile', requirePartner, async (req, res) => {
-  const { organization, contactName, contactNumber, address, notifyRequestUpdates, notifyApprovals, notifyDocuments, notifyMeetings, notifyRenewals } = req.body;
+  // contactNumber is NOT taken from the request: it is set during account setup and cannot be changed here.
+  const { organization, contactName, address, notifyRequestUpdates, notifyApprovals, notifyDocuments, notifyMeetings, notifyRenewals } = req.body;
   try {
     const db = getDb();
+    const owner = await db.collection('users').findOne({ id: req.session.user.id }, { projection: { contactNumber: 1 } });
     const profile = {
       organization: organization || '',
       contactName: contactName || '',
       email: req.session.user.email,
-      contactNumber: contactNumber || '',
+      contactNumber: (owner && owner.contactNumber) || '',
       address: address || '',
       notifyRequestUpdates: notifyRequestUpdates !== false,
       notifyApprovals: notifyApprovals !== false,

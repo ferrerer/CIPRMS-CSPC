@@ -109,15 +109,13 @@
     .aud-filter-item { flex: 0 0 auto; width: auto; }   /* each box is as wide as its own text */
     .aud-filter-item .form-select { width: auto; max-width: 100%; }
     .aud-filter-item .form-control[type=date] { width: auto; }
-    .aud-filter-row .form-select-sm, .aud-filter-row .form-control-sm { font-size: .8125rem; padding-top: .28rem; padding-bottom: .28rem; }
-    .aud-filter-row .search-box .form-control-sm { padding-left: 1.9rem; }
-    .aud-filter-row .search-box .search-icon { font-size: .8rem; }
+    /* Filters and search are normal-size controls — same as User Management's role filter and search box. */
     .aud-filter-clear { flex: 0 0 auto; }
-    .aud-clear-link { color: #000; text-decoration: none; font-size: .8125rem; font-weight: 500; padding: .28rem .75rem;
+    .aud-clear-link { color: #000; text-decoration: none; font-size: .875rem; font-weight: 500; padding: .47rem .9rem;
       border: 1px solid #adb5bd; border-radius: var(--vz-border-radius-sm, .2rem); background: #e9ecef; }
     .aud-clear-link:hover, .aud-clear-link:focus { color: #000; text-decoration: none; background: #dee2e6; border-color: #868e96; }
     [data-bs-theme="dark"] .aud-clear-link { color: #fff; background: #3a4252; border-color: #5c6577; }
-    .aud-filter-search { flex: 1 1 150px; min-width: 150px; max-width: 280px; margin-left: auto; display: flex; align-items: center; gap: .4rem; }
+    .aud-filter-search { flex: 0 0 320px; max-width: 100%; margin-left: auto; display: flex; align-items: center; }
     .aud-filter-search > .search-box { flex: 1 1 auto; min-width: 0; }
     @media (max-width: 575.98px) { .aud-filter-search { flex: 1 1 100%; max-width: none; margin-left: 0; } }
 </style>
@@ -690,9 +688,9 @@
                                                 <div class="d-flex align-items-center flex-wrap gap-2">
                                                     <h5 class="card-title mb-0 flex-grow-1"><i
                                                             class="ri-history-line me-2 text-primary"></i><%= isStaffOwnTrail ? 'My Activity Trail' : 'Activity / Audit Trail' %></h5>
-                                                    <button class="btn btn-sm btn-danger" onclick="exportAuditPDF()"><i
+                                                    <button class="btn btn-danger" onclick="exportAuditPDF()"><i
                                                             class="ri-file-pdf-line me-1"></i>Export Log PDF</button>
-                                                    <button class="btn btn-sm btn-success" onclick="exportAuditExcel()"><i
+                                                    <button class="btn btn-success" onclick="exportAuditExcel()"><i
                                                             class="ri-table-line me-1"></i>Export Log Excel</button>
                                                 </div>
                                                 <p class="text-muted mt-1 mb-0 fs-12"><%= isStaffOwnTrail ? 'Your own actions, logged for transparency and accountability.' : 'All system actions logged for transparency and accountability' %></p>
@@ -708,7 +706,7 @@
                                                 <div class="aud-filter-row mb-3">
                                                     <div class="aud-filter-item aud-filter-wide">
                                                         <label class="form-label fs-12 mb-1" for="audit-filter-action">Action</label>
-                                                        <select id="audit-filter-action" class="form-select form-select-sm" onchange="applyAuditFilters()">
+                                                        <select id="audit-filter-action" class="form-select" onchange="applyAuditFilters()">
                                                             <option value="">All Actions</option>
                                                             <option value="LOGIN_SUCCESS">LOGIN_SUCCESS</option>
                                                             <option value="LOGIN_FAILED">LOGIN_FAILED</option>
@@ -727,7 +725,7 @@
                                                     </div>
                                                     <div class="aud-filter-item">
                                                         <label class="form-label fs-12 mb-1" for="audit-filter-category">Category</label>
-                                                        <select id="audit-filter-category" class="form-select form-select-sm" onchange="applyAuditFilters()">
+                                                        <select id="audit-filter-category" class="form-select" onchange="applyAuditFilters()">
                                                             <option value="">All Categories</option>
                                                             <option value="Authentication">Authentication</option>
                                                             <option value="Security">Security</option>
@@ -735,7 +733,7 @@
                                                     </div>
                                                     <div class="aud-filter-item">
                                                         <label class="form-label fs-12 mb-1" for="audit-filter-status">Status</label>
-                                                        <select id="audit-filter-status" class="form-select form-select-sm" onchange="applyAuditFilters()">
+                                                        <select id="audit-filter-status" class="form-select" onchange="applyAuditFilters()">
                                                             <option value="">All Statuses</option>
                                                             <option value="success">Success</option>
                                                             <option value="failure">Failure</option>
@@ -744,7 +742,7 @@
                                                     </div>
                                                     <div class="aud-filter-item">
                                                         <label class="form-label fs-12 mb-1" for="audit-filter-role">Role</label>
-                                                        <select id="audit-filter-role" class="form-select form-select-sm" onchange="applyAuditFilters()">
+                                                        <select id="audit-filter-role" class="form-select" onchange="applyAuditFilters()">
                                                             <option value="">All Roles</option>
                                                             <option value="Administrator">Administrator</option>
                                                             <option value="Auth. Personnel">College Dean</option>
@@ -754,19 +752,18 @@
                                                     </div>
                                                     <div class="aud-filter-item aud-filter-date">
                                                         <label class="form-label fs-12 mb-1" for="audit-filter-from">Date From</label>
-                                                        <input type="date" id="audit-filter-from" class="form-control form-control-sm" onchange="applyAuditFilters()">
+                                                        <input type="date" id="audit-filter-from" class="form-control" onchange="applyAuditFilters()">
                                                     </div>
                                                     <div class="aud-filter-item aud-filter-date">
                                                         <label class="form-label fs-12 mb-1" for="audit-filter-to">Date To</label>
-                                                        <input type="date" id="audit-filter-to" class="form-control form-control-sm" onchange="applyAuditFilters()">
+                                                        <input type="date" id="audit-filter-to" class="form-control" onchange="applyAuditFilters()">
                                                     </div>
                                                     <div class="aud-filter-clear">
                                                         <button type="button" class="btn btn-link btn-sm aud-clear-link" onclick="resetAuditFilters()" title="Clear all filters">Clear</button>
                                                     </div>
                                                     <div class="aud-filter-search">
-                                                        <label class="form-label fs-12 mb-0" for="audit-filter-q">Search</label>
                                                         <div class="search-box">
-                                                            <input type="text" id="audit-filter-q" class="form-control form-control-sm" oninput="applyAuditFilters()">
+                                                            <input type="text" id="audit-filter-q" class="form-control" oninput="applyAuditFilters()">
                                                             <i class="ri-search-line search-icon"></i>
                                                         </div>
                                                     </div>
@@ -789,7 +786,7 @@
                             <div id="content-insights" style="display:none;">
                                 <div class="row g-3">
                                     <div class="col-xl-12">
-                                        <div class="card" id="ai-insights-card">
+                                        <div class="card mb-0" id="ai-insights-card">
                                             <div class="card-header border-0 align-items-center d-flex flex-wrap gap-2">
                                                 <div class="flex-grow-1">
                                                     <h4 class="card-title mb-0"><i
@@ -1111,8 +1108,8 @@
                     // header instead follows the real stylesheet rules
                     // (assets/libs/gridjs/theme/mermaid.min.css for light,
                     // assets/css/ciprms-bridge.css's dark-mode block for dark).
-                    th: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: '700', border: 'none', padding: '10px 10px' },
-                    td: { border: 'none', padding: '10px 10px', fontSize: '13px' }
+                    th: { fontSize: '11px', textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: '700', border: '1px solid var(--vz-border-color)', padding: '10px 10px' },
+                    td: { border: '1px solid var(--vz-border-color)', padding: '10px 10px', fontSize: '13px' }   // grid lines on every column, same as Monitoring
                 }
             }).render(document.getElementById('audit-grid'));
         }
@@ -1384,6 +1381,18 @@
             previewCustomReport();
         }
 
+        // While any pop-up window (report preview, comparison table, …) is open, the page behind it must not scroll —
+        // only the window's own content does. Unlocked again once the last open window closes.
+        document.addEventListener('show.bs.modal', function () {
+            document.documentElement.style.overflow = 'hidden';
+            document.body.style.overflow = 'hidden';
+        });
+        document.addEventListener('hidden.bs.modal', function () {
+            if (document.querySelector('.modal.show')) return;
+            document.documentElement.style.overflow = '';
+            document.body.style.overflow = '';
+        });
+
         function exportReport(format, params) {
             var q = new URLSearchParams(params).toString();
             window.open('/api/reports/partnerships/' + format + '?' + q, '_blank');
@@ -1535,7 +1544,7 @@
                 Object.entries(data.filters).forEach(function(pair) {
                     var label = LABELS[pair[0]] || pair[0];
                     var value = (pair[0] === 'dateFrom' || pair[0] === 'dateTo') ? niceDate(pair[1]) : pair[1];
-                    badgesHtml += '<span class="badge bg-secondary-subtle text-secondary me-1 mb-1"><strong class="text-secondary-emphasis">' + escapeHtml(label) + ':</strong> ' + escapeHtml(value) + '</span>';
+                    badgesHtml += '<span class="badge bg-light text-body border me-1 mb-1"><strong>' + escapeHtml(label) + ':</strong> ' + escapeHtml(value) + '</span>';
                 });
             }
             filtersEl.innerHTML = badgesHtml;
@@ -1613,14 +1622,22 @@
                         + '<td class="fw-semibold">' + escapeHtml(p.inst) + '</td>'
                         + '<td>' + escapeHtml(p.country || '—') + '</td>'
                         + '<td>' + escapeHtml(p.region || '—') + '</td>'
-                        + '<td><span class="badge bg-primary-subtle text-primary">' + escapeHtml(p.type || '—') + '</span></td>'
-                        + '<td>' + escapeHtml((Array.isArray(p.nature) ? p.nature.join(', ') : p.nature) || '—') + '</td>'
-                        + '<td><span class="badge bg-secondary-subtle text-secondary">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
+                        + '<td>' + escapeHtml(p.type || '—') + '</td>'
+                        + '<td>' + (function (n) {
+                            n = (Array.isArray(n) ? n : String(n || '').split(',')).map(function (x) { return String(x).trim(); }).filter(Boolean);
+                            if (!n.length) return '—';
+                            return '<span title="' + escapeHtml(n.join(', ')) + '">' + escapeHtml(n[0]) + '</span>'
+                                + (n.length > 1 ? ' <span class="badge bg-light text-muted border nature-more-btn" tabindex="0" data-bs-toggle="tooltip" data-bs-html="true" data-bs-placement="top" data-bs-title="' + escapeHtml(n.slice(1).map(escapeHtml).join(';<br>')) + '">+' + (n.length - 1) + ' more</span>' : '');
+                        })(p.nature) + '</td>'
+                        + '<td><span class="badge bg-light text-body border">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
                         + '<td>' + escapeHtml(p.start || '—') + '</td>'
                         + '<td>' + escapeHtml(p.end || '—') + '</td>'
-                        + '<td><span class="badge ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span></td>'
+                        + '<td>' + (p.status === 'Expired' ? '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>' : '<span class="badge table-pill ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span>') + '</td>'   // Monitoring-style status badge
                         + '</tr>';
                 });
+            }
+            if (!window.__natureMoreTooltip && window.bootstrap && bootstrap.Tooltip) {
+                window.__natureMoreTooltip = new bootstrap.Tooltip(document.body, { selector: '.nature-more-btn', trigger: 'hover focus', container: 'body' });
             }
             recTbody.innerHTML = recHtml;
         }
@@ -2056,6 +2073,12 @@
         function statusBadgeClass(status) {
             return CIPRMS_STATUS_COLORS.badgeClass(status);
         }
+        // Status badge in the same format as the Monitoring registry: rounded table pill, Active green, Expiring Soon
+        // orange, Inactive grey — and Expired as a solid red badge with a ✖ icon.
+        function monitoringStatusBadge(status) {
+            if (status === 'Expired') return '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>';
+            return '<span class="badge table-pill ' + statusBadgeClass(status) + '">' + escapeHtml(status || '—') + '</span>';
+        }
 
         // Builds one configuration card's HTML. Mirrors exactly the 8 fields the
         // Custom Report Builder itself exposes (reportType/cat/dateFrom/dateTo/
@@ -2085,7 +2108,7 @@
                 '    </div>' +
                 '    <div class="row g-3">' +
                 '      <div class="col-xl-3 col-md-6">' +
-                '        <label class="form-label fw-semibold">Label</label>' +
+                '        <label class="form-label fw-semibold" for="cmpcfg-' + id + '-label">Label</label>' +
                 '        <input type="text" class="form-control" id="cmpcfg-' + id + '-label" value="' + escapeHtml(prefill.label || '') + '">' +
                 '      </div>' +
                 '      <div class="col-xl-3 col-md-6">' +
@@ -2100,7 +2123,12 @@
                 '      </div>' +
                 '      <div class="col-xl-3 col-md-6">' +
                 '        <label class="form-label fw-semibold">Category</label>' +
-                '        <input type="text" class="form-control" id="cmpcfg-' + id + '-cat" value="' + escapeHtml(prefill.cat || '') + '">' +
+                // Same choices as the Custom Report Builder's own Category filter (#cr-cat): All / International / Local.
+                '        <select class="form-select" id="cmpcfg-' + id + '-cat">' +
+                ['', 'International', 'Local'].map(function (c) {
+                    return '<option value="' + c + '"' + ((prefill.cat || '') === c ? ' selected' : '') + '>' + (c || 'All') + '</option>';
+                }).join('') +
+                '        </select>' +
                 '      </div>' +
                 '      <div class="col-xl-3 col-md-6' + (isStatusTyped ? ' cr-status-disabled' : '') + '">' +
                 '        <label class="form-label fw-semibold">Status</label>' +
@@ -2313,7 +2341,7 @@
             tbody.innerHTML = records.map(function (p) {
                 return '<tr>' +
                     '<td class="fw-semibold">' + escapeHtml(p.inst || '—') + '<div class="text-muted fs-11">' + escapeHtml(p.country || '—') + '</div></td>' +
-                    '<td><span class="badge ' + statusBadgeClass(p.status) + '">' + escapeHtml(p.status || '—') + '</span></td>' +
+                    '<td>' + monitoringStatusBadge(p.status) + '</td>' +
                     '</tr>';
             }).join('');
         }
@@ -2421,10 +2449,11 @@
         // A comparison restricted to exactly one real status (filters.status is not 'All') always gets that
         // status's own semantic color; only a non-status comparison (by Unit/Country/date range/etc.) falls
         // back to the fixed, position-based palette.
-        var MULTI_COMPARISON_COLORS = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
+        var MULTI_COMPARISON_COLORS = ['#0a3d91', '#6d28d9', '#0891b2', '#c026d3', '#4f46e5'];   // navy, purple, cyan, magenta, indigo — never a status color (grey/red/orange/green)
         function multiComparisonColor(r, idx) {
             var status = r.filters && r.filters.status;
             if (status && status !== 'All' && CIPRMS_STATUS_COLORS.isKnownStatus(status)) return CIPRMS_STATUS_COLORS.hex(status);
+            if (r && CIPRMS_STATUS_COLORS.isKnownStatus(r.label)) return CIPRMS_STATUS_COLORS.hex(r.label);   // same rule as the PDF
             return MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
         }
 

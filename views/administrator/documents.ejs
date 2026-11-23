@@ -190,7 +190,9 @@
         /* Document Library list view: fixed column widths (see its <colgroup>) so columns don't shift between pages;
        long names wrap onto extra lines instead of being cut with "…". */
     .doc-list-table { table-layout: fixed; width: 100%; min-width: 960px; }
-    .doc-list-table td, .doc-list-table th { white-space: normal; overflow-wrap: break-word; }
+    /* Text that does not fit its cell is cut with "…" (full text on hover via title). */
+    .doc-list-table td, .doc-list-table th { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .doc-list-table td .badge, .doc-card .badge { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
     .doc-list-table td.text-nowrap, .doc-list-table th.text-nowrap { white-space: nowrap; }
     .doc-list-table .form-select-sm { font-size: .75rem; padding-right: 1.6rem; }
 </style>
@@ -294,15 +296,8 @@
                                     <% } %>
                                 </div>
 
-                                <!-- Filter row, on its own line under the "Documents" title: search, Nature, Acknowledged duplicates. -->
+                                <!-- Filter row, on its own line under the "Documents" title: filters on the left, search on the far right. -->
                                 <div class="row align-items-center g-2 mt-1">
-                                    <!-- Search: first in the filter row, 320px wide. -->
-                                    <div class="col-md-auto">
-                                        <div class="search-box" style="width:320px;max-width:100%;">
-                                            <input type="text" class="form-control" id="searchLibrary">
-                                            <i class="ri-search-line search-icon"></i>
-                                        </div>
-                                    </div>
                                     <!-- Nature of Partnership filter — same search + "All …" dropdown layout as the Requests
                                          page. Options are rebuilt from the actual MOA/MOU records by renderNaturePills(). -->
                                     <div class="col-md-auto">
@@ -325,6 +320,13 @@
                                         <div class="form-check mb-0">
                                             <input class="form-check-input" type="checkbox" id="acknowledged-only-toggle" onchange="toggleAcknowledgedFilter(this.checked)">
                                             <label class="form-check-label fs-13" for="acknowledged-only-toggle">Acknowledged duplicates only</label>
+                                        </div>
+                                    </div>
+                                    <!-- Search: far right of the filter row, 320px wide. -->
+                                    <div class="col-md-auto ms-md-auto">
+                                        <div class="search-box" style="width:320px;max-width:100%;">
+                                            <input type="text" class="form-control" id="searchLibrary">
+                                            <i class="ri-search-line search-icon"></i>
                                         </div>
                                     </div>
                                 </div>
@@ -703,9 +705,11 @@
     }
 
     function updateStats() {
-        const total = allDocs.length;
-        const moa = allDocs.filter(d => d.type === 'MOA').length;
-        const mou = allDocs.filter(d => d.type === 'MOU').length;
+        // Archived documents are not counted in Total / MOA / MOU (they still show under the Archived folder).
+        const live = allDocs.filter(d => !d.archived);
+        const total = live.length;
+        const moa = live.filter(d => d.type === 'MOA').length;
+        const mou = live.filter(d => d.type === 'MOU').length;
         
         document.getElementById('stat-total').textContent = total;
         document.getElementById('stat-moa').textContent = moa;
@@ -864,9 +868,55 @@
         container.innerHTML = html;
     }
 
-    function createFolderPrompt() {
-        const name = prompt('New folder name:');
-        if (!name || !name.trim()) return;
+    // In-page name window (replaces the browser's prompt() for New Folder / Rename Folder / Rename Document).
+    // Resolves with the trimmed name, or null when cancelled. Built once, reused.
+    function askName(title, label, initial, saveLabel) {
+        let el = document.getElementById('name-modal');
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'modal fade';
+            el.id = 'name-modal';
+            el.tabIndex = -1;
+            el.setAttribute('aria-hidden', 'true');
+            el.innerHTML =
+                '<div class="modal-dialog modal-dialog-centered"><div class="modal-content border-0">' +
+                '<div class="modal-header bg-light" style="padding:.6rem 1rem;"><h5 class="modal-title fs-15 mb-0" id="name-modal-title"></h5>' +
+                '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+                '<form id="name-modal-form" novalidate><div class="modal-body">' +
+                '<label class="form-label" for="name-modal-input" id="name-modal-label"></label>' +
+                '<input type="text" class="form-control" id="name-modal-input" maxlength="200" autocomplete="off">' +
+                '<div class="invalid-feedback">Please enter a name.</div></div>' +
+                '<div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>' +
+                '<button type="submit" class="btn btn-primary" id="name-modal-save"></button></div></form>' +
+                '</div></div>';
+            document.body.appendChild(el);
+        }
+        const input = el.querySelector('#name-modal-input');
+        el.querySelector('#name-modal-title').textContent = title;
+        el.querySelector('#name-modal-label').textContent = label;
+        el.querySelector('#name-modal-save').textContent = saveLabel || 'Save';
+        input.value = initial || '';
+        input.classList.remove('is-invalid');
+        const modal = bootstrap.Modal.getOrCreateInstance(el);
+        return new Promise(resolve => {
+            let result = null;
+            const form = el.querySelector('#name-modal-form');
+            form.onsubmit = (e) => {
+                e.preventDefault();
+                const v = input.value.trim();
+                if (!v) { input.classList.add('is-invalid'); input.focus(); return; }
+                result = v;
+                modal.hide();
+            };
+            el.addEventListener('shown.bs.modal', () => { input.focus(); input.select(); }, { once: true });
+            el.addEventListener('hidden.bs.modal', () => resolve(result), { once: true });
+            modal.show();
+        });
+    }
+
+    async function createFolderPrompt() {
+        const name = await askName('New Folder', 'Folder name', '', 'Create Folder');
+        if (!name) return;
         fetch('/api/document-folders', {
             method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() })
         }).then(r => r.json()).then(data => {
@@ -875,10 +925,10 @@
         });
     }
 
-    function renameFolderPrompt(id) {
+    async function renameFolderPrompt(id) {
         const folder = allFolders.find(f => f.id === id);
-        const name = prompt('Rename folder:', folder ? folder.name : '');
-        if (!name || !name.trim()) return;
+        const name = await askName('Rename Folder', 'Folder name', folder ? folder.name : '', 'Save');
+        if (!name) return;
         fetch('/api/document-folders/' + id, {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() })
         }).then(r => r.json()).then(data => {
@@ -933,10 +983,10 @@
         DocViewer.open(doc.fileLink || '', doc.title || 'Document');
     }
 
-    function renameDocumentPrompt(docId) {
+    async function renameDocumentPrompt(docId) {
         const doc = allDocs.find(d => d.id === docId);
-        const title = prompt('Rename document:', doc ? doc.title : '');
-        if (!title || !title.trim()) return;
+        const title = await askName('Rename Document', 'Document name', doc ? doc.title : '', 'Save');
+        if (!title) return;
         fetch('/api/documents/' + docId, {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: title.trim() })
         }).then(r => r.json()).then(data => {
@@ -980,7 +1030,7 @@
             const rightLabel = isAccred ? 'Issuing Body:' : 'Nature:';
             const rightValue = isAccred
                 ? `<span class="fw-bold fs-12 d-block text-truncate" title="${escHtml(doc.issuingBody || '—')}">${escHtml(doc.issuingBody || '—')}</span>`
-                : `<span class="badge ${natureBadge} fs-10">${escHtml(nature)}</span>`;
+                : `<span class="badge ${natureBadge} fs-10" title="${escHtml(nature)}">${escHtml(nature)}</span>`;
             const accredExtra = isAccred && (doc.accreditationLevel || doc.certificateNumber)
                 ? `<div class="mb-2 fs-11 text-muted">${doc.accreditationLevel ? 'Level: ' + escHtml(doc.accreditationLevel) : ''}${doc.accreditationLevel && doc.certificateNumber ? ' &middot; ' : ''}${doc.certificateNumber ? 'Cert No: ' + escHtml(doc.certificateNumber) : ''}</div>`
                 : '';
@@ -995,7 +1045,7 @@
                                 </div>
                                 <div class="flex-grow-1 overflow-hidden">
                                     <h5 class="fs-14 mb-1 text-truncate" title="${escHtml(doc.title)}">${escHtml(doc.title)}</h5>
-                                    <p class="text-muted fs-12 mb-0 text-truncate">${escHtml(doc.institution || doc.partner || '')}</p>
+                                    <p class="text-muted fs-12 mb-0 text-truncate" title="${escHtml(doc.institution || doc.partner || '')}">${escHtml(doc.institution || doc.partner || '')}</p>
                                     ${doc.duplicateAcknowledged ? '<span class="badge bg-warning-subtle text-warning fs-10 mt-1" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line me-1"></i>Acknowledged duplicate</span>' : ''}
                                 </div>
                             </div>
@@ -1073,9 +1123,9 @@
                 <tr>
                     <td><span class="avatar-title bg-light rounded fs-4" style="width:36px;height:36px;display:inline-flex"><i class="${icon}"></i></span></td>
                     <td title="${escHtml(doc.title)}">${escHtml(doc.title)}${doc.duplicateAcknowledged ? ' <span class="badge bg-warning-subtle text-warning fs-10" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line"></i></span>' : ''}</td>
-                    <td>${escHtml(doc.institution || doc.partner || '—')}</td>
-                    <td>${escHtml(doc.type)}</td>
-                    <td><span class="badge ${natureBadge} fs-10">${escHtml(nature)}</span></td>
+                    <td title="${escHtml(doc.institution || doc.partner || '')}">${escHtml(doc.institution || doc.partner || '—')}</td>
+                    <td title="${escHtml(doc.type || '')}">${escHtml(doc.type)}</td>
+                    <td><span class="badge ${natureBadge} fs-10" title="${escHtml(nature)}">${escHtml(nature)}</span></td>
                     <td class="text-nowrap">${escHtml(doc.date || '—')}</td>
                     <td><span class="badge ${statusBadge} fs-10">${escHtml(doc.status || '—')}</span></td>
                     <td>

@@ -148,9 +148,8 @@
           </div>
         </div>
 
-        <!-- Pagination Container -->
-        <div class="d-flex flex-wrap align-items-center justify-content-end gap-3">
-          <div id="notif-page-size"></div>
+        <!-- Previous / Next only (10 per page) — same as the other pages -->
+        <div class="d-flex justify-content-end">
           <div id="notif-pagination"></div>
         </div>
 
@@ -181,7 +180,7 @@
 
         let activeRead = 'all';
         let currentPage = 1;
-        let itemsPerPage = 10; // selectable (2026-11 panel recommendation) — was a hardcoded 4
+        const itemsPerPage = 10; // fixed: Previous / Next only, no "Show N" selector
 
         // â”€â”€ API helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         function apiPatchNotif(id, payload) {
@@ -235,40 +234,15 @@
         // page number. Pure function (current, total) -> array of
         // page numbers / '…' markers, so it's easy to reuse for any other
         // paginated list in the app without duplicating the windowing logic.
-        function buildPageList(current, total, maxVisible) {
-            maxVisible = maxVisible || 5;
-            if (total <= maxVisible + 2) {
-                return Array.from({ length: total }, (_, i) => i + 1);
-            }
-            let start = Math.max(1, current - Math.floor(maxVisible / 2));
-            let end = start + maxVisible - 1;
-            if (end > total) { end = total; start = Math.max(1, end - maxVisible + 1); }
-            const pages = [];
-            for (let i = start; i <= end; i++) pages.push(i);
-            if (start > 1) { pages.unshift('…'); pages.unshift(1); }
-            if (end < total) { pages.push('…'); pages.push(total); }
-            return pages;
-        }
-
+        // Previous / Next only (no page numbers, no "Show N") — same as the other pages.
         function buildPaginationHtml(current, total, onClickFn) {
             if (total <= 1) return '';
-            const pageItem = (label, page, opts) => {
-                opts = opts || {};
-                const disabled = opts.disabled ? ' disabled' : '';
-                const active = opts.active ? ' active' : '';
-                const isEllipsis = opts.ellipsis ? ' ellipsis-item' : '';
-                const isPrevNext = opts.isPrev ? ' page-link-prev' : (opts.isNext ? ' page-link-next' : '');
-                const click = opts.disabled || opts.ellipsis ? '' : `onclick="${onClickFn}(${page})"`;
-                return `<li class="page-item${disabled}${active}${isEllipsis}"><a class="page-link${isPrevNext}" href="javascript:void(0)" ${click}>${label}</a></li>`;
-            };
-            let html = pageItem('&lsaquo; Previous', current - 1, { disabled: current === 1, isPrev: true });
-            buildPageList(current, total).forEach((p) => {
-                html += (p === '…' || p === '...')
-                    ? pageItem('&hellip;', null, { ellipsis: true, disabled: true })
-                    : pageItem(p, p, { active: p === current });
-            });
-            html += pageItem('Next &rsaquo;', current + 1, { disabled: current === total, isNext: true });
-            return `<div class="d-flex justify-content-end mb-3"><ul class="pagination pagination-custom align-items-center m-0">${html}</ul></div>`;
+            const pageItem = (label, page, disabled, cls) =>
+                `<li class="page-item${disabled ? ' disabled' : ''}"><a class="page-link ${cls}" href="javascript:void(0)" ${disabled ? '' : `onclick="${onClickFn}(${page})"`}>${label}</a></li>`;
+            return `<div class="d-flex justify-content-end mb-3"><ul class="pagination pagination-custom align-items-center m-0">`
+                + pageItem('&lsaquo; Previous', current - 1, current === 1, 'page-link-prev')
+                + pageItem('Next &rsaquo;', current + 1, current === total, 'page-link-next')
+                + '</ul></div>';
         }
 
         function setPill(btn) {
@@ -407,13 +381,6 @@
             feed.innerHTML = html;
 
             document.getElementById('notif-pagination').innerHTML = buildPaginationHtml(currentPage, totalPages, 'goToPage');
-            if (window.CIPRMSPagination) {
-                CIPRMSPagination.renderPageSizeSelector('notif-page-size', itemsPerPage, [10, 25, 50], function (newSize) {
-                    itemsPerPage = newSize;
-                    currentPage = 1;
-                    render();
-                });
-            }
         }
 
         document.addEventListener('DOMContentLoaded', () => {
