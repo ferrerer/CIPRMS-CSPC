@@ -773,6 +773,14 @@
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
         </div>
         <div class="modal-body">
+          <!-- Partnership Request Communication Channels (2026-11) — "Shared with Partner" section:
+               the existing draft-collaboration timeline/upload, unchanged in mechanics (POST
+               /api/requests/:id/documents, visibility: 'shared' on every entry) — only labeled now, so it
+               reads as one of two explicit channels rather than the page's only one. -->
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <h6 class="fs-13 fw-bold text-uppercase text-muted mb-0"><i class="ri-eye-line me-1"></i>Shared with Partner</h6>
+            <span class="badge bg-success-subtle text-success fs-10">Visible to: Partner, LAU, Admin, Staff</span>
+          </div>
           <div id="pr-draft-timeline" class="mb-3"></div>
           <div id="pr-draft-upload-wrap" class="border-top pt-3">
             <h6 class="fs-14 fw-bold text-dark mb-2"><i class="ri-upload-cloud-line me-1 text-primary"></i>Upload a New Version</h6>
@@ -805,24 +813,34 @@
             <i class="ri-lock-line me-1"></i>This request has already been decided — no further documents can be added.
           </div>
 
-          <!-- LAU Internal Review (2026-11) — hidden entirely (default) for every role except LAU and
-               Administrator/Staff, toggled in openDraftModal(). The requester never reaches this markup at
-               all: its own Monitoring page is a separate template (auth. personnel/personnel_requests.ejs,
-               potential_partner/partner_requests.ejs) that never includes this section, and the server
-               strips the underlying lauReviews field from every response it receives regardless. -->
+          <!-- Partnership Request Communication Channels (2026-11) — "Internal: Admin/Staff/LAU only"
+               section (formerly "LAU Internal Review", one-sided). Hidden entirely (default) for every
+               role except LAU and Administrator/Staff, toggled in openDraftModal(). The requester never
+               reaches this markup at all: its own Monitoring page is a separate template
+               (auth. personnel/personnel_requests.ejs, potential_partner/partner_requests.ejs) that never
+               includes this section, and the server strips the underlying lauReviews field from every
+               response it receives regardless. Now a two-way conversation — the submit form below shows
+               for LAU AND Administrator/Staff (see openDraftModal()'s pr-lau-review-form toggle), each
+               entry recording which side wrote it (authorRole, see renderLauReviewList()). -->
           <div id="pr-lau-review-wrap" class="border-top pt-3 mt-3" style="display:none;">
-            <h6 class="fs-14 fw-bold text-dark mb-2"><i class="ri-shield-check-line me-1 text-primary"></i>LAU Internal Review</h6>
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <h6 class="fs-13 fw-bold text-uppercase text-muted mb-0"><i class="ri-shield-check-line me-1"></i>Internal: Admin/Staff/LAU only</h6>
+              <span class="badge bg-warning-subtle text-warning fs-10">Hidden from Partner</span>
+            </div>
             <div id="pr-lau-review-list" class="mb-3"></div>
             <div id="pr-lau-review-form" style="display:none;">
               <div class="mb-3">
-                <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-file">Revised Document (Optional)</label>
+                <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-file">File / Image (Optional)</label>
                 <input type="file" class="form-control" id="pr-lau-file" accept=".pdf,.jpg,.jpeg,.png,.docx">
               </div>
               <div class="mb-3">
                 <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-note">Notes (Optional)</label>
                 <textarea class="form-control" id="pr-lau-note" rows="2"></textarea>
               </div>
-              <div class="mb-3">
+              <!-- The Approve/Not Approve verdict is LAU's own call — Administrator/Staff can still reply
+                   with a file/note, but this dropdown is LAU-only so a reviewer reply can never be mistaken
+                   for LAU's internal decision. -->
+              <div class="mb-3" id="pr-lau-status-wrap">
                 <label class="form-label ocr-field-label fs-13 mb-1" for="pr-lau-status">Status (Optional)</label>
                 <select class="form-select" id="pr-lau-status">
                   <option value="">— Select —</option>
@@ -832,9 +850,9 @@
                 </select>
               </div>
               <button type="button" class="btn btn-primary px-3 fs-13" id="pr-lau-submit-btn" onclick="submitLauReview()">
-                <i class="ri-send-plane-line me-1"></i>Submit Internal Review
+                <i class="ri-send-plane-line me-1"></i>Submit
               </button>
-              <p class="text-muted fs-12 mt-2 mb-0">A revised document, notes, a status, or any combination — at least one is required. Visible only to Administrator, CIRL Staff, and you — never to the requester.</p>
+              <p class="text-muted fs-12 mt-2 mb-0">A file, notes, a status, or any combination — at least one is required. Visible only to Administrator, CIRL Staff, and LAU — never to the requester.</p>
             </div>
             <!-- Lock Partnership Request Uploads After Approval (2026-11) — mirrors pr-draft-closed-note's
                  wording/visibility rule (closed = Approved/Rejected/Withdrawn), shown in place of the form
@@ -2444,6 +2462,10 @@
         : '—';
       const badgeColor = LAU_STATUS_BADGE[item.status] || 'secondary';
       const statusBadge = item.status ? `<span class="badge bg-${badgeColor}-subtle text-${badgeColor} fs-10 ms-1">${escapeHtml(item.status)}</span>` : '';
+      // authorRole (2026-11, two-way conversation) — older entries (before this change) have no authorRole
+      // at all and were always LAU; defaults to that so the badge never shows blank for pre-existing data.
+      const isLauAuthor = (item.authorRole || 'LAU') === 'LAU';
+      const authorBadge = `<span class="badge ${isLauAuthor ? 'bg-primary-subtle text-primary' : 'bg-info-subtle text-info'} fs-10 ms-1">${isLauAuthor ? 'LAU' : 'Admin/Staff'}</span>`;
       const safeLink = item.fileLink ? sanitizeUrl(item.fileLink) : null;
       const sizeStr = fmtFileSize(item.fileSize);
       const fileRow = item.fileLink
@@ -2454,7 +2476,7 @@
         <div class="flex-shrink-0"><span class="avatar-title bg-primary-subtle text-primary rounded-circle" style="width:36px;height:36px;"><i class="ri-shield-check-line"></i></span></div>
         <div class="flex-grow-1 border rounded p-3 draft-card">
           <div class="d-flex justify-content-between flex-wrap gap-1">
-            <div><span class="fw-semibold fs-13">${escapeHtml(item.submittedBy || 'LAU')}</span>${statusBadge}</div>
+            <div><span class="fw-semibold fs-13">${escapeHtml(item.submittedBy || 'LAU')}</span>${authorBadge}${statusBadge}</div>
             <span class="text-muted fs-12">${when}</span>
           </div>
           ${item.note ? `<div class="fs-13 text-muted mt-1 fst-italic">"${escapeHtml(item.note)}"</div>` : ''}
@@ -2656,16 +2678,19 @@
       if (window.prDraftDropzone) window.prDraftDropzone.removeFile();
       document.getElementById('pr-draft-note').value = '';
 
-      // LAU Internal Review (2026-11) — the read-only list shows for LAU and Administrator/Staff (IS_ADMIN
-      // already means Administrator-or-Staff, see its declaration above); the submit form shows for LAU
-      // only. Neither ever shows for any other role — r itself has no lauReviews field at all for those
-      // roles' own API responses, so renderLauReviewList has nothing to render even if this were skipped.
+      // Internal: Admin/Staff/LAU only (2026-11, Communication Channels — now a two-way conversation).
+      // IS_ADMIN already means Administrator-or-Staff, see its declaration above. The read-only list and
+      // the submit form both show for LAU AND Administrator/Staff now; neither ever shows for any other
+      // role — r itself has no lauReviews field at all for those roles' own API responses, so
+      // renderLauReviewList has nothing to render even if this were skipped.
       document.getElementById('pr-lau-review-wrap').style.display = (IS_LAU || IS_ADMIN) ? '' : 'none';
-      // Lock Partnership Request Uploads After Approval (2026-11) — the submit form is now ALSO gated by
-      // `closed` (same Approved/Rejected/Withdrawn check as the draft-upload form above); the read-only
-      // review list above it stays visible either way, since viewing/downloading past reviews is kept.
-      document.getElementById('pr-lau-review-form').style.display = (IS_LAU && !closed) ? '' : 'none';
-      document.getElementById('pr-lau-review-closed-note').style.display = (IS_LAU && closed) ? '' : 'none';
+      // Lock Partnership Request Uploads After Approval (2026-11) — the submit form is gated by `closed`
+      // (same Approved/Rejected/Withdrawn check as the draft-upload form above); the read-only review list
+      // above it stays visible either way, since viewing/downloading past entries is kept.
+      document.getElementById('pr-lau-review-form').style.display = ((IS_LAU || IS_ADMIN) && !closed) ? '' : 'none';
+      document.getElementById('pr-lau-review-closed-note').style.display = ((IS_LAU || IS_ADMIN) && closed) ? '' : 'none';
+      // The Approve/Not Approve verdict is LAU's own call — Administrator/Staff reply with a file/note only.
+      document.getElementById('pr-lau-status-wrap').style.display = IS_LAU ? '' : 'none';
       renderLauReviewList(r);
       document.getElementById('pr-lau-file').value = '';
       document.getElementById('pr-lau-note').value = '';

@@ -72,24 +72,19 @@ describe('TASK 2 — Partnership Expiration Email Notifications', () => {
       expect(app.calculateDaysRemaining('invalid-date', today)).toBeNull();
     });
 
-    test('isExpirationNotificationDay matches milestones (90, 60, 30, 15) and daily countdown (14..0)', () => {
+    // 2026-11 (Email Delivery Check): replaced the old 90/60/30/15 + daily-countdown-to-0 design with a
+    // fixed milestone list only — 90, 30, 15, 7, 3, 1, and 0 (expiry day), each sent once, never daily.
+    test('isExpirationNotificationDay matches exactly the fixed milestone list (90, 30, 15, 7, 3, 1, 0) — no daily repeats', () => {
       // Milestones
-      expect(app.isExpirationNotificationDay(90)).toBe(true);
-      expect(app.isExpirationNotificationDay(60)).toBe(true);
-      expect(app.isExpirationNotificationDay(30)).toBe(true);
-      expect(app.isExpirationNotificationDay(15)).toBe(true);
-
-      // Daily countdown
-      for (let d = 14; d >= 0; d--) {
+      for (const d of [90, 30, 15, 7, 3, 1, 0]) {
         expect(app.isExpirationNotificationDay(d)).toBe(true);
       }
 
-      // Non-notification days
-      expect(app.isExpirationNotificationDay(91)).toBe(false);
-      expect(app.isExpirationNotificationDay(89)).toBe(false);
-      expect(app.isExpirationNotificationDay(61)).toBe(false);
-      expect(app.isExpirationNotificationDay(45)).toBe(false);
-      expect(app.isExpirationNotificationDay(16)).toBe(false);
+      // Every OTHER day in between a milestone is explicitly NOT a notification day anymore — this is the
+      // behavior that changed: 14, 13, ..., 2 used to all be true (daily reminders); none of them are now.
+      for (const d of [89, 61, 60, 45, 31, 29, 16, 14, 13, 8, 6, 4, 2, 91]) {
+        expect(app.isExpirationNotificationDay(d)).toBe(false);
+      }
       expect(app.isExpirationNotificationDay(-1)).toBe(false);
       expect(app.isExpirationNotificationDay(null)).toBe(false);
     });
@@ -145,11 +140,11 @@ describe('TASK 2 — Partnership Expiration Email Notifications', () => {
       expect(milestonePayload.desc).toContain('Research, Student Exchange');
       expect(milestonePayload.link).toContain('/lifecycle?q=Tokyo%20University');
 
-      // Daily reminder (e.g. 15d, 7d)
-      const dailyPayload = app.formatExpirationEmailPayload(p, 7);
-      expect(dailyPayload.title).toContain('7 Days Remaining');
-      expect(dailyPayload.desc).toContain('Tokyo University');
-      expect(dailyPayload.tag).toContain('Daily Reminder');
+      // Urgent milestone (e.g. 15d, 7d, 3d, 1d) — renamed from "Daily Reminder" since these no longer repeat daily.
+      const urgentPayload = app.formatExpirationEmailPayload(p, 7);
+      expect(urgentPayload.title).toContain('7 Days Remaining');
+      expect(urgentPayload.desc).toContain('Tokyo University');
+      expect(urgentPayload.tag).toContain('Urgent Milestone');
 
       // Final Notice (0 days remaining)
       const finalPayload = app.formatExpirationEmailPayload(p, 0);
@@ -202,11 +197,11 @@ describe('TASK 2 — Partnership Expiration Email Notifications', () => {
       expect(emailService.sentForTests.length).toBe(firstBatchSize); // No extra emails sent
     });
 
-    test('handles 15-day mark once and daily countdown (14 down to 0) without duplicate on 15d', async () => {
+    test('fires once on each of the fixed milestones (15, 7, 3, 1, 0) and NOT on the non-milestone days between them', async () => {
       // 15 days after Oct 1, 2026 is Oct 16, 2026
       await db.collection('partnerships').insertOne({
         id: testPartnershipId,
-        inst: `Jest Daily Inst ${stamp}`,
+        inst: `Jest Milestones Inst ${stamp}`,
         type: 'MOA',
         nature: ['Academic'],
         status: 'Expiring Soon',
@@ -214,20 +209,36 @@ describe('TASK 2 — Partnership Expiration Email Notifications', () => {
         end: '2026-10-16'
       });
 
-      // Day 15 check
+      // Day 15 (2026-10-01): fires
       const sent15 = await app.checkPartnershipExpirationNotifications(db, fixedNow, { id: testPartnershipId });
       expect(sent15).toBe(1);
 
-      // Re-run on day 15 (e.g. hourly job): deduplicated
+      // Re-run same day: deduplicated
       const rerun15 = await app.checkPartnershipExpirationNotifications(db, fixedNow, { id: testPartnershipId });
       expect(rerun15).toBe(0);
 
-      // Next day: 14 days remaining (2026-10-02)
+      // Day 14 (2026-10-02): NOT a milestone anymore — the behavior that changed (used to fire daily)
       const day14 = new Date(2026, 9, 2);
       const sent14 = await app.checkPartnershipExpirationNotifications(db, day14, { id: testPartnershipId });
-      expect(sent14).toBe(1);
+      expect(sent14).toBe(0);
 
-      // Final day: 0 days remaining (2026-10-16)
+      // Day 7 (2026-10-09): fires
+      const day7 = new Date(2026, 9, 9);
+      expect(await app.checkPartnershipExpirationNotifications(db, day7, { id: testPartnershipId })).toBe(1);
+
+      // Day 3 (2026-10-13): fires
+      const day3 = new Date(2026, 9, 13);
+      expect(await app.checkPartnershipExpirationNotifications(db, day3, { id: testPartnershipId })).toBe(1);
+
+      // Day 2 (2026-10-14): NOT a milestone
+      const day2 = new Date(2026, 9, 14);
+      expect(await app.checkPartnershipExpirationNotifications(db, day2, { id: testPartnershipId })).toBe(0);
+
+      // Day 1 (2026-10-15): fires
+      const day1 = new Date(2026, 9, 15);
+      expect(await app.checkPartnershipExpirationNotifications(db, day1, { id: testPartnershipId })).toBe(1);
+
+      // Day 0 / expiry (2026-10-16): fires
       const day0 = new Date(2026, 9, 16);
       const sent0 = await app.checkPartnershipExpirationNotifications(db, day0, { id: testPartnershipId });
       expect(sent0).toBe(1);
@@ -238,6 +249,10 @@ describe('TASK 2 — Partnership Expiration Email Notifications', () => {
       });
       expect(finalAudit).toBeDefined();
       expect(finalAudit.payload.title).toContain('Expires Today');
+
+      // Exactly 5 audit rows for this partnership: 15, 7, 3, 1, 0 — never one for 14 or 2.
+      const allAudits = await db.collection('partnership_expiration_notifications').find({ partnershipId: testPartnershipId }).toArray();
+      expect(allAudits.map((a) => a.milestone).sort((a, b) => b - a)).toEqual([15, 7, 3, 1, 0]);
     });
 
     test('renewal/extension with new expiration date triggers fresh notification cycle', async () => {

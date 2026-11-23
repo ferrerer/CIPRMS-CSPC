@@ -722,6 +722,21 @@ function requireLauOnly(req, res, next) {
   return denyAccess(req, res, 403, homeForRole(user.role));
 }
 
+/**
+ * Partnership Request Communication Channels (2026-11): the "Internal (LAU)" section is now a two-way
+ * conversation between LAU and Administrator/Staff, not LAU submitting one-sided reviews for reviewers to
+ * read — so POST /api/requests/:id/lau-review itself is now open to either side. Still never the
+ * request's own submitter (Partner/College Dean): REQUEST_REVIEWER_ROLES is Administrator+Staff, deliberately
+ * NOT REQUEST_VIEW_ALL_ROLES (which would also admit... nothing else here, but keeps this guard scoped to
+ * exactly the two roles meant to post internal entries, independent of any future addition to the view-all set).
+ */
+function requireLauOrReviewer(req, res, next) {
+  const user = req.session && req.session.user;
+  if (!user) return denyAccess(req, res, 401, '/');
+  if (user.role === 'LAU' || REQUEST_REVIEWER_ROLES.includes(user.role)) return next();
+  return denyAccess(req, res, 403, homeForRole(user.role));
+}
+
 // ── HELPER: role → home URL ───────────────────────────────────────────────────
 function homeForRole(role) {
   if (role === 'Administrator') return '/dashboard';
@@ -2692,6 +2707,11 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
           originalFilename: req.file ? req.file.originalname : null,
           uploadedAt: new Date().toISOString(), uploadedBy: actor.name,
           uploadedByEmail: actor.email, uploaderRole: actor.role,
+          // visibility: 'shared' (2026-11, Communication Channels) — every supportingDocuments entry is
+          // already visible to the Partner/LAU/Admin/Staff regardless of who uploaded it (no scoping
+          // change here); this just stamps that explicitly, matching lauReviews' own 'internal' marker,
+          // so the UI can group both arrays under one shared rendering path if it chooses to.
+          visibility: 'shared',
           note, fileType: req.file ? req.file.mimetype : null, fileSize: req.file ? req.file.size : 0
         };
         const setFields = { updatedAt: new Date().toISOString() };
@@ -2787,7 +2807,7 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
 // Approve/Reject decision workflow) — now reversed. Once a request is Approved or Rejected, LAU can no
 // longer submit a new review either, same as every other upload route on this request (isRequestUploadLocked,
 // declared near UNDECIDED_REQUEST_STATUSES above).
-app.post('/api/requests/:id/lau-review', requireLauOnly, (req, res) => {
+app.post('/api/requests/:id/lau-review', requireLauOrReviewer, (req, res) => {
   uploadDoc.single('document')(req, res, async (err) => {
     if (err instanceof multer.MulterError) {
       const message = err.code === 'LIMIT_FILE_SIZE' ? 'File is too large. Maximum size is 10MB.' : err.message;
@@ -2844,6 +2864,13 @@ app.post('/api/requests/:id/lau-review', requireLauOnly, (req, res) => {
         }));
       }
 
+      // authorRole (2026-11, Communication Channels): the Internal section is now a two-way conversation —
+      // LAU and Administrator/Staff both post into this same lauReviews array, so each entry records which
+      // side wrote it (shown in the UI, and used below to route the notification to "the other side").
+      // visibility: 'internal' is stamped the same way supportingDocuments entries get 'shared' below —
+      // not load-bearing for access control (lauReviews is never sent to the Partner at all, scoped
+      // entirely by scopeLauReviewsForViewer/isOwnerOfLinkedRequest instead), just an explicit, queryable
+      // marker matching the convention the task asked for.
       const reviewRecord = {
         documentId, fileLink,
         originalFilename: req.file ? req.file.originalname : null,
@@ -2851,28 +2878,34 @@ app.post('/api/requests/:id/lau-review', requireLauOnly, (req, res) => {
         fileSize: req.file ? req.file.size : 0,
         note: note || null,
         status: status || null,
+        authorRole: actor.role,
+        visibility: 'internal',
         submittedAt: new Date().toISOString(),
         submittedBy: actor.name,
         submittedByEmail: actor.email
       };
       await db.collection('requests').updateOne({ id }, { $push: { lauReviews: reviewRecord } });
       await logActivity(db, actor, 'EDIT',
-        `LAU internal review submitted for partnership request: ${target.institution}${status ? ' — ' + status : ''}`);
+        `Internal (LAU) entry submitted for partnership request: ${target.institution} by ${actor.role}${status ? ' — ' + status : ''}`);
 
-      // Admin/Staff notification (2026-11 decision) — deliberately content-free: no note text, status
-      // value, or filename, even though Administrator/Staff are already allowed to see all of that in the
-      // request's own draft modal. This only ever says a review was submitted, never what it says — kept
-      // that way so the notification itself can never become a second place review content has to be
-      // scoped for some other recipient.
-      const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
-      await notifyReviewers(db, reviewers, {
+      // Notify "the other side" of this internal conversation — still deliberately content-free (no note
+      // text, status value, or filename, even though both sides already see all of that in the request's
+      // own Internal section): this only ever says a new entry was posted, never what it says.
+      const notifyPayload = {
         module: 'request',
         tag: 'LAU Internal Review',
         icon: 'ri-shield-check-line',
         color: 'primary',
-        title: `LAU internal review submitted: ${target.institution}`,
-        desc: `${actor.name} submitted an internal review for ${target.institution} (Request #${id}). Open the request to view it.`
-      }, role => prLinkForRole(role, id));
+        title: `Internal note added: ${target.institution}`,
+        desc: `${actor.name} (${actor.role}) posted a new internal entry for ${target.institution} (Request #${id}). Open the request to view it.`
+      };
+      if (actor.role === 'LAU') {
+        const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
+        await notifyReviewers(db, reviewers, notifyPayload, role => prLinkForRole(role, id));
+      } else {
+        const lauUsers = await db.collection('users').find({ role: 'LAU', status: { $ne: 'Inactive' } }).toArray();
+        if (lauUsers.length) await notifyUsers(db, lauUsers.map(u => u.email), { ...notifyPayload, link: prLinkForRole('LAU', id) });
+      }
 
       res.json({ success: true, review: reviewRecord });
     } catch (e) {
@@ -8898,31 +8931,12 @@ async function recomputePartnershipStatuses(db) {
   }
 
   if (toNotify.length) {
-    const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-    // insertManyWithNextId() reserves the whole block in one round trip and this job's own batch is never
-    // the only writer of this collection (notificationService.createNotification(), called a few lines below
-    // for the reviewer broadcast, writes here independently and can interleave with it) — exactly the
-    // partial-batch-collision case that helper's own retry handles by re-trying only whichever docs lost that
-    // race, not the whole batch again.
-    await insertManyWithNextId(db.collection('notifications'), toNotify.length, (id, i) => {
-      const { partnership: p, status } = toNotify[i];
-      const isExpired = status === 'Expired';
-      return {
-        id,
-        module: 'lifecycle',
-        tag: 'Lifecycle',
-        unread: true,
-        icon: isExpired ? 'ri-close-circle-line' : 'ri-alarm-warning-line',
-        color: isExpired ? 'danger' : 'warning',
-        title: isExpired ? `Partnership Expired: ${p.inst}` : `Partnership Expiring Soon: ${p.inst}`,
-        desc: isExpired
-          ? `The agreement with ${p.inst}${p.country ? ' (' + p.country + ')' : ''} expired on ${p.end}. Renewal or archival action is needed.`
-          : `The agreement with ${p.inst}${p.country ? ' (' + p.country + ')' : ''} is expiring on ${p.end}. Consider initiating renewal.`,
-        time: today
-      };
-    });
-
+    // 2026-11 (notification-email audit): this block used to ALSO insert one un-targeted (no targetEmail)
+    // notification doc per item directly via insertManyWithNextId(), bypassing notifyUsers/
+    // notificationService.createNotification entirely — no email, and no targetEmail for any bell query to
+    // ever match, so these rows were pure dead weight sitting in the collection. The loop below already
+    // creates the real, correctly-addressed (and emailed) notification for every reviewer; removed the
+    // redundant raw insert rather than leaving two divergent paths for the same event.
     for (const item of toNotify) {
       const isExpired = item.status === 'Expired';
       await notifyUsers(db, REQUEST_REVIEWER_ROLES, {
@@ -8948,13 +8962,16 @@ async function recomputePartnershipStatuses(db) {
 }
 
 // ── PARTNERSHIP EXPIRATION EMAIL NOTIFICATION ENGINE ─────────────────────────
-const EXPIRATION_MILESTONES = [90, 60, 30, 15];
+// 2026-11 (Email Delivery Check follow-up): replaced the old 90/60/30/15-day milestones PLUS a daily
+// reminder for the final 15 days with a fixed, explicit milestone list — each one, including 0 (the day
+// it expires), is sent exactly once per partnership (checkPartnershipExpirationNotifications's own
+// {partnershipId, endKey, milestone} dedup key below is unchanged and already enforces that). No more
+// daily repeats.
+const EXPIRATION_MILESTONES = [90, 30, 15, 7, 3, 1, 0];
 
 function isExpirationNotificationDay(daysRemaining) {
   if (typeof daysRemaining !== 'number' || isNaN(daysRemaining)) return false;
-  if (EXPIRATION_MILESTONES.includes(daysRemaining)) return true;
-  if (daysRemaining >= 0 && daysRemaining <= 15) return true;
-  return false;
+  return EXPIRATION_MILESTONES.includes(daysRemaining);
 }
 
 function calculateDaysRemaining(endStr, now = new Date()) {
@@ -9012,9 +9029,10 @@ function formatExpirationEmailPayload(partnership, daysRemaining) {
     title = `[Final Notice] Partnership Expires Today: ${instName}`;
     desc = `The ${type} agreement with ${instName} (${partnership.country ? partnership.country + ' · ' : ''}Nature: ${natures}) reaches its final expiration date TODAY (${endDate}). Immediate action is required for renewal or archival.`;
   } else if (daysRemaining <= 15) {
-    urgency = 'Daily Reminder';
+    // 2026-11: renamed from "Daily Reminder" — these milestones (15/7/3/1) each fire once, never daily.
+    urgency = 'Urgent Milestone';
     title = `[Urgent: ${daysRemaining} Day${daysRemaining === 1 ? '' : 's'} Remaining] Partnership Expiring: ${instName}`;
-    desc = `The ${type} agreement with ${instName} (${partnership.country ? partnership.country + ' · ' : ''}Nature: ${natures}) will expire in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} on ${endDate}. Daily reminders are now active until renewal or expiration.`;
+    desc = `The ${type} agreement with ${instName} (${partnership.country ? partnership.country + ' · ' : ''}Nature: ${natures}) will expire in ${daysRemaining} day${daysRemaining === 1 ? '' : 's'} on ${endDate}. Please finalize renewal or archival before then.`;
   } else {
     urgency = 'Milestone Alert';
     title = `[Milestone Alert: ${daysRemaining} Days Remaining] Partnership Expiring Soon: ${instName}`;
@@ -11181,6 +11199,20 @@ app.post('/api/targets', requireStaffAccess, async (req, res) => {
     }));
     await logActivity(db, req.session.user, 'ADD',
       `Target created: ${value.type === 'monthly' ? `${value.month}/${value.year}` : value.year} — ${value.targetCount} partnerships`);
+    // 2026-11 (email-for-every-notification audit): targets had no notification at all — same reasoning
+    // as the new achievement notification above (staff-only feature, colleagues otherwise only find out
+    // by noticing it on the Dashboard themselves). Excludes the actor.
+    const targetLabel = value.type === 'monthly' ? `${value.month}/${value.year}` : String(value.year);
+    const targetColleagues = await db.collection('users').find({
+      role: { $in: REQUEST_REVIEWER_ROLES }, email: { $ne: req.session.user.email }, status: { $ne: 'Inactive' }
+    }).toArray();
+    if (targetColleagues.length) {
+      await notifyReviewers(db, targetColleagues, {
+        module: 'system', tag: 'Target', icon: 'ri-flag-line', color: 'success',
+        title: `New target set: ${targetLabel}`,
+        desc: `${req.session.user.name} set a new partnership target for ${targetLabel}: ${value.targetCount} partnerships.`
+      }, role => homeForRole(role));
+    }
     res.json({ success: true, target: { ...entry, progress: await computeTargetAccomplishment(db, entry) } });
   } catch (err) {
     // Duplicate-key from the unique (type, year, month) index — the
@@ -11618,6 +11650,19 @@ app.post('/api/achievements', requireStaffAccess, (req, res) => {
         Object.assign(entry, saved);
       }
       await logActivity(db, req.session.user, 'ADD', `Achievement added: ${entry.title}`);
+      // 2026-11 (email-for-every-notification audit): achievements had no notification at all — the only
+      // other viewers are Admin/Staff colleagues (this section is staff-only), so this just lets them
+      // know without having to notice it themselves on the Dashboard. Excludes the actor.
+      const achColleagues = await db.collection('users').find({
+        role: { $in: REQUEST_REVIEWER_ROLES }, email: { $ne: req.session.user.email }, status: { $ne: 'Inactive' }
+      }).toArray();
+      if (achColleagues.length) {
+        await notifyReviewers(db, achColleagues, {
+          module: 'system', tag: 'Achievement', icon: 'ri-trophy-line', color: 'success',
+          title: `New achievement added: ${entry.title}`,
+          desc: `${req.session.user.name} added a new institutional achievement (${category}): "${entry.title}".`
+        }, role => homeForRole(role));
+      }
       res.json({ success: true, achievement: entry });
     } catch (err) {
       console.error('❌ Achievement create error:', err);

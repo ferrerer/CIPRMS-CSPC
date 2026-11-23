@@ -116,29 +116,44 @@ async function sendNotificationEmails(emails, payload) {
   }
   for (const to of targets) {
     const msg = buildMessage(to, payload || {});
-    try {
-      if (process.env.JEST_WORKER_ID) {
-        sentForTests.push(msg);
-      } else if (devSendDisabled()) {
-        logEmailInsteadOfSending(msg);
-      } else {
-        // buildMessage()'s `from` stays a plain {name, address} object (unchanged shape — existing tests
-        // read msg.to/subject/text/html directly) — only converted to Resend's "Name <address>" string here,
-        // at the one real call site, never inside buildMessage itself.
-        const { error } = await getClient().emails.send({
-          from: `${msg.from.name} <${msg.from.address}>`,
-          to: msg.to,
-          subject: msg.subject,
-          text: msg.text,
-          html: msg.html
-        });
-        if (error) throw new Error(error.message || 'Resend API rejected the e-mail.');
+    // Retry once (2026-11, "email for every notification" follow-up): a transient Resend/network hiccup
+    // must not quietly drop a notification email on its first failure. One retry, immediately — this path
+    // is already backgrounded by every caller (notificationService/emailSubmissionReceipt), so a short
+    // extra delay here never blocks the request that triggered it. Still never throws past this function;
+    // a retry that also fails is logged and counted in `failed`, exactly as a single failed attempt was.
+    let lastErr = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (process.env.JEST_WORKER_ID) {
+          sentForTests.push(msg);
+        } else if (devSendDisabled()) {
+          logEmailInsteadOfSending(msg);
+        } else {
+          // buildMessage()'s `from` stays a plain {name, address} object (unchanged shape — existing tests
+          // read msg.to/subject/text/html directly) — only converted to Resend's "Name <address>" string here,
+          // at the one real call site, never inside buildMessage itself.
+          const { error } = await getClient().emails.send({
+            from: `${msg.from.name} <${msg.from.address}>`,
+            to: msg.to,
+            subject: msg.subject,
+            text: msg.text,
+            html: msg.html
+          });
+          if (error) throw new Error(error.message || 'Resend API rejected the e-mail.');
+        }
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (attempt === 1) console.warn(`E-mail notification to ${to} failed, retrying once:`, err && err.message);
       }
-      result.sent.push(to);
-    } catch (err) {
+    }
+    if (lastErr) {
       // Never log the API key; Resend's errors do not include it.
-      console.error(`E-mail notification to ${to} failed:`, err && err.message);
-      result.failed.push({ email: to, error: err && err.message });
+      console.error(`E-mail notification to ${to} failed (after retry):`, lastErr && lastErr.message);
+      result.failed.push({ email: to, error: lastErr && lastErr.message });
+    } else {
+      result.sent.push(to);
     }
   }
   return result;

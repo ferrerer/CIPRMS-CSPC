@@ -121,14 +121,20 @@ describe('LAU Internal Review Uploads', () => {
       expect(res.status).toBe(302);
     });
 
-    test('Administrator cannot use this route either — submission is LAU-only by design', async () => {
-      const res = await adminAgent.post(`/api/requests/${reqId}/lau-review`).send({ note: 'x' });
-      expect(res.status).toBe(302);
+    // 2026-11, Partnership Request Communication Channels: the Internal section is now a two-way
+    // conversation — Administrator/Staff can post into it too (requireLauOrReviewer), not just read what
+    // LAU submits. Still never the request's own submitter (checked above) or an unrelated Partner.
+    test('Administrator can use this route too — the Internal section is a two-way conversation', async () => {
+      const res = await adminAgent.post(`/api/requests/${reqId}/lau-review`).send({ note: 'jesttest admin reply' });
+      expect(res.status).toBe(200);
+      expect(res.body.review.authorRole).toBe('Administrator');
+      expect(res.body.review.visibility).toBe('internal');
     });
 
-    test('Staff cannot use this route either', async () => {
-      const res = await staffAgent.post(`/api/requests/${reqId}/lau-review`).send({ note: 'x' });
-      expect(res.status).toBe(302);
+    test('Staff can use this route too', async () => {
+      const res = await staffAgent.post(`/api/requests/${reqId}/lau-review`).send({ note: 'jesttest staff reply' });
+      expect(res.status).toBe(200);
+      expect(res.body.review.authorRole).toBe('Staff');
     });
 
     test('LAU can use this route', async () => {
@@ -321,9 +327,12 @@ describe('LAU Internal Review Uploads', () => {
     });
 
     test('Administrator/Staff get a content-free notification when LAU submits a review', async () => {
+      // 2026-11, Communication Channels: retitled "Internal note added" (was "LAU internal review
+      // submitted") since this same notification now also fires the other way (Administrator/Staff
+      // posting), when the old LAU-specific wording would have been actively misleading.
       const notif = await db.collection('notifications').findOne({
         tag: 'LAU Internal Review',
-        title: { $regex: 'LAU internal review submitted' }
+        title: { $regex: 'Internal note added' }
       });
       expect(notif).toBeTruthy();
       expect(notif.desc).not.toContain('jesttest confidential review content');
@@ -337,6 +346,37 @@ describe('LAU Internal Review Uploads', () => {
         tag: 'LAU Internal Review'
       });
       expect(notif).toBeNull();
+    });
+  });
+
+  // 2026-11, Partnership Request Communication Channels: the Internal section is now a two-way
+  // conversation — Administrator/Staff posting notifies LAU (the "other side"), mirroring the existing
+  // LAU-posts-notifies-reviewers behavior above. Every notification created through notifyUsers/
+  // notifyReviewers also sends an email (services/notificationService.js) — checked here via the Jest-only
+  // sentForTests capture (services/emailService.js), never a real send.
+  describe('Two-way conversation: Administrator/Staff posting notifies LAU, with an email', () => {
+    let reqId;
+    const emailService = require('../services/emailService');
+    beforeAll(async () => { reqId = await createPendingRequest(requesterAgent); createdRequestIds.push(reqId); });
+
+    test('Administrator posting an internal entry notifies every active LAU user, in-app and by e-mail', async () => {
+      emailService.sentForTests.length = 0;
+      const res = await adminAgent.post(`/api/requests/${reqId}/lau-review`).send({ note: 'jesttest notify-lau check' });
+      expect(res.status).toBe(200);
+
+      const notif = await db.collection('notifications').findOne({ targetEmail: lauUser.email, tag: 'LAU Internal Review' });
+      expect(notif).toBeTruthy();
+      expect(notif.desc).not.toContain('jesttest notify-lau check'); // content-free, same rule as the reverse direction
+
+      const sentToLau = emailService.sentForTests.some((m) => m.to === lauUser.email);
+      expect(sentToLau).toBe(true);
+    });
+
+    test('LAU posting still notifies reviewers by e-mail too (unchanged direction, re-confirmed with the mock transport)', async () => {
+      emailService.sentForTests.length = 0;
+      const res = await lauAgent.post(`/api/requests/${reqId}/lau-review`).send({ note: 'jesttest notify-reviewers check' });
+      expect(res.status).toBe(200);
+      expect(emailService.sentForTests.length).toBeGreaterThan(0);
     });
   });
 });
