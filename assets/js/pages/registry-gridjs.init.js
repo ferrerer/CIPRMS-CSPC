@@ -783,7 +783,7 @@ function sbadge(s) {
 // tables were merged into one.
 function daysBadgeHtml(d, s) {
   if (s === 'Expired') return '<span class="badge bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>';   // matches the Expired status
-  if (d <= 14)         return '<span class="badge bg-danger">Critical (' + d + 'd)</span>';
+  if (d <= 14)         return '<span class="badge bg-expiring-solid"><i class="ri-alarm-warning-fill me-1"></i>Critical (' + d + 'd)</span>';   // orange, never red like Expired
   if (d <= 90)         return '<span class="badge bg-expiring-subtle text-expiring">' + d + ' days</span>';
   return '<span class="badge bg-success-subtle text-success">' + d + ' days</span>';
 }
@@ -999,7 +999,7 @@ function monRenderReportPreview(data) {
         + '<td><span class="badge bg-light text-body border">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
         + '<td>' + escapeHtml(p.start || '—') + '</td>'
         + '<td>' + escapeHtml(p.end || '—') + '</td>'
-        + '<td><span class="badge ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span></td>'
+        + '<td>' + (p.status === 'Expired' ? '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>' : '<span class="badge table-pill ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span>') + '</td>'   // Monitoring-style status badge
         + '</tr>';
     });
   }
@@ -1085,7 +1085,7 @@ function buildGrid() {
     // solid red, alarm icon and a gentle pulse — instead of the ordinary orange 'Expiring Soon'.
     var critical = p.status === 'Expiring Soon' && p.days <= 14;
     var statusBadge = (critical
-      ? '<span class="badge bg-danger status-alarm" title="Critical: ' + p.days + ' day(s) left"><i class="ri-alarm-warning-fill me-1"></i>' + p.status + '</span>'
+      ? '<span class="badge bg-expiring-solid status-alarm" title="Critical: ' + p.days + ' day(s) left"><i class="ri-alarm-warning-fill me-1"></i>' + p.status + '</span>'
       : p.status === 'Expired'   // already expired: solid red with a stop icon (no pulse — it has happened, not about to)
         ? '<span class="badge bg-danger" title="This partnership has expired"><i class="ri-close-circle-fill me-1"></i>Expired</span>'
         : sbadge(p.status)).replace('class="badge ', 'class="badge table-pill ');

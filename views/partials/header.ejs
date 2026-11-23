@@ -3,6 +3,19 @@
 <script src="/js/ciprms-rt.js?v=1"></script>
 <script src="/js/ciprms-system-status.js?v=1"></script>
 <script src="/js/ciprms-idle-logout.js?v=1"></script>
+<script>
+// Every page, every role: while any pop-up window (modal) is open, the page behind it does not scroll — only the
+// window's own content does. Unlocked again once the last open window closes.
+document.addEventListener('show.bs.modal', function () {
+  document.documentElement.style.overflow = 'hidden';
+  document.body.style.overflow = 'hidden';
+});
+document.addEventListener('hidden.bs.modal', function () {
+  if (document.querySelector('.modal.show')) return;
+  document.documentElement.style.overflow = '';
+  document.body.style.overflow = '';
+});
+</script>
 <% } %>
 <header id="page-topbar">
     <div class="layout-width">
@@ -32,7 +45,7 @@
             .page-content .card > .card-footer, .page-content .card-header-tabs .nav-link { border-radius: 0 !important; }
         </style>
         <% } %>
-        <link rel="stylesheet" href="/velzon/assets/css/status-expiring.css?v=20261121g">
+        <link rel="stylesheet" href="/velzon/assets/css/status-expiring.css?v=20261123a">
 
         <a href="<%= homeDashboard %>" class="logo logo-dark">
             <span class="logo-sm">

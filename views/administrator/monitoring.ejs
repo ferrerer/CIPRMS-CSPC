@@ -114,8 +114,10 @@
 
       /* Filter Partnerships: compact search box + all filters on one row, sharing the remaining width. */
       /* Partnerships about to expire (14 days or less): alarming red Status with a gentle pulse. */
+      /* Solid orange (Expiring Soon) — clearly different from the solid red Expired badge. */
+      .bg-expiring-solid { background-color: #f97316 !important; color: #fff !important; }
       .status-alarm { animation: statusAlarmPulse 1.6s ease-in-out infinite; }
-      @keyframes statusAlarmPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(240, 101, 72, .55); } 50% { box-shadow: 0 0 0 5px rgba(240, 101, 72, 0); } }
+      @keyframes statusAlarmPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, .6); } 50% { box-shadow: 0 0 0 5px rgba(249, 115, 22, 0); } }
       @media (prefers-reduced-motion: reduce) { .status-alarm { animation: none; } }
       .mon-filter-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-end; }
       /* Compact, fixed-width filters on the left; the search box sits at the right end and takes the rest. */
@@ -340,8 +342,8 @@
           <span class="text-muted fs-12 fw-semibold text-uppercase me-1">Legend:</span>
           <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-success-subtle text-success">Active</span> Valid &amp; in effect</span>
           <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-expiring-subtle text-expiring">Expiring</span> Within 90 days</span>
-          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-danger">Critical</span> Expires within 14 days</span>
-          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-danger-subtle text-danger">Expired</span> Needs renewal</span>
+          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-expiring-solid"><i class="ri-alarm-warning-fill me-1"></i>Critical</span> Expires within 14 days</span>
+          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span> Needs renewal</span>
           <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-primary-subtle text-primary">MOA</span> Memorandum of Agreement</span>
           <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-info-subtle text-info">MOU</span> Memorandum of Understanding</span>
         </div>
@@ -1161,7 +1163,7 @@
 <script src="/velzon/assets/js/shared/status-colors.js?v=20261121b"></script>
 <!-- gridjs init — same script the standalone Registry page used; Monitoring
      is now this page's only home, see docs/SYSTEM_AUDIT_2026-07-16.md -->
-<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261123j"></script>
+<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261123l"></script>
 <!-- App js -->
 <script src="/velzon/assets/js/app.js"></script>
 <script src="/js/ciprms-uploader.js"></script>

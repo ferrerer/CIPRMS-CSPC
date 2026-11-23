@@ -5608,6 +5608,31 @@ const PARTNERSHIP_COLUMNS = [
 // (No. | Name of Schools | Address/Country | Date of Signing | Date of
 // Expiration) exactly; only the structure is templated — every value below
 // is read live from the partnerships collection, nothing is hardcoded.
+// Report PDF summary line — "Total · Active · Expiring Soon · Expired · Inactive" — with each status's count in its
+// own color (green Active, orange Expiring Soon, red Expired, grey Inactive; shared statusColors mapping), centered.
+function drawStatusSummaryLine(doc, s, left, width) {
+  const parts = [
+    ['Total: ' + s.totalCount, '#444444'],
+    ['Active: ' + s.activeCount, statusColors.hex('Active')],
+    ['Expiring Soon: ' + s.expiringSoonCount, statusColors.hex('Expiring Soon')],
+    ['Expired: ' + s.expiredCount, statusColors.hex('Expired')],
+    ['Inactive: ' + s.inactiveCount, statusColors.hex('Inactive')]
+  ];
+  const sep = '   ·   ';
+  doc.font('Helvetica-Bold').fontSize(8.5);
+  const total = parts.reduce((w, [t], i) => w + doc.widthOfString(t) + (i ? doc.widthOfString(sep) : 0), 0);
+  let x = left + Math.max(0, (width - total) / 2);
+  const y = doc.y;
+  parts.forEach(([t, color], i) => {
+    if (i) { doc.fillColor('#999999').text(sep, x, y, { lineBreak: false }); x += doc.widthOfString(sep); }
+    doc.fillColor(color).text(t, x, y, { lineBreak: false });
+    x += doc.widthOfString(t);
+  });
+  doc.fillColor('#000');
+  doc.x = left;
+  doc.y = y + doc.currentLineHeight(true);
+}
+
 const PARTNERSHIP_REPORT_COLUMNS = [
   { key: 'inst', label: 'Name of Schools/Institutions', width: 180 },
   { key: 'country', label: 'Address/Country', width: 170 },
@@ -5875,9 +5900,7 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     // raw total, with no status breakdown, even though computeCustomReportData already computes one.
     if (customReportData.summary) {
       const s = customReportData.summary;
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#444')
-        .text(`Total: ${s.totalCount}   ·   Active: ${s.activeCount}   ·   Expiring Soon: ${s.expiringSoonCount}   ·   Expired: ${s.expiredCount}   ·   Inactive: ${s.inactiveCount}`,
-          left, doc.y, { width: contentWidth, align: 'center' });
+      drawStatusSummaryLine(doc, s, left, contentWidth);
     } else {
       doc.font('Helvetica').fontSize(8.5).fillColor('#444')
         .text(`Total Partnerships in Report: ${customReportData.totalRecords}`, left, doc.y, { width: contentWidth, align: 'center' });
@@ -5970,9 +5993,7 @@ function renderPartnershipReportPdf(res, { title, docs, periodLabel, generatedBy
     // Fixed gap before the summary line — same font-independent fix as the letterhead/table-header gap above.
     pdfTableHelper.sectionGap(doc, 10);
     const s = customReportData.summary;
-    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#444')
-      .text(`Total: ${s.totalCount}   ·   Active: ${s.activeCount}   ·   Expiring Soon: ${s.expiringSoonCount}   ·   Expired: ${s.expiredCount}   ·   Inactive: ${s.inactiveCount}`,
-        left, doc.y, { width: contentWidth, align: 'center' });
+    drawStatusSummaryLine(doc, s, left, contentWidth);
     doc.fillColor('#000');
   }
 
@@ -7501,7 +7522,7 @@ function parseComparisonConfigs(req) {
 // consistent-looking across the feature, without hardcoding exactly two.
 // Reserved for a comparison that is NOT restricted to one specific status
 // (e.g. compared by Unit, Country or date range) — see multiComparisonColor().
-const MULTI_COMPARISON_COLORS = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
+const MULTI_COMPARISON_COLORS = ['#0a3d91', '#6d28d9', '#0891b2', '#c026d3', '#4f46e5'];   // navy, purple, cyan, magenta, indigo — never a status color (grey/red/orange/green)
 
 // Root cause of the panel-reported "Active is red in one comparison, blue in another" bug: color used to be
 // assigned purely by the result's ARRAY POSITION (idx % MULTI_COMPARISON_COLORS.length), so the same status
@@ -7516,6 +7537,9 @@ const MULTI_COMPARISON_COLORS = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6
 function multiComparisonColor(r, idx) {
   const status = r.filters && r.filters.status;
   if (status && status !== 'All' && statusColors.isKnownStatus(status)) return statusColors.hex(status);
+  // A slice/row whose own label IS a status (e.g. compared by Status) always gets that status's color too:
+  // green Active, orange Expiring Soon, red Expired, grey Inactive — never a position-based palette color.
+  if (r && statusColors.isKnownStatus(r.label)) return statusColors.hex(r.label);
   return MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
 }
 

@@ -1381,6 +1381,18 @@
             previewCustomReport();
         }
 
+        // While any pop-up window (report preview, comparison table, …) is open, the page behind it must not scroll —
+        // only the window's own content does. Unlocked again once the last open window closes.
+        document.addEventListener('show.bs.modal', function () {
+            document.documentElement.style.overflow = 'hidden';
+            document.body.style.overflow = 'hidden';
+        });
+        document.addEventListener('hidden.bs.modal', function () {
+            if (document.querySelector('.modal.show')) return;
+            document.documentElement.style.overflow = '';
+            document.body.style.overflow = '';
+        });
+
         function exportReport(format, params) {
             var q = new URLSearchParams(params).toString();
             window.open('/api/reports/partnerships/' + format + '?' + q, '_blank');
@@ -1620,7 +1632,7 @@
                         + '<td><span class="badge bg-light text-body border">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
                         + '<td>' + escapeHtml(p.start || '—') + '</td>'
                         + '<td>' + escapeHtml(p.end || '—') + '</td>'
-                        + '<td><span class="badge ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span></td>'
+                        + '<td>' + (p.status === 'Expired' ? '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>' : '<span class="badge table-pill ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span>') + '</td>'   // Monitoring-style status badge
                         + '</tr>';
                 });
             }
@@ -2061,6 +2073,12 @@
         function statusBadgeClass(status) {
             return CIPRMS_STATUS_COLORS.badgeClass(status);
         }
+        // Status badge in the same format as the Monitoring registry: rounded table pill, Active green, Expiring Soon
+        // orange, Inactive grey — and Expired as a solid red badge with a ✖ icon.
+        function monitoringStatusBadge(status) {
+            if (status === 'Expired') return '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>';
+            return '<span class="badge table-pill ' + statusBadgeClass(status) + '">' + escapeHtml(status || '—') + '</span>';
+        }
 
         // Builds one configuration card's HTML. Mirrors exactly the 8 fields the
         // Custom Report Builder itself exposes (reportType/cat/dateFrom/dateTo/
@@ -2090,7 +2108,7 @@
                 '    </div>' +
                 '    <div class="row g-3">' +
                 '      <div class="col-xl-3 col-md-6">' +
-                '        <label class="form-label fw-semibold">Label</label>' +
+                '        <label class="form-label fw-semibold" for="cmpcfg-' + id + '-label">Label</label>' +
                 '        <input type="text" class="form-control" id="cmpcfg-' + id + '-label" value="' + escapeHtml(prefill.label || '') + '">' +
                 '      </div>' +
                 '      <div class="col-xl-3 col-md-6">' +
@@ -2105,7 +2123,12 @@
                 '      </div>' +
                 '      <div class="col-xl-3 col-md-6">' +
                 '        <label class="form-label fw-semibold">Category</label>' +
-                '        <input type="text" class="form-control" id="cmpcfg-' + id + '-cat" value="' + escapeHtml(prefill.cat || '') + '">' +
+                // Same choices as the Custom Report Builder's own Category filter (#cr-cat): All / International / Local.
+                '        <select class="form-select" id="cmpcfg-' + id + '-cat">' +
+                ['', 'International', 'Local'].map(function (c) {
+                    return '<option value="' + c + '"' + ((prefill.cat || '') === c ? ' selected' : '') + '>' + (c || 'All') + '</option>';
+                }).join('') +
+                '        </select>' +
                 '      </div>' +
                 '      <div class="col-xl-3 col-md-6' + (isStatusTyped ? ' cr-status-disabled' : '') + '">' +
                 '        <label class="form-label fw-semibold">Status</label>' +
@@ -2318,7 +2341,7 @@
             tbody.innerHTML = records.map(function (p) {
                 return '<tr>' +
                     '<td class="fw-semibold">' + escapeHtml(p.inst || '—') + '<div class="text-muted fs-11">' + escapeHtml(p.country || '—') + '</div></td>' +
-                    '<td><span class="badge ' + statusBadgeClass(p.status) + '">' + escapeHtml(p.status || '—') + '</span></td>' +
+                    '<td>' + monitoringStatusBadge(p.status) + '</td>' +
                     '</tr>';
             }).join('');
         }
@@ -2426,10 +2449,11 @@
         // A comparison restricted to exactly one real status (filters.status is not 'All') always gets that
         // status's own semantic color; only a non-status comparison (by Unit/Country/date range/etc.) falls
         // back to the fixed, position-based palette.
-        var MULTI_COMPARISON_COLORS = ['#0a3d91', '#991B1B', '#0ab39c', '#b45309', '#6d28d9'];
+        var MULTI_COMPARISON_COLORS = ['#0a3d91', '#6d28d9', '#0891b2', '#c026d3', '#4f46e5'];   // navy, purple, cyan, magenta, indigo — never a status color (grey/red/orange/green)
         function multiComparisonColor(r, idx) {
             var status = r.filters && r.filters.status;
             if (status && status !== 'All' && CIPRMS_STATUS_COLORS.isKnownStatus(status)) return CIPRMS_STATUS_COLORS.hex(status);
+            if (r && CIPRMS_STATUS_COLORS.isKnownStatus(r.label)) return CIPRMS_STATUS_COLORS.hex(r.label);   // same rule as the PDF
             return MULTI_COMPARISON_COLORS[idx % MULTI_COMPARISON_COLORS.length];
         }
 

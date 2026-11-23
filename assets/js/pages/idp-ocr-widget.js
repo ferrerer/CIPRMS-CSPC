@@ -163,7 +163,7 @@
 
     // ✓ Expiration Date / ✓ Renewal Reminder Status
     if (result.endDate) {
-      var expClass = result.expirationLabel === 'Expired' ? 'danger' : result.expirationLabel === 'Expiring Soon' ? 'warning' : 'success';
+      var expClass = result.expirationLabel === 'Expired' ? 'danger' : result.expirationLabel === 'Expiring Soon' ? 'expiring' : 'success';   // orange, same as everywhere else
       var expText = result.expirationLabel === 'Expired'
         ? 'Already expired'
         : (result.remainingDays != null ? result.remainingDays + ' day(s) remaining' : result.expirationLabel || '');

@@ -23,3 +23,6 @@
 /* Larger Days Left / Status badges in the partnership tables (Monitoring registry, partner Renewal Status). */
 /* Same text size and weight as the other cells (Nature, Start, End); only a light tint/padding remains. */
 .badge.table-pill { font-family: inherit; font-size: 0.75rem; font-weight: 400; line-height: inherit; letter-spacing: normal; text-transform: none; padding: 0.15em 0.5em; }
+
+/* Solid orange "Expiring Soon" (critical: 14 days or less) — clearly different from the solid red Expired badge. */
+.bg-expiring-solid { background-color: #f97316 !important; color: #fff !important; }
