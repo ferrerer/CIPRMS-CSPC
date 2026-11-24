@@ -539,13 +539,29 @@
 <div class="modal fade" id="cdr-detail-modal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
-      <div class="modal-header bg-light p-3">
+      <div class="modal-header">
         <h5 class="modal-title" id="cdr-d-title"><i class="ri-award-line me-2 text-primary"></i>Request</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body" id="cdr-d-body">
+      <div class="modal-body drd" id="cdr-d-body">
         <!-- populated by cdrOpenDetail() -->
       </div>
+      <style>
+        /* Grouped popup layout (2026-11-25) — same style as the Dean's Monitoring popups. */
+        .drd { font-size: .875rem; }
+        .drd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+          padding: .9rem 1rem; border-radius: .5rem; background: var(--vz-light, #f3f6f9); }
+        .drd-inst { font-size: 1.05rem; font-weight: 600; color: var(--vz-heading-color, #212529); word-break: break-word; }
+        .drd-sub { display: flex; flex-wrap: wrap; gap: .25rem 1rem; color: var(--vz-secondary-color, #878a99); font-size: .8125rem; margin-top: .2rem; }
+        .drd-label { font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+          color: var(--vz-secondary-color, #878a99); margin-bottom: .25rem; }
+        .drd-value { font-weight: 500; }
+        .drd-section { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+          color: var(--vz-primary, #405189); border-bottom: 1px solid var(--vz-border-color, #e9ebec);
+          padding-bottom: .35rem; margin: 1.1rem 0 .75rem; }
+        .drd-box { white-space: pre-wrap; word-break: break-word; padding: .5rem .75rem; border-radius: .375rem;
+          border: 1px solid var(--vz-border-color, #e9ebec); min-height: 2.25rem; }
+      </style>
       <div class="modal-footer"><button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button></div>
     </div>
   </div>
@@ -1055,33 +1071,45 @@
                 cdrCurrentDetail = r;
                 var canSubmit = r.status === 'Pending' || r.status === 'Returned for Revision';
                 var required = (r.requiredDocuments || []).map(function (d) { return '<span class="cdr-doc-chip">' + escapeHtml(d) + '</span>'; }).join('') || '<span class="text-muted">None specified</span>';
-                document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>' + escapeHtml(r.title);
+                document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>College Request <span class="text-muted fw-normal fs-14 ms-1">#' + r.id + '</span>';
+                var isResubmit = r.status === 'Returned for Revision';
+                var subCount = (r.submittedDocuments || []).length, refCount = (r.referenceDocuments || []).length;
                 document.getElementById('cdr-d-body').innerHTML =
-                    '<div class="mb-3 d-flex gap-2 flex-wrap">' + cdrBadge(r.status) +
-                        '<span class="badge bg-light text-dark border">' + escapeHtml(r.requestType) + '</span>' +
-                        (r.deadline ? '<span class="badge bg-light text-dark border"><i class="ri-calendar-line"></i> Due ' + cdrFmtDate(r.deadline) + '</span>' : '') +
+                    // Header: title, type / from / deadline, status on the right
+                    '<div class="drd-head">' +
+                        '<div class="min-w-0">' +
+                            '<div class="drd-label">' + escapeHtml(r.requestType || 'Request') + ' Request</div>' +
+                            '<div class="drd-inst">' + escapeHtml(r.title || '—') + '</div>' +
+                            '<div class="drd-sub">' +
+                                '<span><i class="ri-user-line me-1"></i>From ' + escapeHtml(r.createdBy || '—') + '</span>' +
+                                (r.deadline ? '<span><i class="ri-calendar-line me-1"></i>Due ' + cdrFmtDate(r.deadline) + '</span>' : '') +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="text-end flex-shrink-0"><div class="drd-label">Status</div>' + cdrBadge(r.status) + '</div>' +
                     '</div>' +
-                    '<p class="mb-1"><strong>From:</strong> ' + escapeHtml(r.createdBy) + '</p>' +
-                    (r.instructions ? '<p class="mb-1"><strong>Instructions:</strong><br>' + escapeHtml(r.instructions).replace(/\n/g, '<br>') + '</p>' : '') +
-                    (r.description ? '<p class="mb-3"><strong>Description:</strong><br>' + escapeHtml(r.description).replace(/\n/g, '<br>') + '</p>' : '') +
-                    '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +
-                    (r.status === 'Returned for Revision' && r.reviewRemark ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
-                    (r.status === 'Completed' ? '<div class="alert alert-success"><i class="ri-checkbox-circle-line me-1"></i> This request has been accepted.</div>' : '') +
-                    '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(provided by ' + escapeHtml(r.createdBy) + ')</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents were attached.', true, r.id) +
-                    '<p class="mb-1 mt-3"><strong>Your Submissions</strong></p>' + cdrDocListHtml(r.submittedDocuments, 'You have not submitted anything yet.', false) +
+                    (isResubmit && r.reviewRemark ? '<div class="alert alert-danger fs-13 py-2 mt-3 mb-0"><i class="ri-arrow-go-back-line me-1"></i><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
+                    (r.status === 'Completed' ? '<div class="alert alert-success fs-13 py-2 mt-3 mb-0"><i class="ri-checkbox-circle-line me-1"></i>This request has been accepted.</div>' : '') +
+                    '<div class="drd-section">Instructions</div>' +
+                    '<div class="row g-3">' +
+                        '<div class="col-sm-6"><div class="drd-label">Instructions</div><div class="drd-box">' + (r.instructions ? escapeHtml(r.instructions) : '<span class="text-muted">—</span>') + '</div></div>' +
+                        '<div class="col-sm-6"><div class="drd-label">Description</div><div class="drd-box">' + (r.description ? escapeHtml(r.description) : '<span class="text-muted">—</span>') + '</div></div>' +
+                    '</div>' +
+                    '<div class="drd-section">Required Documents</div><div>' + required + '</div>' +
+                    '<div class="drd-section">Reference Documents <span class="text-muted fw-normal">' + (refCount ? '(' + refCount + ')' : '') + ' · provided by ' + escapeHtml(r.createdBy || 'CIRL') + '</span></div>' +
+                        cdrDocListHtml(r.referenceDocuments, 'No reference documents were attached.', true, r.id) +
+                    '<div class="drd-section">Your Submissions <span class="text-muted fw-normal">' + (subCount ? '(' + subCount + ')' : '') + '</span></div>' +
+                        cdrDocListHtml(r.submittedDocuments, 'You have not submitted anything yet.', false) +
                     (canSubmit ? (
-                        '<div class="border rounded p-3 mt-3 bg-light-subtle">' +
-                        '<p class="mb-2"><strong>' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + ' Documents</strong></p>' +
+                        '<div class="drd-section">' + (isResubmit ? 'Resubmit' : 'Submit') + ' Documents</div>' +
                         '<input type="file" id="cdr-sub-file" class="d-none" accept=".pdf,.jpg,.jpeg,.png,.docx" multiple>' +
                         '<button type="button" class="btn btn-sm btn-soft-primary mb-2" id="cdr-sub-pick-btn"><i class="ri-attachment-2 me-1"></i>Select Files</button>' +
                         '<div id="cdr-sub-file-list"></div>' +
                         '<div class="fs-12 text-muted mb-2" id="cdr-sub-file-count"></div>' +
                         '<div class="alert alert-danger py-2 px-3 fs-13 mb-2 d-none" id="cdr-sub-error"></div>' +
                         '<textarea class="form-control mb-2" id="cdr-sub-note" rows="2"></textarea>' +
-                        '<button class="btn btn-primary w-100" id="cdr-sub-btn" onclick="cdrSubmitDocuments(' + r.id + ')"><i class="ri-upload-cloud-2-line me-1"></i> ' + (r.status === 'Returned for Revision' ? 'Resubmit' : 'Submit') + '</button>' +
-                        '</div>'
+                        '<div class="text-end"><button class="btn btn-success" id="cdr-sub-btn" onclick="cdrSubmitDocuments(' + r.id + ')"><i class="ri-upload-cloud-2-line me-1"></i> ' + (isResubmit ? 'Resubmit' : 'Submit') + '</button></div>'
                     ) : '') +
-                    '<p class="mb-1 mt-3"><strong>History</strong></p>' + cdrHistoryHtml(r.statusHistory);
+                    '<div class="drd-section">History</div>' + cdrHistoryHtml(r.statusHistory);
 
                 cdrPendingFiles = [];
                 var pickBtn = document.getElementById('cdr-sub-pick-btn');

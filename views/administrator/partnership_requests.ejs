@@ -450,6 +450,21 @@
     [data-bs-theme="dark"] .dean-combo-option { color: #d3d5db; }
     [data-bs-theme="dark"] .dean-combo-option:hover, [data-bs-theme="dark"] .dean-combo-option.active { background: #363c4c; color: #a9bcf5; }
     [data-bs-theme="dark"] .dean-combo-option small { color: #9699a3; }
+
+    /* Grouped popup layout (2026-11-25) — same style as the Partner/College Dean popups. */
+    .drd { font-size: .875rem; }
+    .drd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+      padding: .9rem 1rem; border-radius: .5rem; background: var(--vz-light, #f3f6f9); }
+    .drd-inst { font-size: 1.05rem; font-weight: 600; color: var(--vz-heading-color, #212529); word-break: break-word; }
+    .drd-sub { display: flex; flex-wrap: wrap; gap: .25rem 1rem; color: var(--vz-secondary-color, #878a99); font-size: .8125rem; margin-top: .2rem; }
+    .drd-label { font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+      color: var(--vz-secondary-color, #878a99); margin-bottom: .25rem; }
+    .drd-value { font-weight: 500; }
+    .drd-section { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+      color: var(--vz-primary, #405189); border-bottom: 1px solid var(--vz-border-color, #e9ebec);
+      padding-bottom: .35rem; margin: 1.1rem 0 .75rem; }
+    .drd-box { white-space: pre-wrap; word-break: break-word; padding: .5rem .75rem; border-radius: .375rem;
+      border: 1px solid var(--vz-border-color, #e9ebec); min-height: 2.25rem; }
 </style>
 </head>
 
@@ -1345,11 +1360,11 @@
   <div class="modal fade zoomIn" id="cdr-detail-modal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
       <div class="modal-content">
-        <div class="modal-header bg-light p-3">
+        <div class="modal-header">
           <h5 class="modal-title" id="cdr-d-title"><i class="ri-award-line me-2 text-primary"></i>Request</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
         </div>
-        <div class="modal-body" id="cdr-d-body"><!-- populated by cdrOpenDetail() --></div>
+        <div class="modal-body drd" id="cdr-d-body"><!-- populated by cdrOpenDetail() --></div>
         <div class="modal-footer" id="cdr-d-footer"></div>
       </div>
     </div>
@@ -2054,72 +2069,66 @@
       const sc = scMap[r.status] || scMap['Pending'];
 
       document.getElementById('pr-modal-title').innerHTML =
-        `<i class="ri-building-4-line me-2 text-primary"></i>#REQ-${String(r.id).padStart(3, '0')} — ${inst}` +
+        `<i class="ri-building-4-line me-2 text-primary"></i>Partnership Request <span class="text-muted fw-normal fs-14 ms-1">#REQ-${String(r.id).padStart(3, '0')}</span>` +
         (r.isRenewal ? ' <span class="badge bg-info-subtle text-info fs-12 align-middle ms-1">Renewal Request</span>' : '');
 
+      // Validity duration from the proposed dates (e.g. "2 years, 1 month").
+      let durTxt = '—';
+      const ds0 = r.startDate ? new Date(String(r.startDate).slice(0, 10) + 'T00:00:00') : null;
+      const de0 = r.endDate ? new Date(String(r.endDate).slice(0, 10) + 'T00:00:00') : null;
+      if (ds0 && de0 && !isNaN(ds0) && !isNaN(de0) && de0 > ds0) {
+        const months = (de0.getFullYear() - ds0.getFullYear()) * 12 + (de0.getMonth() - ds0.getMonth()) + (de0.getDate() >= ds0.getDate() ? 0 : -1);
+        const yy = Math.floor(months / 12), mo = months % 12, parts = [];
+        if (yy) parts.push(yy + ' year' + (yy > 1 ? 's' : ''));
+        if (mo) parts.push(mo + ' month' + (mo > 1 ? 's' : ''));
+        durTxt = parts.length ? parts.join(', ') : 'Less than a month';
+      }
+      const fmtDay = (v) => {
+        if (!v || v === '—') return '—';
+        const d = new Date(String(v).length === 10 ? v + 'T00:00:00' : v);
+        return isNaN(d) ? escapeHtml(v) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      };
+      const reqTypeLabel = r.isSubmission ? 'MOA/MOU Submission' : r.isCollegeReport ? 'College Partnership Report' : r.isRenewal ? 'Renewal Request' : 'New Partnership Request';
+      const field = (label, value, col) => `<div class="${col || 'col-sm-4'}"><div class="drd-label">${label}</div><div class="drd-value">${value}</div></div>`;
+
       document.getElementById('pr-modal-body').innerHTML = `
-        <div class="row g-3 mb-3">
-          <div class="col-sm-6">
-            <p class="detail-label">Request ID</p>
-            <p class="detail-value mb-0">#REQ-${String(r.id).padStart(3, '0')}</p>
+        <div class="drd">
+          <div class="drd-head">
+            <div class="min-w-0">
+              <div class="drd-label">${escapeHtml(reqTypeLabel)}</div>
+              <div class="drd-inst">${inst}</div>
+              <div class="drd-sub">
+                <span><i class="ri-map-pin-line me-1"></i>${country}</span>
+                <span><i class="ri-user-line me-1"></i>${by}</span>
+                <span><i class="ri-calendar-line me-1"></i>Submitted ${escapeHtml(date)}</span>
+              </div>
+            </div>
+            <div class="text-end flex-shrink-0">
+              <div class="drd-label">Status</div>
+              <div class="req-status-cell req-status-plain">${statusBadge(r.status || 'Pending')}</div>
+            </div>
           </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Request Type</p>
-            <p class="detail-value mb-0">${r.isSubmission ? 'MOA/MOU Submission' : r.isCollegeReport ? 'College Partnership Report (already signed by the college)' : r.isRenewal ? 'Renewal of Existing Partnership' : 'New Partnership'}</p>
+          ${r.isCollegeReport ? '<div class="alert alert-info fs-13 py-2 mt-3 mb-0"><i class="ri-government-line me-1"></i>A college sent CIRL a copy of an MOA/MOU it has already signed. Record it in the Registry once verified.</div>' : ''}
+
+          <div class="drd-section">Agreement</div>
+          <div class="row g-3">
+            ${field('Agreement Type', escapeHtml(type))}
+            ${field('Nature', escapeHtml(nature))}
+            ${field('Category', escapeHtml(category))}
+            ${field('Region', escapeHtml(region))}
+            ${field(r.isCollegeReport ? 'Reporting College' : 'Responsible CSPC Unit', escapeHtml(unit), 'col-sm-8')}
           </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Requested By</p>
-            <p class="detail-value mb-0">${by}</p>
+
+          <div class="drd-section">${r.isCollegeReport ? 'Validity' : 'Proposed Validity'}</div>
+          <div class="row g-3">
+            ${field('Start', fmtDay(startDate))}
+            ${field('End', fmtDay(endDate))}
+            ${field('Duration', escapeHtml(durTxt))}
           </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Institution</p>
-            <p class="detail-value mb-0">${inst}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Country</p>
-            <p class="detail-value mb-0">${country}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Agreement Type</p>
-            <div><span class="badge badge-type bg-primary-subtle text-primary border border-primary-subtle">${type}</span></div>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Nature</p>
-            <p class="detail-value mb-0">${nature}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Category</p>
-            <p class="detail-value mb-0">${category}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Region</p>
-            <p class="detail-value mb-0">${region}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Responsible CSPC Unit</p>
-            <p class="detail-value mb-0">${unit}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Proposed Start Date</p>
-            <p class="detail-value mb-0">${startDate}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Proposed End Date</p>
-            <p class="detail-value mb-0">${endDate}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Date Submitted</p>
-            <p class="detail-value mb-0">${date}</p>
-          </div>
-          <div class="col-sm-6">
-            <p class="detail-label">Status</p>
-            <div class="req-status-cell req-status-plain">${statusBadge(r.status || 'Pending')}</div>
-          </div>
+
+          <div class="drd-section">Notes</div>
+          <div class="drd-box mb-3">${notes !== '—' ? notes : '<span class="text-muted">—</span>'}</div>
         </div>
-        ${notes !== '—' ? `
-          <p class="detail-label">Notes</p>
-          <div class="detail-box mb-3 fs-13 lh-lg">${notes}</div>
-        ` : ''}
         <div class="d-flex align-items-center justify-content-between border rounded p-3 mb-3">
           <div>
             <p class="detail-label mb-1">Draft & Supporting Documents</p>
@@ -3708,32 +3717,45 @@
       fetch('/api/college-requests/' + id, { headers: { 'X-Requested-With': 'ciprms' } })
           .then(function (r) { return r.json(); })
           .then(function (r) {
-              document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>' + escapeHtml(r.title);
+              document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>College Request <span class="text-muted fw-normal fs-14 ms-1">#' + r.id + '</span>';
               var required = (r.requiredDocuments || []).map(function (d) { return '<span class="cdr-doc-chip">' + escapeHtml(d) + '</span>'; }).join('') || '<span class="text-muted">None specified</span>';
+              var deans = cdrDeansOf(r).map(function (d) { return d.name + (d.college ? ' (' + d.college + ')' : ''); }).join(', ');
+              var refCount = (r.referenceDocuments || []).length, subCount = (r.submittedDocuments || []).length;
+              // Same grouped layout as the College Dean's College Request popup (.drd-* styles).
               document.getElementById('cdr-d-body').innerHTML =
-                  '<div class="mb-3 d-flex gap-2 flex-wrap">' + cdrBadge(r.status) +
-                      '<span class="badge bg-light text-dark border">' + escapeHtml(r.requestType) + '</span>' +
-                      (r.deadline ? '<span class="badge bg-light text-dark border"><i class="ri-calendar-line"></i> Due ' + fmtDate(r.deadline) + '</span>' : '') +
+                  '<div class="drd-head">' +
+                      '<div class="min-w-0">' +
+                          '<div class="drd-label">' + escapeHtml(r.requestType || 'Request') + ' Request</div>' +
+                          '<div class="drd-inst">' + escapeHtml(r.title || '—') + '</div>' +
+                          '<div class="drd-sub">' +
+                              '<span><i class="ri-user-line me-1"></i>Assigned to ' + escapeHtml(deans || '—') + '</span>' +
+                              (r.deadline ? '<span><i class="ri-calendar-line me-1"></i>Due ' + fmtDate(r.deadline) + '</span>' : '') +
+                          '</div>' +
+                      '</div>' +
+                      '<div class="text-end flex-shrink-0"><div class="drd-label">Status</div>' + cdrBadge(r.status) + '</div>' +
                   '</div>' +
-                  '<p class="mb-1"><strong>Assigned to:</strong> ' + escapeHtml(cdrDeansOf(r).map(function (d) {
-                      return d.name + (d.college ? ' (' + d.college + ')' : '');
-                  }).join(', ')) + '</p>' +
-                  (r.instructions ? '<p class="mb-1"><strong>Instructions:</strong><br>' + escapeHtml(r.instructions).replace(/\n/g, '<br>') + '</p>' : '') +
-                  (r.description ? '<p class="mb-3"><strong>Description:</strong><br>' + escapeHtml(r.description).replace(/\n/g, '<br>') + '</p>' : '') +
-                  '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +
-                  (r.reviewRemark && r.status === 'Returned for Revision' ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
-                  '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(from you)</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.') +
+                  (r.reviewRemark && r.status === 'Returned for Revision' ? '<div class="alert alert-danger fs-13 py-2 mt-3 mb-0"><i class="ri-arrow-go-back-line me-1"></i><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
+                  (r.status === 'Completed' ? '<div class="alert alert-success fs-13 py-2 mt-3 mb-0"><i class="ri-checkbox-circle-line me-1"></i>This request has been accepted.</div>' : '') +
+                  '<div class="drd-section">Instructions</div>' +
+                  '<div class="row g-3">' +
+                      '<div class="col-sm-6"><div class="drd-label">Instructions</div><div class="drd-box">' + (r.instructions ? escapeHtml(r.instructions) : '<span class="text-muted">—</span>') + '</div></div>' +
+                      '<div class="col-sm-6"><div class="drd-label">Description</div><div class="drd-box">' + (r.description ? escapeHtml(r.description) : '<span class="text-muted">—</span>') + '</div></div>' +
+                  '</div>' +
+                  '<div class="drd-section">Required Documents</div><div>' + required + '</div>' +
+                  '<div class="drd-section">Reference Documents <span class="text-muted fw-normal">' + (refCount ? '(' + refCount + ')' : '') + ' · from you</span></div>' +
+                      cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.') +
                   // Same drag-and-drop uploader as the other document uploads (CIPRMS.initDropzone, set up below
                   // once this markup is on the page), then an Attach button like the Draft "Upload" button.
-                  '<div class="mb-3">' +
+                  '<div class="mt-2">' +
                       '<div id="cdr-ref-dropzone-wrap" class="mb-2">' +
                           '<input type="file" class="form-control" id="cdr-ref-file" accept=".pdf,.jpg,.jpeg,.png,.docx">' +
                       '</div>' +
-                      '<button type="button" class="btn btn-primary btn-sm px-3 fs-13" id="cdr-ref-attach-btn" onclick="cdrAddReference(' + r.id + ')">' +
-                          '<i class="ri-attachment-2 me-1"></i>Attach</button>' +
+                      '<div class="text-end"><button type="button" class="btn btn-success btn-sm px-3 fs-13" id="cdr-ref-attach-btn" onclick="cdrAddReference(' + r.id + ')">' +
+                          '<i class="ri-attachment-2 me-1"></i>Attach</button></div>' +
                   '</div>' +
-                  '<p class="mb-1"><strong>Submitted Documents</strong> <span class="text-muted">(from the Dean)</span></p>' + cdrDocListHtml(r.submittedDocuments, 'Nothing submitted yet.') +
-                  '<p class="mb-1 mt-3"><strong>History</strong></p>' + cdrHistoryHtml(r.statusHistory);
+                  '<div class="drd-section">Submitted Documents <span class="text-muted fw-normal">' + (subCount ? '(' + subCount + ')' : '') + ' · from the Dean</span></div>' +
+                      cdrDocListHtml(r.submittedDocuments, 'Nothing submitted yet.') +
+                  '<div class="drd-section">History</div>' + cdrHistoryHtml(r.statusHistory);
 
               if (window.CIPRMS && CIPRMS.initDropzone) {
                   window.cdrRefDropzone = CIPRMS.initDropzone({

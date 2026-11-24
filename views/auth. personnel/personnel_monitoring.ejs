@@ -19,6 +19,39 @@
     .modal.dr-cancel-stack { z-index: 1065; }
     .modal-backdrop.dr-cancel-backdrop { z-index: 1060; }
 </style>
+<style id="drd-popup-styles">
+                            /* Document Request Details (2026-11-25): grouped layout — same style as the partner's Request Details. */
+                            .drd { font-size: .875rem; }
+                            .drd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+                                padding: .9rem 1rem; border-radius: .5rem; background: var(--vz-light, #f3f6f9); }
+                            .drd-inst { font-size: 1.05rem; font-weight: 600; color: var(--vz-heading-color, #212529); word-break: break-word; }
+                            .drd-sub { display: flex; flex-wrap: wrap; gap: .25rem 1rem; color: var(--vz-secondary-color, #878a99); font-size: .8125rem; margin-top: .2rem; }
+                            .drd-label { font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+                                color: var(--vz-secondary-color, #878a99); margin-bottom: .25rem; }
+                            .drd-value { font-weight: 500; }
+                            .drd-section { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                                color: var(--vz-primary, #405189); border-bottom: 1px solid var(--vz-border-color, #e9ebec);
+                                padding-bottom: .35rem; margin: 1.1rem 0 .75rem; }
+                            .drd-box { white-space: pre-wrap; word-break: break-word; padding: .5rem .75rem; border-radius: .375rem;
+                                border: 1px solid var(--vz-border-color, #e9ebec); min-height: 2.25rem; }
+                            .drd-doclist { margin: 0; padding-left: 1.25rem; }
+                            .drd-doclist li { padding: .3rem 0; border-bottom: 1px dashed var(--vz-border-color, #e9ebec); font-weight: 500; }
+                            .drd-doclist li:last-child { border-bottom: 0; }
+                            /* Stepper: circles joined by a line; done = green check, current = blue ring, upcoming = grey. */
+                            .drd-steps { display: flex; list-style: none; margin: 0; padding: 0; }
+                            .drd-step { flex: 1 1 0; position: relative; text-align: center; font-size: .75rem; color: var(--vz-secondary-color, #878a99); }
+                            .drd-step::before { content: ""; position: absolute; top: 13px; left: -50%; width: 100%; height: 2px; background: var(--vz-border-color, #e9ebec); z-index: 0; }
+                            .drd-step:first-child::before { display: none; }
+                            .drd-step .dot { position: relative; z-index: 1; width: 28px; height: 28px; margin: 0 auto .35rem; border-radius: 50%;
+                                display: flex; align-items: center; justify-content: center; font-size: 15px;
+                                background: var(--vz-card-bg, #fff); border: 2px solid var(--vz-border-color, #ced4da); color: var(--vz-secondary-color, #878a99); }
+                            .drd-step.done { color: var(--vz-success, #0ab39c); }
+                            .drd-step.done::before, .drd-step.current::before { background: var(--vz-success, #0ab39c); }
+                            .drd-step.done .dot { background: var(--vz-success, #0ab39c); border-color: var(--vz-success, #0ab39c); color: #fff; }
+                            .drd-step.current { color: var(--vz-primary, #405189); font-weight: 600; }
+                            .drd-step.current .dot { border-color: var(--vz-primary, #405189); color: var(--vz-primary, #405189); box-shadow: 0 0 0 4px rgba(64, 81, 137, .12); }
+                            @media (max-width: 575.98px) { .drd-step { font-size: .65rem; } .drd-step .dot { width: 24px; height: 24px; font-size: 13px; } .drd-step::before { top: 11px; } }
+                        </style>
 </head>
 <body>
 
@@ -203,28 +236,32 @@
 
         <!-- College Partnership Report details -->
         <div class="modal fade" id="cr-view-modal" tabindex="-1" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="cr-view-title"><i class="ri-government-line me-2 text-primary"></i>College Partnership Report</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
-                    <div class="modal-body" id="cr-view-body"></div>
+                    <div class="modal-body drd" id="cr-view-body"></div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Document Request Draft Collaboration Modal -->
         <div class="modal fade" id="dr-draft-modal" tabindex="-1" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
                         <h5 class="modal-title" id="dr-draft-modal-title"><i class="ri-file-list-3-line me-2 text-primary"></i>Draft Collaboration</h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
-                    <div class="modal-body">
+                    <div class="modal-body drd">
+                        <div class="drd-section mt-0">Draft Versions</div>
                         <div id="dr-draft-timeline" class="mb-3"></div>
-                        <div class="alert alert-secondary fs-13 mb-0 border-top pt-3">
+                        <div class="alert alert-secondary fs-13 mb-0">
                             <i class="ri-information-line me-1"></i>Draft versions are uploaded by CIRL — track every version above as they come in.
                         </div>
                     </div>
@@ -247,11 +284,14 @@
                     </div>
                     <div class="modal-body">
                         <div id="draft-preview-body" class="mb-3"></div>
-                        <div class="border-top pt-3">
-                            <p class="fs-13 fw-medium mb-1" id="draft-preview-filename">—</p>
-                            <p class="fs-13 text-muted mb-1">Uploaded by: <span id="draft-preview-uploader">—</span></p>
-                            <p class="fs-13 text-muted mb-1">Date: <span id="draft-preview-when">—</span></p>
-                            <p class="fs-13 text-muted mb-0">Note: <span id="draft-preview-note">—</span></p>
+                        <div class="drd">
+                            <div class="drd-section mt-0">File Details</div>
+                            <div class="row g-3">
+                                <div class="col-sm-6"><div class="drd-label">File</div><div class="drd-value text-break" id="draft-preview-filename">—</div></div>
+                                <div class="col-sm-3"><div class="drd-label">Uploaded By</div><div class="drd-value" id="draft-preview-uploader">—</div></div>
+                                <div class="col-sm-3"><div class="drd-label">Date</div><div class="drd-value" id="draft-preview-when">—</div></div>
+                                <div class="col-12"><div class="drd-label">Note</div><div class="drd-box" id="draft-preview-note">—</div></div>
+                            </div>
                         </div>
                     </div>
                     <div class="modal-footer">
@@ -323,39 +363,7 @@
                             <div class="col-sm-6"><div class="drd-label">Handled By</div><div class="drd-value" id="drd-admin">—</div></div>
                             <div class="col-sm-6"><div class="drd-label">Attached Documents</div><div id="drd-docs">—</div></div>
                         </div>
-                        <style>
-                            /* Document Request Details (2026-11-25): grouped layout — same style as the partner's Request Details. */
-                            .drd { font-size: .875rem; }
-                            .drd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
-                                padding: .9rem 1rem; border-radius: .5rem; background: var(--vz-light, #f3f6f9); }
-                            .drd-inst { font-size: 1.05rem; font-weight: 600; color: var(--vz-heading-color, #212529); word-break: break-word; }
-                            .drd-sub { display: flex; flex-wrap: wrap; gap: .25rem 1rem; color: var(--vz-secondary-color, #878a99); font-size: .8125rem; margin-top: .2rem; }
-                            .drd-label { font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
-                                color: var(--vz-secondary-color, #878a99); margin-bottom: .25rem; }
-                            .drd-value { font-weight: 500; }
-                            .drd-section { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
-                                color: var(--vz-primary, #405189); border-bottom: 1px solid var(--vz-border-color, #e9ebec);
-                                padding-bottom: .35rem; margin: 1.1rem 0 .75rem; }
-                            .drd-box { white-space: pre-wrap; word-break: break-word; padding: .5rem .75rem; border-radius: .375rem;
-                                border: 1px solid var(--vz-border-color, #e9ebec); min-height: 2.25rem; }
-                            .drd-doclist { margin: 0; padding-left: 1.25rem; }
-                            .drd-doclist li { padding: .3rem 0; border-bottom: 1px dashed var(--vz-border-color, #e9ebec); font-weight: 500; }
-                            .drd-doclist li:last-child { border-bottom: 0; }
-                            /* Stepper: circles joined by a line; done = green check, current = blue ring, upcoming = grey. */
-                            .drd-steps { display: flex; list-style: none; margin: 0; padding: 0; }
-                            .drd-step { flex: 1 1 0; position: relative; text-align: center; font-size: .75rem; color: var(--vz-secondary-color, #878a99); }
-                            .drd-step::before { content: ""; position: absolute; top: 13px; left: -50%; width: 100%; height: 2px; background: var(--vz-border-color, #e9ebec); z-index: 0; }
-                            .drd-step:first-child::before { display: none; }
-                            .drd-step .dot { position: relative; z-index: 1; width: 28px; height: 28px; margin: 0 auto .35rem; border-radius: 50%;
-                                display: flex; align-items: center; justify-content: center; font-size: 15px;
-                                background: var(--vz-card-bg, #fff); border: 2px solid var(--vz-border-color, #ced4da); color: var(--vz-secondary-color, #878a99); }
-                            .drd-step.done { color: var(--vz-success, #0ab39c); }
-                            .drd-step.done::before, .drd-step.current::before { background: var(--vz-success, #0ab39c); }
-                            .drd-step.done .dot { background: var(--vz-success, #0ab39c); border-color: var(--vz-success, #0ab39c); color: #fff; }
-                            .drd-step.current { color: var(--vz-primary, #405189); font-weight: 600; }
-                            .drd-step.current .dot { border-color: var(--vz-primary, #405189); color: var(--vz-primary, #405189); box-shadow: 0 0 0 4px rgba(64, 81, 137, .12); }
-                            @media (max-width: 575.98px) { .drd-step { font-size: .65rem; } .drd-step .dot { width: 24px; height: 24px; font-size: 13px; } .drd-step::before { top: 11px; } }
-                        </style>
+
                     </div>
                     <div class="modal-footer" id="drd-footer">
                         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
@@ -1105,28 +1113,56 @@
             }).join('')
             : '<p class="text-muted fs-13 mb-0">No file attached yet.</p>';
         var canAdd = r.status === 'Pending' || r.status === 'Under Review';
-        var row = function (label, value) { return '<div class="col-sm-6"><div class="text-muted fs-12">' + label + '</div><div class="fw-medium">' + value + '</div></div>'; };
-        document.getElementById('cr-view-title').innerHTML = '<i class="ri-government-line me-2 text-primary"></i>' + crRef(r.id) + ' — ' + escapeHtml(r.institution);
+        // Same grouped layout as the Document Request Details popup (.drd-* styles).
+        var field = function (label, value, col) {
+            return '<div class="' + (col || 'col-sm-4') + '"><div class="drd-label">' + label + '</div><div class="drd-value">' + value + '</div></div>';
+        };
+        var durTxt = '—';
+        var ds = r.startDate ? new Date(String(r.startDate).slice(0, 10) + 'T00:00:00') : null;
+        var de = r.endDate ? new Date(String(r.endDate).slice(0, 10) + 'T00:00:00') : null;
+        if (ds && de && !isNaN(ds) && !isNaN(de) && de > ds) {
+            var months = (de.getFullYear() - ds.getFullYear()) * 12 + (de.getMonth() - ds.getMonth()) + (de.getDate() >= ds.getDate() ? 0 : -1);
+            var yy = Math.floor(months / 12), mo = months % 12, parts = [];
+            if (yy) parts.push(yy + ' year' + (yy > 1 ? 's' : ''));
+            if (mo) parts.push(mo + ' month' + (mo > 1 ? 's' : ''));
+            durTxt = parts.length ? parts.join(', ') : 'Less than a month';
+        }
+        document.getElementById('cr-view-title').innerHTML = '<i class="ri-government-line me-2 text-primary"></i>College Partnership Report <span class="text-muted fw-normal fs-14 ms-1">' + crRef(r.id) + '</span>';
         document.getElementById('cr-view-body').innerHTML =
-            '<div class="row g-3 mb-3">' +
-            row('Status', crStatusBadge(r.status)) +
-            row('Reporting College', escapeHtml(r.unit || '—')) +
-            row('Partner Institution', escapeHtml(r.institution)) +
-            row('Country', escapeHtml(r.country || '—')) +
-            row('Agreement Type', escapeHtml(r.type || '—')) +
-            row('Nature of Partnership', escapeHtml(r.nature || '—')) +
-            row('Effective – Expiry', crDate(r.startDate) + ' – ' + crDate(r.endDate)) +
-            row('Date Sent', escapeHtml(r.date || '—')) +
+            // Header: partner institution + country / date sent, status on the right
+            '<div class="drd-head">' +
+                '<div class="min-w-0">' +
+                    '<div class="drd-label">Partner Institution</div>' +
+                    '<div class="drd-inst">' + escapeHtml(r.institution || '—') + '</div>' +
+                    '<div class="drd-sub">' +
+                        '<span><i class="ri-map-pin-line me-1"></i>' + escapeHtml(r.country || '—') + '</span>' +
+                        '<span><i class="ri-calendar-line me-1"></i>Sent ' + escapeHtml(r.date || '—') + '</span>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="text-end flex-shrink-0"><div class="drd-label">Status</div>' + crStatusBadge(r.status) + '</div>' +
             '</div>' +
-            (r.notes ? '<div class="mb-3"><div class="text-muted fs-12">Notes</div><div class="border rounded p-2 fs-13">' + escapeHtml(r.notes) + '</div></div>' : '') +
-            (r.status === 'Under Review' ? '<div class="alert alert-info fs-13 py-2"><i class="ri-question-answer-line me-1"></i>CIRL asked for more information — see the note above, then add the file or details below.</div>' : '') +
-            (r.status === 'Approved' ? '<div class="alert alert-success fs-13 py-2"><i class="ri-checkbox-circle-line me-1"></i>CIRL recorded this partnership in the Partnership Registry.</div>' : '') +
-            '<div class="text-muted fs-12 mb-2">Files</div>' + filesHtml +
+            (r.status === 'Under Review' ? '<div class="alert alert-info fs-13 py-2 mt-3 mb-0"><i class="ri-question-answer-line me-1"></i>CIRL asked for more information — see the notes, then add the file or details below.</div>' : '') +
+            (r.status === 'Approved' ? '<div class="alert alert-success fs-13 py-2 mt-3 mb-0"><i class="ri-checkbox-circle-line me-1"></i>CIRL recorded this partnership in the Partnership Registry.</div>' : '') +
+            '<div class="drd-section">Agreement</div>' +
+            '<div class="row g-3">' +
+                field('Agreement Type', escapeHtml(r.type || '—')) +
+                field('Nature of Partnership', escapeHtml(r.nature || '—')) +
+                field('Reporting College', escapeHtml(r.unit || '—')) +
+            '</div>' +
+            '<div class="drd-section">Validity</div>' +
+            '<div class="row g-3">' +
+                field('Effective', crDate(r.startDate)) +
+                field('Expiry', crDate(r.endDate)) +
+                field('Duration', escapeHtml(durTxt)) +
+            '</div>' +
+            '<div class="drd-section">Notes</div>' +
+            '<div class="drd-box">' + (r.notes ? escapeHtml(r.notes) : '<span class="text-muted">—</span>') + '</div>' +
+            '<div class="drd-section">Files <span class="text-muted fw-normal">' + (files.length ? '(' + files.length + ')' : '') + '</span></div>' + filesHtml +
             (canAdd
-                ? '<div class="border-top pt-3 mt-3"><label class="form-label fs-13">Add a file or note for CIRL</label>' +
+                ? '<div class="drd-section">Add a File or Note for CIRL</div>' +
                   '<input type="file" class="form-control form-control-sm mb-2" id="cr-add-file" accept=".pdf,.jpg,.jpeg,.png,.docx">' +
                   '<textarea class="form-control form-control-sm mb-2" id="cr-add-note" rows="2" maxlength="1000"></textarea>' +
-                  '<button type="button" class="btn btn-sm btn-primary" id="cr-add-btn" onclick="addCollegeReportFile(' + r.id + ')"><i class="ri-upload-2-line me-1"></i>Send</button></div>'
+                  '<div class="text-end"><button type="button" class="btn btn-sm btn-success" id="cr-add-btn" onclick="addCollegeReportFile(' + r.id + ')"><i class="ri-upload-2-line me-1"></i>Send</button></div>'
                 : '');
         if (!refreshOnly) {
             setBreadcrumb(['Monitoring', 'College Partnership Report', r.institution + ' — ' + crRef(r.id)]);

@@ -41,7 +41,21 @@
           content: ''; position: absolute; left: -5px; top: .5rem; width: 8px; height: 8px;
           border-radius: 50%; background: #405189;
       }
-    </style>
+    
+      /* Grouped popup layout (2026-11-25) — same style as the Partner/College Dean popups. */
+      .drd { font-size: .875rem; }
+      .drd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+        padding: .9rem 1rem; border-radius: .5rem; background: var(--vz-light, #f3f6f9); }
+      .drd-inst { font-size: 1.05rem; font-weight: 600; color: var(--vz-heading-color, #212529); word-break: break-word; }
+      .drd-sub { display: flex; flex-wrap: wrap; gap: .25rem 1rem; color: var(--vz-secondary-color, #878a99); font-size: .8125rem; margin-top: .2rem; }
+      .drd-label { font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+        color: var(--vz-secondary-color, #878a99); margin-bottom: .25rem; }
+      .drd-section { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+        color: var(--vz-primary, #405189); border-bottom: 1px solid var(--vz-border-color, #e9ebec);
+        padding-bottom: .35rem; margin: 1.1rem 0 .75rem; }
+      .drd-box { white-space: pre-wrap; word-break: break-word; padding: .5rem .75rem; border-radius: .375rem;
+        border: 1px solid var(--vz-border-color, #e9ebec); min-height: 2.25rem; }
+</style>
 </head>
 <body>
 
@@ -168,11 +182,11 @@
 <div class="modal fade" id="cdr-detail-modal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
     <div class="modal-content">
-      <div class="modal-header bg-light p-3">
+      <div class="modal-header">
         <h5 class="modal-title" id="cdr-d-title"><i class="ri-award-line me-2 text-primary"></i>Request</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-      <div class="modal-body" id="cdr-d-body">
+      <div class="modal-body drd" id="cdr-d-body">
         <!-- populated by cdrOpenDetail() -->
       </div>
       <div class="modal-footer" id="cdr-d-footer"></div>
@@ -361,25 +375,39 @@
       fetch('/api/college-requests/' + id, { headers: { 'X-Requested-With': 'ciprms' } })
           .then(function (r) { return r.json(); })
           .then(function (r) {
-              document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>' + escapeHtml(r.title);
+              document.getElementById('cdr-d-title').innerHTML = '<i class="ri-award-line me-2 text-primary"></i>College Request <span class="text-muted fw-normal fs-14 ms-1">#' + r.id + '</span>';
               var required = (r.requiredDocuments || []).map(function (d) { return '<span class="cdr-doc-chip">' + escapeHtml(d) + '</span>'; }).join('') || '<span class="text-muted">None specified</span>';
+              var refCount = (r.referenceDocuments || []).length, subCount = (r.submittedDocuments || []).length;
+              // Same grouped layout as the College Dean's College Request popup (.drd-* styles).
               document.getElementById('cdr-d-body').innerHTML =
-                  '<div class="mb-3 d-flex gap-2 flex-wrap">' + cdrBadge(r.status) +
-                      '<span class="badge bg-light text-dark border">' + escapeHtml(r.requestType) + '</span>' +
-                      (r.deadline ? '<span class="badge bg-light text-dark border"><i class="ri-calendar-line"></i> Due ' + fmtDate(r.deadline) + '</span>' : '') +
+                  '<div class="drd-head">' +
+                      '<div class="min-w-0">' +
+                          '<div class="drd-label">' + escapeHtml(r.requestType || 'Request') + ' Request</div>' +
+                          '<div class="drd-inst">' + escapeHtml(r.title || '—') + '</div>' +
+                          '<div class="drd-sub">' +
+                              '<span><i class="ri-user-line me-1"></i>Assigned to ' + escapeHtml(r.assignedDeanName || '—') + (r.assignedCollege ? ' (' + escapeHtml(r.assignedCollege) + ')' : '') + '</span>' +
+                              (r.deadline ? '<span><i class="ri-calendar-line me-1"></i>Due ' + fmtDate(r.deadline) + '</span>' : '') +
+                          '</div>' +
+                      '</div>' +
+                      '<div class="text-end flex-shrink-0"><div class="drd-label">Status</div>' + cdrBadge(r.status) + '</div>' +
                   '</div>' +
-                  '<p class="mb-1"><strong>Assigned to:</strong> ' + escapeHtml(r.assignedDeanName) + (r.assignedCollege ? ' (' + escapeHtml(r.assignedCollege) + ')' : '') + '</p>' +
-                  (r.instructions ? '<p class="mb-1"><strong>Instructions:</strong><br>' + escapeHtml(r.instructions).replace(/\n/g, '<br>') + '</p>' : '') +
-                  (r.description ? '<p class="mb-3"><strong>Description:</strong><br>' + escapeHtml(r.description).replace(/\n/g, '<br>') + '</p>' : '') +
-                  '<p class="mb-1"><strong>Required Documents</strong></p><div class="mb-3">' + required + '</div>' +
-                  (r.reviewRemark && r.status === 'Returned for Revision' ? '<div class="alert alert-warning"><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
-                  '<p class="mb-1 mt-3"><strong>Reference Documents</strong> <span class="text-muted">(from you — the Dean can download each one once)</span></p>' + cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.', r.id) +
-                  '<div class="input-group input-group-sm mb-3">' +
+                  (r.reviewRemark && r.status === 'Returned for Revision' ? '<div class="alert alert-danger fs-13 py-2 mt-3 mb-0"><i class="ri-arrow-go-back-line me-1"></i><strong>Returned for revision:</strong> ' + escapeHtml(r.reviewRemark) + '</div>' : '') +
+                  (r.status === 'Completed' ? '<div class="alert alert-success fs-13 py-2 mt-3 mb-0"><i class="ri-checkbox-circle-line me-1"></i>This request has been accepted.</div>' : '') +
+                  '<div class="drd-section">Instructions</div>' +
+                  '<div class="row g-3">' +
+                      '<div class="col-sm-6"><div class="drd-label">Instructions</div><div class="drd-box">' + (r.instructions ? escapeHtml(r.instructions) : '<span class="text-muted">—</span>') + '</div></div>' +
+                      '<div class="col-sm-6"><div class="drd-label">Description</div><div class="drd-box">' + (r.description ? escapeHtml(r.description) : '<span class="text-muted">—</span>') + '</div></div>' +
+                  '</div>' +
+                  '<div class="drd-section">Required Documents</div><div>' + required + '</div>' +
+                  '<div class="drd-section">Reference Documents <span class="text-muted fw-normal">' + (refCount ? '(' + refCount + ')' : '') + ' · from you — the Dean can download each one once</span></div>' +
+                      cdrDocListHtml(r.referenceDocuments, 'No reference documents attached.', r.id) +
+                  '<div class="input-group input-group-sm mt-2">' +
                       '<input type="file" class="form-control" id="cdr-ref-file" accept=".pdf,.jpg,.jpeg,.png,.docx">' +
-                      '<button class="btn btn-outline-secondary" type="button" onclick="cdrAddReference(' + r.id + ')">Attach</button>' +
+                      '<button class="btn btn-success" type="button" onclick="cdrAddReference(' + r.id + ')"><i class="ri-attachment-2 me-1"></i>Attach</button>' +
                   '</div>' +
-                  '<p class="mb-1"><strong>Submitted Documents</strong> <span class="text-muted">(from the Dean)</span></p>' + cdrDocListHtml(r.submittedDocuments, 'Nothing submitted yet.') +
-                  '<p class="mb-1 mt-3"><strong>History</strong></p>' + cdrHistoryHtml(r.statusHistory);
+                  '<div class="drd-section">Submitted Documents <span class="text-muted fw-normal">' + (subCount ? '(' + subCount + ')' : '') + ' · from the Dean</span></div>' +
+                      cdrDocListHtml(r.submittedDocuments, 'Nothing submitted yet.') +
+                  '<div class="drd-section">History</div>' + cdrHistoryHtml(r.statusHistory);
 
               var footer = document.getElementById('cdr-d-footer');
               if (r.status === 'Submitted') {
