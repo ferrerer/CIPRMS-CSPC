@@ -76,8 +76,7 @@
                                 <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
                                     <h4 class="card-title mb-0"><i class="ri-id-card-line me-2 text-primary"></i>System Users</h4>
                                     <div class="d-flex align-items-center gap-2">
-                                        <span class="text-muted fs-12 d-none" id="usr-count"></span>
-                                        <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
+                                                                                <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
                                         <button class="btn btn-primary btn-sm" onclick="openAddUser()">
                                             <i class="ri-add-line align-bottom me-1"></i>Add User
                                         </button>
@@ -119,7 +118,8 @@
                                     </table>
                                 </div>
                                 <!-- Previous / Next only (10 per page) — same as the other pages -->
-                                <div class="d-flex justify-content-end px-3">
+                                <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 px-3">
+                                    <div class="text-muted fs-13 py-3" id="usr-count"></div>
                                     <div id="usr-pagination" class="py-3"></div>
                                 </div>
                             </div>
@@ -468,7 +468,10 @@
     const startIdx = (currentPage - 1) * itemsPerPage;
     const paged = filtered.slice(startIdx, startIdx + itemsPerPage);
 
-    document.getElementById('usr-count').textContent = `${filtered.length} of ${users.length} user${users.length !== 1 ? 's' : ''}`;
+    // Bottom-left: "Showing 1–10 of 36 users" (the range on this page out of the filtered list).
+    const shownFrom = filtered.length ? startIdx + 1 : 0;
+    const shownTo = startIdx + paged.length;
+    document.getElementById('usr-count').innerHTML = `Showing <span class="fw-semibold">${shownFrom}–${shownTo}</span> of <span class="fw-semibold">${filtered.length}</span> user${filtered.length !== 1 ? 's' : ''}`;
 
     document.getElementById('usr-tbody').innerHTML = paged.map(u => `
       <tr>

@@ -52,3 +52,12 @@
 .bg-critical-solid.status-alarm { animation-name: statusCriticalPulse; }
 @keyframes statusCriticalPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(220, 79, 11, .6); } 50% { box-shadow: 0 0 0 5px rgba(220, 79, 11, 0); } }
 @media (prefers-reduced-motion: reduce) { .bg-critical-solid.status-alarm { animation: none; } }
+
+/* Document Request: Release and Completed get their own colors (2026-11-25) — Completed used to share Approved's
+   green and Release was near-black (looked like plain text in the borderless status cells). */
+.text-release { color: #7c3aed !important; }                                  /* purple */
+.bg-release-subtle { background-color: rgba(124, 58, 237, .12) !important; }
+.text-completed { color: #198754 !important; }                                /* true green — same family as Approved's teal-green (#0ab39c), but distinct */
+.bg-completed-subtle { background-color: rgba(25, 135, 84, .14) !important; }
+[data-bs-theme="dark"] .text-release { color: #a78bfa !important; }
+[data-bs-theme="dark"] .text-completed { color: #4ade80 !important; }

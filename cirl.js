@@ -16,6 +16,8 @@ const passport = require('passport');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
+// Loaded before any route module so its multer patch applies to every upload route (see the file header).
+const auditContext = require('./services/auditContext');
 const { Binary, ObjectId } = require('mongodb');
 const PDFDocument = require('pdfkit');
 const ExcelJS = require('exceljs');
@@ -377,6 +379,9 @@ app.use(session({
 }));
 app.use(passport.initialize());
 app.use(passport.session());
+// Audit Trail request context: lets logActivity() record the client IP / User-Agent for EVERY action,
+// not only the login/logout call sites that pass them explicitly (services/auditContext.js).
+app.use(auditContext.middleware(getClientIp, getClientUserAgent));
 
 // ── SESSION LIVE-REVALIDATION ─────────────────────────────────────────────────
 // req.session.user is a snapshot taken at login. Without this, deactivating,
@@ -1386,7 +1391,7 @@ app.post('/api/activate', requireAuth, async (req, res) => {
     );
     req.session.user.unit = unit;
     req.session.user.activated = true;
-    await logActivity(db, req.session.user, 'EDIT', `Account activated: ${userDoc.name} — ${userDoc.email}`);
+    await logActivity(db, req.session.user, 'EDIT', `Account activated: ${userDoc.name} — ${userDoc.email}`, { category: 'User Management', status: 'success' });
     res.json({ success: true, redirect: homeForRole(userDoc.role) });
   } catch (err) {
     console.error('❌ Account activation error:', err);
@@ -1511,7 +1516,7 @@ app.post('/api/partnerships/:id/activities', requireStaffAccess, async (req, res
       createdByEmail: actor.email,
       createdAt: new Date().toISOString()
     }));
-    await logActivity(db, actor, 'ADD', `Activity added for ${partnership.inst}: ${entry.activityConducted}`);
+    await logActivity(db, actor, 'ADD', `Activity added for ${partnership.inst}: ${entry.activityConducted}`, { category: 'Partnership', status: 'success' });
     res.json({ success: true, activity: entry });
   } catch (err) {
     console.error('❌ Add activity error:', err);
@@ -1530,7 +1535,7 @@ app.post('/api/partnerships/:id/activities/export', requireStaffAccess, async (r
     const partnership = await db.collection('partnerships').findOne({ id });
     if (!partnership) return res.status(404).json({ error: 'Partnership not found.' });
     const activities = await db.collection('partnershipactivities').find({ partnershipId: id }).sort({ dateConducted: 1 }).toArray();
-    await logActivity(db, req.session.user, 'VIEW', `Exported List of Activities PDF: ${partnership.inst}`);
+    await logActivity(db, req.session.user, 'VIEW', `Exported List of Activities PDF: ${partnership.inst}`, { category: 'Report', status: 'success' });
     await archivePartnerActivitiesPdf(db, res, partnership, activities, req.session.user);
   } catch (err) {
     console.error('❌ List of Activities PDF error:', err);
@@ -1848,7 +1853,7 @@ async function archivePartnerActivitiesPdf(db, res, partnership, activities, act
     const linkedFromRequest = await db.collection('documentrequests').findOne({ 'supportingDocuments.documentId': previous.id });
     const linkedFromDuplicate = await db.collection('documents').findOne({ possibleDuplicateIds: previous.id });
     if (linkedFromRequest || linkedFromDuplicate) {
-      await logActivity(db, actor, 'VIEW', `Kept previous Partner Activities PDF for ${partnership.inst} (document #${previous.id}) — still referenced elsewhere`);
+      await logActivity(db, actor, 'VIEW', `Kept previous Partner Activities PDF for ${partnership.inst} (document #${previous.id}) — still referenced elsewhere`, { category: 'Document', status: 'success' });
     } else {
       await db.collection('documents').deleteOne({ id: previous.id });
       if (previous.fileLink && previous.fileLink.startsWith('/uploads/documents/')) {
@@ -2054,7 +2059,7 @@ app.post('/api/partnerships/:id/renew-request', requireAuth, announce('request')
     }));
 
     await logActivity(db, req.session.user, 'SUBMIT',
-      `Renewal request submitted: ${entry.institution} (${entry.type}) by ${entry.requestedBy}`);
+      `Renewal request submitted: ${entry.institution} (${entry.type}) by ${entry.requestedBy}`, { category: 'Partnership Request', status: 'success' });
 
     res.json({ success: true, request: entry });
   } catch (err) {
@@ -2183,7 +2188,7 @@ app.post('/api/requests', requireRequesterOrInstitutionInitiator, denyCollegeSta
             ? `College partnership reported: ${entry.institution} (${type}) by ${entry.requestedBy}${entry.unit ? ' — ' + entry.unit : ''}`
             : institutionInitiated
               ? `Partnership request submitted: ${institution} (${type}) — initiated by ${req.session.user.name} on behalf of ${entry.requestedBy}`
-              : `Partnership request submitted: ${institution} (${type}) by ${entry.requestedBy}`);
+              : `Partnership request submitted: ${institution} (${type}) by ${entry.requestedBy}`, { category: 'Partnership Request', status: 'success' });
 
       // Administrator and Staff — both review Partnership/Renewal Requests
       // (PATCH /api/requests/:id is requireStaffAccess-gated as of the
@@ -2383,7 +2388,7 @@ app.post('/api/requests/:id/submit', requireRequester, denyCollegeStaffPartnersh
     });
     const updated = await db.collection('requests').findOne({ id });
     await logActivity(db, req.session.user, 'SUBMIT',
-      `Partnership request submitted: ${updated.institution} (${updated.type}) by ${updated.requestedBy}`);
+      `Partnership request submitted: ${updated.institution} (${updated.type}) by ${updated.requestedBy}`, { category: 'Partnership Request', status: 'success' });
 
     // Same alerts as a request submitted directly (POST /api/requests): the reviewers (and LAU), and a receipt to the submitter.
     const reviewers = await db.collection('users').find({ role: { $in: [...REQUEST_REVIEWER_ROLES, 'LAU'] } }).toArray();
@@ -2533,7 +2538,7 @@ app.patch('/api/requests/:id', requireStaffAccess, announce('request'), async (r
     if (!updated) return res.status(404).json({ error: 'Request not found.' });
     const action = status === 'Approved' ? 'APPROVE' : status === 'Rejected' ? 'REJECT' : 'EDIT';
     await logActivity(db, req.session.user, action,
-      `Partnership request ${status.toLowerCase()}: ${updated.inst || updated.institution || 'ID #' + id} (${updated.type || ''})`);
+      `Partnership request ${status.toLowerCase()}: ${updated.inst || updated.institution || 'ID #' + id} (${updated.type || ''})`, { category: 'Partnership Request', status: 'success' });
 
     // Document Library duplicate cleanup (2026-11): mark this request's CURRENT library entry (if it has
     // one — not every request has an attachment) as final now that it's been decided, so it reads as
@@ -2568,7 +2573,7 @@ app.patch('/api/requests/:id', requireStaffAccess, announce('request'), async (r
       if (!isNaN(parsedEnd)) setFields.endYear = parsedEnd.getFullYear();
       await db.collection('partnerships').updateOne({ id: updated.renewalPartnershipId }, { $set: setFields });
       await logActivity(db, req.session.user, 'RENEW',
-        `Partnership renewed: ${updated.institution} — new expiry ${formattedEnd}`);
+        `Partnership renewed: ${updated.institution} — new expiry ${formattedEnd}`, { category: 'Partnership', status: 'success' });
     }
 
     // Notify the submitter directly (targeted — not part of the global staff
@@ -2753,7 +2758,7 @@ app.post('/api/requests/:id/documents', requireAuth, announce('request'), (req, 
 
         const fileLabel = req.file ? req.file.originalname : 'notes only';
         await logActivity(db, actor, 'EDIT',
-          `Draft document uploaded for partnership request: ${target.institution} (${fileLabel})${note ? ' — "' + note + '"' : ''}`);
+          `Draft document uploaded for partnership request: ${target.institution} (${fileLabel})${note ? ' — "' + note + '"' : ''}`, { category: 'Partnership Request', status: 'success' });
 
         // Reviewer uploaded → notify the requester. Requester uploaded a
         // revision → notify every reviewer (same broadcast set used for a
@@ -2923,7 +2928,7 @@ app.post('/api/requests/:id/lau-review', requireLauOrReviewer, (req, res) => {
       };
       await db.collection('requests').updateOne({ id }, { $push: { lauReviews: reviewRecord } });
       await logActivity(db, actor, 'EDIT',
-        `Internal (LAU) entry submitted for partnership request: ${target.institution} by ${actor.role}${status ? ' — ' + status : ''}`);
+        `Internal (LAU) entry submitted for partnership request: ${target.institution} by ${actor.role}${status ? ' — ' + status : ''}`, { category: 'Partnership Request', status: 'success' });
 
       // Notify "the other side" of this internal conversation — still deliberately content-free (no note
       // text, status value, or filename, even though both sides already see all of that in the request's
@@ -3064,7 +3069,7 @@ app.post('/api/document-requests', requireRequester, announce('documentRequest')
     }));
 
     await logActivity(db, req.session.user, 'SUBMIT',
-      `Document request submitted: ${entry.documentType} for ${entry.institution} by ${entry.requestedBy}`);
+      `Document request submitted: ${entry.documentType} for ${entry.institution} by ${entry.requestedBy}`, { category: 'Document Request', status: 'success' });
 
     const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
     await notifyReviewers(db, reviewers, {
@@ -3268,7 +3273,7 @@ app.patch('/api/document-requests/:id', requireStaffAccess, announce('documentRe
 
     const action = status === 'Completed' ? 'APPROVE' : status === 'Rejected' ? 'REJECT' : 'EDIT';
     await logActivity(db, req.session.user, action,
-      `Document request status changed to "${status}": ${updated.documentType} for ${updated.institution} (requested by ${updated.requestedBy})`);
+      `Document request status changed to "${status}": ${updated.documentType} for ${updated.institution} (requested by ${updated.requestedBy})`, { category: 'Document Request', status: 'success' });
 
     // Targeted notification to the requester only (Auth. Personnel or, since
     // 2026-07-22, potential_partner) — every stage except the starting
@@ -3471,7 +3476,7 @@ app.post('/api/document-requests/:id/documents', requireAuth, announce('document
         const actionSummary = parts.join(' and ');
 
         await logActivity(db, actor, 'EDIT',
-          `Draft update for document request: ${target.institution} — ${actionSummary}${note ? ' — "' + note + '"' : ''}`);
+          `Draft update for document request: ${target.institution} — ${actionSummary}${note ? ' — "' + note + '"' : ''}`, { category: 'Document Request', status: 'success' });
 
         // Reviewer contributed → notify the requester. Requester uploaded a
         // revision → notify every reviewer, same broadcast set used for a
@@ -3705,7 +3710,7 @@ app.post('/api/settings/signature', requireStaffAccess, (req, res) => {
         uploadedBy: actor.name,
         uploadedByEmail: actor.email
       });
-      await logActivity(db, actor, 'EDIT', 'Uploaded/replaced the Head of CIRL e-signature.');
+      await logActivity(db, actor, 'EDIT', 'Uploaded/replaced the Head of CIRL e-signature.', { category: 'Document Request', status: 'success' });
       res.json({ success: true });
     } catch (e) {
       console.error('❌ Save signature error:', e);
@@ -3718,7 +3723,7 @@ app.delete('/api/settings/signature', requireStaffAccess, async (req, res) => {
   try {
     const db = getDb();
     await signatureService.removeSignature(db);
-    await logActivity(db, req.session.user, 'DELETE', 'Removed the Head of CIRL e-signature.');
+    await logActivity(db, req.session.user, 'DELETE', 'Removed the Head of CIRL e-signature.', { category: 'Document Request', status: 'success' });
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Remove signature error:', err);
@@ -3843,7 +3848,7 @@ app.post('/api/college-requests', requireStaffAccess, announce('collegeRequest')
     }));
 
     await logActivity(db, req.session.user, 'ADD',
-      `College ${entry.requestType} request created and assigned to ${assignedDeans.map(d => d.name).join(', ')}: ${entry.title}`);
+      `College ${entry.requestType} request created and assigned to ${assignedDeans.map(d => d.name).join(', ')}: ${entry.title}`, { category: 'College Request', status: 'success' });
 
     await notifyUsers(db, assignedDeans.map(d => d.email), {
       module: 'request',
@@ -3917,7 +3922,7 @@ app.post('/api/college-requests/:id/reference-documents', requireStaffAccess, an
         const updated = await db.collection('collegedeanrequests').findOne({ id });
 
         await logActivity(db, actor, 'EDIT',
-          `Reference document attached to college request: ${target.title} (${req.file.originalname})`);
+          `Reference document attached to college request: ${target.title} (${req.file.originalname})`, { category: 'College Request', status: 'success' });
         return { documentId, fileLink, updated };
       }
 
@@ -3959,7 +3964,7 @@ app.patch('/api/college-requests/:id/reference-documents/:documentId/reset-downl
     );
     const updated = await db.collection('collegedeanrequests').findOne({ id });
     await logActivity(db, req.session.user, 'EDIT',
-      `Reset Dean download limit for reference document on college request: ${target.title} (${refDoc.originalFilename || 'document'})`);
+      `Reset Dean download limit for reference document on college request: ${target.title} (${refDoc.originalFilename || 'document'})`, { category: 'College Request', status: 'success' });
     res.json({ success: true, request: updated });
   } catch (err) {
     console.error('❌ College request download reset error:', err);
@@ -4195,7 +4200,7 @@ app.post('/api/college-requests/:id/documents', requirePersonnel, announce('coll
       const updated = await db.collection('collegedeanrequests').findOne({ id });
 
       await logActivity(db, actor, wasReturned ? 'RESUBMIT' : 'SUBMIT',
-        `College ${target.requestType} request ${wasReturned ? 'resubmitted' : 'submitted'}: ${target.title} by ${actor.name}` + (docRecords.length > 1 ? ` (${docRecords.length} files)` : ''));
+        `College ${target.requestType} request ${wasReturned ? 'resubmitted' : 'submitted'}: ${target.title} by ${actor.name}` + (docRecords.length > 1 ? ` (${docRecords.length} files)` : ''), { category: 'College Request', status: 'success' });
 
       const reviewers = await db.collection('users').find({ role: { $in: REQUEST_REVIEWER_ROLES } }).toArray();
       await notifyReviewers(db, reviewers, {
@@ -4265,7 +4270,7 @@ app.patch('/api/college-requests/:id', requireStaffAccess, announce('collegeRequ
 
     const assignedDeanNames = getAssignedDeans(target).map(d => d.name).join(', ');
     await logActivity(db, req.session.user, action === 'accept' ? 'APPROVE' : 'REJECT',
-      `College ${target.requestType} request ${action === 'accept' ? 'accepted' : 'returned for revision'}: ${target.title} (Dean: ${assignedDeanNames})${remark ? ' — "' + remark + '"' : ''}`);
+      `College ${target.requestType} request ${action === 'accept' ? 'accepted' : 'returned for revision'}: ${target.title} (Dean: ${assignedDeanNames})${remark ? ' — "' + remark + '"' : ''}`, { category: 'College Request', status: 'success' });
 
     await notifyUsers(db, getAssignedDeans(target).map(d => d.email), {
       module: 'request',
@@ -4480,7 +4485,17 @@ app.get('/api/documents', requireUploader, async (req, res) => {
     if (req.query.acknowledgedOnly === 'true') filter.duplicateAcknowledged = true;
 
     const totalCount = await db.collection('documents').countDocuments(filter);
-    const records = await db.collection('documents').find(filter).sort({ id: -1 }).skip((page - 1) * pageSize).limit(pageSize).toArray();
+    // Latest upload first (2026-11-25): order by the actual upload time, not just the record id — a file archived
+    // from a request/renewal flow can carry a lower id than one uploaded earlier. uploadedAt is an ISO string on
+    // every current write path; a legacy/unparseable value converts to null and sorts after dated ones, by id.
+    const records = await db.collection('documents').aggregate([
+      { $match: filter },
+      { $addFields: { _sortUploaded: { $convert: { input: '$uploadedAt', to: 'date', onError: null, onNull: null } } } },
+      { $sort: { _sortUploaded: -1, id: -1 } },
+      { $skip: (page - 1) * pageSize },
+      { $limit: pageSize },
+      { $project: { _sortUploaded: 0 } }
+    ]).toArray();
     res.json({ records, totalCount, page, pageSize });
   } catch (err) {
     console.error(err);
@@ -4967,7 +4982,7 @@ app.post('/api/partnerships', requireStaffAccess, announce('partnership'), async
       if (sourceRequest) candidate.sourceRequestId = sourceRequest.id;
       return candidate;
     });
-    await logActivity(db, req.session.user, 'ADD', `Partnership added: ${entry.inst || 'Record #' + entry.id} (${entry.type || ''})`);
+    await logActivity(db, req.session.user, 'ADD', `Partnership added: ${entry.inst || 'Record #' + entry.id} (${entry.type || ''})`, { category: 'Partnership', status: 'success' });
 
     if (sourceRequest) {
       await db.collection('requests').updateOne(
@@ -4975,7 +4990,7 @@ app.post('/api/partnerships', requireStaffAccess, announce('partnership'), async
         { $set: { status: 'Approved', linkedPartnershipId: entry.id, decidedBy: req.session.user.name, updatedAt: new Date().toISOString() } }
       );
       await logActivity(db, req.session.user, 'APPROVE',
-        `Partnership request approved and converted to Registry: ${sourceRequest.institution} (Record #${entry.id})`);
+        `Partnership request approved and converted to Registry: ${sourceRequest.institution} (Record #${entry.id})`, { category: 'Partnership Request', status: 'success' });
       if (sourceRequest.submittedByEmail) {
         const submitter = await db.collection('users').findOne({ email: sourceRequest.submittedByEmail });
         await notifyUsers(db, [sourceRequest.submittedByEmail], sourceRequest.isCollegeReport
@@ -5040,7 +5055,7 @@ app.patch('/api/partnerships/:id', requireStaffAccess, announce('partnership', {
     await db.collection('partnerships').updateOne({ id }, update);
     const updated = await db.collection('partnerships').findOne({ id });
     if (!updated) return res.status(404).json({ error: 'The partnership record you are trying to update could not be found.' });
-    await logActivity(db, req.session.user, 'EDIT', `Partnership updated: ${updated.inst || 'Record #' + id} (${updated.type || ''})`);
+    await logActivity(db, req.session.user, 'EDIT', `Partnership updated: ${updated.inst || 'Record #' + id} (${updated.type || ''})`, { category: 'Partnership', status: 'success' });
     res.json({ success: true, partnership: updated });
   } catch (err) {
     console.error('❌ Partnership update error:', err);
@@ -5069,7 +5084,7 @@ app.delete('/api/partnerships/:id', requireStaffAccess, announce('partnership', 
     const db = getDb();
     const target = await db.collection('partnerships').findOne({ id });
     await db.collection('partnerships').deleteOne({ id });
-    await logActivity(db, req.session.user, 'DELETE', `Partnership deleted: ${target ? (target.inst || 'Record #' + id) : 'Record #' + id}`);
+    await logActivity(db, req.session.user, 'DELETE', `Partnership deleted: ${target ? (target.inst || 'Record #' + id) : 'Record #' + id}`, { category: 'Partnership', status: 'success' });
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Partnership delete error:', err);
@@ -6441,7 +6456,7 @@ app.get('/api/reports/custom/preview', requireStaffAccess, async (req, res) => {
   try {
     const db = getDb();
     const result = await computeCustomReportData(db, req.query, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Generated Custom Report preview: ${result.title}`);
+    await logActivity(db, req.session.user, 'VIEW', `Generated Custom Report preview: ${result.title}`, { category: 'Report', status: 'success' });
     res.json(result);
   } catch (err) {
     console.error('❌ Custom Report Preview error:', err);
@@ -6453,7 +6468,7 @@ app.get('/api/reports/partnerships/pdf', requireStaffAccess, async (req, res) =>
   try {
     const db = getDb();
     const reportData = await computeCustomReportData(db, req.query, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Exported Custom Report PDF: ${reportData.title}`);
+    await logActivity(db, req.session.user, 'VIEW', `Exported Custom Report PDF: ${reportData.title}`, { category: 'Report', status: 'success' });
 
     renderPartnershipReportPdf(res, {
       title: reportData.title,
@@ -6764,7 +6779,7 @@ app.get('/api/reports/partnerships/excel', requireStaffAccess, async (req, res) 
   try {
     const db = getDb();
     const reportData = await computeCustomReportData(db, req.query, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Exported Custom Report Excel: ${reportData.title}`);
+    await logActivity(db, req.session.user, 'VIEW', `Exported Custom Report Excel: ${reportData.title}`, { category: 'Report', status: 'success' });
 
     const workbook = buildPartnershipExcel({
       title: reportData.title,
@@ -7418,7 +7433,7 @@ app.get('/api/reports/comparison/preview', requireStaffAccess, async (req, res) 
   try {
     const db = getDb();
     const data = await computeComparisonReport(db, req.query, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Generated Comparison Report preview: ${data.title}`);
+    await logActivity(db, req.session.user, 'VIEW', `Generated Comparison Report preview: ${data.title}`, { category: 'Report', status: 'success' });
     // Return JSON-serializable summary (omit full doc arrays for perf, just counts)
     res.json({
       title: data.title,
@@ -7447,7 +7462,7 @@ app.get('/api/reports/comparison/pdf', requireStaffAccess, async (req, res) => {
   try {
     const db = getDb();
     const data = await computeComparisonReport(db, req.query, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Exported Comparison Report PDF: ${data.title}`);
+    await logActivity(db, req.session.user, 'VIEW', `Exported Comparison Report PDF: ${data.title}`, { category: 'Report', status: 'success' });
     renderComparisonReportPdf(res, data);
   } catch (err) {
     console.error('❌ Comparison Report PDF error:', err);
@@ -7461,7 +7476,7 @@ app.get('/api/reports/comparison/excel', requireStaffAccess, async (req, res) =>
   try {
     const db = getDb();
     const data = await computeComparisonReport(db, req.query, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Exported Comparison Report Excel: ${data.title}`);
+    await logActivity(db, req.session.user, 'VIEW', `Exported Comparison Report Excel: ${data.title}`, { category: 'Report', status: 'success' });
 
     const workbook = buildComparisonExcel(data);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -7932,7 +7947,7 @@ app.get('/api/reports/comparison/multi/preview', requireStaffAccess, async (req,
     const db = getDb();
     const configs = parseComparisonConfigs(req);
     const data = await computeMultiComparisonReport(db, configs, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Generated multi-comparison report (${data.results.length} configurations)`);
+    await logActivity(db, req.session.user, 'VIEW', `Generated multi-comparison report (${data.results.length} configurations)`, { category: 'Report', status: 'success' });
     res.json({
       title: data.title,
       generatedBy: data.generatedBy,
@@ -7957,7 +7972,7 @@ app.get('/api/reports/comparison/multi/pdf', requireStaffAccess, async (req, res
     const db = getDb();
     const configs = parseComparisonConfigs(req);
     const data = await computeMultiComparisonReport(db, configs, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Exported multi-comparison report PDF (${data.results.length} configurations)`);
+    await logActivity(db, req.session.user, 'VIEW', `Exported multi-comparison report PDF (${data.results.length} configurations)`, { category: 'Report', status: 'success' });
     renderMultiComparisonReportPdf(res, data);
   } catch (err) {
     console.error('❌ Multi-comparison PDF export error:', err);
@@ -7971,7 +7986,7 @@ app.get('/api/reports/comparison/multi/excel', requireStaffAccess, async (req, r
     const db = getDb();
     const configs = parseComparisonConfigs(req);
     const data = await computeMultiComparisonReport(db, configs, req.session.user);
-    await logActivity(db, req.session.user, 'VIEW', `Exported multi-comparison report Excel (${data.results.length} configurations)`);
+    await logActivity(db, req.session.user, 'VIEW', `Exported multi-comparison report Excel (${data.results.length} configurations)`, { category: 'Report', status: 'success' });
     const workbook = buildMultiComparisonExcel(data);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${safeFilename(data.title)}.xlsx"`);
@@ -7987,7 +8002,7 @@ app.get('/api/reports/comparison/multi/excel', requireStaffAccess, async (req, r
 app.get('/api/reports/activitylog/pdf', requireStaffAccess, async (req, res) => {
   try {
     const db = getDb();
-    const logs = await db.collection('activitylogs').find(activityLogFilterFor(req.session.user)).sort({ id: -1 }).toArray();
+    const logs = (await db.collection('activitylogs').find(activityLogFilterFor(req.session.user)).sort({ id: -1 }).toArray()).map(withAuditDefaults);
     const now = new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const isOwnTrailOnly = req.session.user && req.session.user.role === 'Staff';
     // Breakdown by `action` (ADD/UPDATE/DELETE/VIEW/LOGIN_SUCCESS/...) — chosen over `category`/`status`
@@ -8028,7 +8043,7 @@ app.get('/api/reports/activitylog/pdf', requireStaffAccess, async (req, res) => 
 app.get('/api/reports/activitylog/excel', requireStaffAccess, async (req, res) => {
   try {
     const db = getDb();
-    const logs = await db.collection('activitylogs').find(activityLogFilterFor(req.session.user)).sort({ id: -1 }).toArray();
+    const logs = (await db.collection('activitylogs').find(activityLogFilterFor(req.session.user)).sort({ id: -1 }).toArray()).map(withAuditDefaults);
     const isOwnTrailOnly = req.session.user && req.session.user.role === 'Staff';
 
     const workbook = new ExcelJS.Workbook();
@@ -8238,7 +8253,7 @@ app.post('/api/users', requireStaffAccess, async (req, res) => {
       institution: typeof req.body.institution === 'string' ? req.body.institution.trim() : '',
       position: typeof req.body.position === 'string' ? req.body.position.trim() : '', contactNumber: contact.value || '', password: passwordToStore, createdAt: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     }));
-    await logActivity(db, req.session.user, 'ADD', `User created: ${entry.name} (${entry.role}) — ${entry.email}`);
+    await logActivity(db, req.session.user, 'ADD', `User created: ${entry.name} (${entry.role}) — ${entry.email}`, { category: 'User Management', status: 'success' });
     // notifyUsers (notificationService.createNotification) already sends this through BOTH channels — an
     // in-app notification AND an e-mail to entry.email via the exact same sendNotificationEmails()/
     // buildMessage() transport/template every other notification e-mail in this app uses (CSPC-CIRL
@@ -8422,7 +8437,7 @@ app.patch('/api/users/:id', requireStaffAccess, async (req, res) => {
     ]);
     const updated = await db.collection('users').findOne({ id }, { projection: { password: 0 } });
     if (!updated) return res.status(404).json({ error: 'The user account you are trying to update could not be found.' });
-    await logActivity(db, req.session.user, 'EDIT', `User updated: ${updated.name} — role: ${updated.role}, status: ${updated.status}`);
+    await logActivity(db, req.session.user, 'EDIT', `User updated: ${updated.name} — role: ${updated.role}, status: ${updated.status}`, { category: 'User Management', status: 'success' });
     if (updateData.role !== undefined || updateData.status !== undefined) {
       await notifyUsers(db, [updated.email], {
         module: 'user',
@@ -8464,7 +8479,7 @@ app.delete('/api/users/:id', requireStaffAccess, async (req, res) => {
     }
     await db.collection('users').deleteOne({ id });
     deleteUploadedAvatar(db, target && target.avatarUrl); // their uploaded profile picture goes with the account
-    await logActivity(db, req.session.user, 'DELETE', `User deleted: ${target ? target.name + ' (' + target.email + ')' : 'ID #' + id}`);
+    await logActivity(db, req.session.user, 'DELETE', `User deleted: ${target ? target.name + ' (' + target.email + ')' : 'ID #' + id}`, { category: 'User Management', status: 'success' });
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Delete user error:', err);
@@ -8508,9 +8523,45 @@ app.delete('/api/users/:id', requireStaffAccess, async (req, res) => {
  *   correlation id, and the session id is already a stable, available way to tie together the few log lines
  *   (e.g. a failed attempt followed by the eventual successful one) one visit produces.
  */
+// Audit Trail Category/Status (2026-11-25): every logActivity() call now passes its own explicit category and
+// status. These helpers are only the FALLBACK for entries recorded before that (which stored neither, so
+// "User updated: …" etc. showed "—"): applied when entries are read (list/PDF/Excel) so older records display
+// a category too without rewriting them, and in logActivity() as a safety net for a future call that forgets.
+function inferAuditCategory(action, record) {
+  const a = String(action || '').toUpperCase();
+  const r = String(record || '');
+  if (/^(LOGIN|LOGOUT|GOOGLE_AUTH)/.test(a)) return 'Authentication';
+  if (a === 'FORBIDDEN') return 'Security';
+  if (/^AI_/.test(a)) return 'Analytics';
+  if (/^(User (created|updated|deleted)|Account activated)/i.test(r)) return 'User Management';
+  if (/report|export|preview/i.test(r)) return 'Report';
+  if (/achievement/i.test(r)) return 'Achievement';
+  if (/target/i.test(r)) return 'Target';
+  if (/college .*request|college request/i.test(r)) return 'College Request';
+  if (/document request/i.test(r)) return 'Document Request';
+  if (/partnership request|renewal request|MOA\/MOU submission|Google Docs/i.test(r)) return 'Partnership Request';
+  if (/partnership|activit|renewed/i.test(r)) return 'Partnership';
+  if (/calendar|event|meeting/i.test(r)) return 'Calendar';
+  if (/document|signature|e-sign|file/i.test(r)) return 'Document';
+  return 'System';
+}
+function withAuditDefaults(log) {
+  if (!log) return log;
+  return Object.assign({}, log, {
+    category: log.category === 'AI_INSIGHT' ? 'Analytics' : (log.category || inferAuditCategory(log.action, log.record)),
+    status: log.status || (/FAILED$/.test(String(log.action || '')) ? 'failure' : (/BLOCKED$|^FORBIDDEN$/.test(String(log.action || '')) ? 'blocked' : 'success'))
+  });
+}
+
 async function logActivity(db, user, action, record, extra) {
   try {
     const e = extra || {};
+    // Fall back to the current request's context when the caller didn't pass ip/userAgent/requestId
+    // (most call sites don't). Outside a request (startup jobs, schedulers) there is no store → stays unset.
+    const ctx = auditContext.current();
+    const ip = e.ip !== undefined ? e.ip : (ctx ? ctx.ip : undefined);
+    const userAgent = e.userAgent !== undefined ? e.userAgent : (ctx ? ctx.userAgent : undefined);
+    const requestId = e.requestId !== undefined ? e.requestId : (ctx ? ctx.requestId : undefined);
     // 'System' (the pre-existing, unchanged fallback for every other null-actor call site — an automatic
     // process acted, not a person) would be actively misleading for an Authentication event with no resolved
     // account: nobody and nothing "System" did anything — an unidentified visitor's login attempt failed.
@@ -8536,14 +8587,14 @@ async function logActivity(db, user, action, record, extra) {
       // The fields below are only ever present when a caller passes `extra` — an existing call site that
       // doesn't is completely unaffected (every property here is simply undefined, which the MongoDB driver
       // never writes as a key at all).
-      category: e.category,
-      status: e.status,
+      category: e.category || inferAuditCategory(action, record),
+      status: e.status || withAuditDefaults({ action }).status,
       targetType: e.targetType,
       targetId: e.targetId,
       details: e.details,
-      ip: e.ip,
-      userAgent: e.userAgent,
-      requestId: e.requestId
+      ip,
+      userAgent,
+      requestId
     }));
   } catch (err) {
     // Deliberately unchanged from the pre-existing behavior every one of the other ~30 call sites already
@@ -9048,7 +9099,7 @@ async function recomputePartnershipStatuses(db) {
     const expiredCount = toNotify.filter(t => t.status === 'Expired').length;
     const expiringCount = toNotify.length - expiredCount;
     await logActivity(db, null, 'EDIT',
-      `Automatic lifecycle check: ${toNotify.length} partnership(s) flagged (${expiringCount} newly expiring, ${expiredCount} newly expired)`);
+      `Automatic lifecycle check: ${toNotify.length} partnership(s) flagged (${expiringCount} newly expiring, ${expiredCount} newly expired)`, { category: 'Partnership', status: 'success' });
   }
 
   return toNotify.length;
@@ -9249,7 +9300,7 @@ app.get('/api/activitylogs', requireStaffAccess, async (req, res) => {
       .find(activityLogFilterFor(req.session.user))
       .sort({ _id: -1 })
       .toArray();
-    res.json(docs);
+    res.json(docs.map(withAuditDefaults));
   } catch (err) {
     console.error('❌ Activity logs list error:', err);
     res.status(500).json({ error: 'Unable to load the audit trail right now. Please try again.' });
@@ -10531,7 +10582,7 @@ app.post('/api/requests/:id/google-docs', requireStaffAccess, announce('request'
       createdAt: new Date().toISOString(),
       sharing: created.sharing
     }));
-    await logActivity(db, req.session.user, 'CREATE', `Google Docs ${kind} draft created for partnership request: ${request.institution} (#REQ-${String(id).padStart(3, '0')})`);
+    await logActivity(db, req.session.user, 'CREATE', `Google Docs ${kind} draft created for partnership request: ${request.institution} (#REQ-${String(id).padStart(3, '0')})`, { category: 'Partnership Request', status: 'success' });
 
     if (request.submittedByEmail) {
       const submitter = await db.collection('users').findOne({ email: request.submittedByEmail });
@@ -10582,7 +10633,7 @@ app.delete('/api/google-docs/:docId', requireStaffAccess, async (req, res) => {
     const doc = await googleDocsService.docsCollection(db).findOne({ id: parseInt(req.params.docId) });
     if (!doc) return res.status(404).json({ error: 'Draft not found.' });
     await googleDocsService.docsCollection(db).deleteOne({ id: doc.id });
-    await logActivity(db, req.session.user, 'DELETE', `Google Docs ${doc.kind} draft unlinked from partnership request #REQ-${String(doc.requestId).padStart(3, '0')}`);
+    await logActivity(db, req.session.user, 'DELETE', `Google Docs ${doc.kind} draft unlinked from partnership request #REQ-${String(doc.requestId).padStart(3, '0')}`, { category: 'Partnership Request', status: 'success' });
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Google Docs draft unlink error:', err);
@@ -11333,7 +11384,7 @@ app.post('/api/targets', requireStaffAccess, async (req, res) => {
       createdAt: now, updatedAt: now
     }));
     await logActivity(db, req.session.user, 'ADD',
-      `Target created: ${value.type === 'monthly' ? `${value.month}/${value.year}` : value.year} — ${value.targetCount} partnerships`);
+      `Target created: ${value.type === 'monthly' ? `${value.month}/${value.year}` : value.year} — ${value.targetCount} partnerships`, { category: 'Target', status: 'success' });
     // 2026-11 (email-for-every-notification audit): targets had no notification at all — same reasoning
     // as the new achievement notification above (staff-only feature, colleagues otherwise only find out
     // by noticing it on the Dashboard themselves). Excludes the actor.
@@ -11383,7 +11434,7 @@ app.patch('/api/targets/:id', requireStaffAccess, async (req, res) => {
     await db.collection('targets').updateOne({ id }, { $set: setFields });
     const updated = await db.collection('targets').findOne({ id });
     await logActivity(db, req.session.user, 'EDIT',
-      `Target updated: ${updated.type === 'monthly' ? `${updated.month}/${updated.year}` : updated.year} — now ${updated.targetCount} partnerships`);
+      `Target updated: ${updated.type === 'monthly' ? `${updated.month}/${updated.year}` : updated.year} — now ${updated.targetCount} partnerships`, { category: 'Target', status: 'success' });
     res.json({ success: true, target: { ...updated, progress: await computeTargetAccomplishment(db, updated) } });
   } catch (err) {
     console.error('❌ Failed to update target:', err);
@@ -11399,7 +11450,7 @@ app.delete('/api/targets/:id', requireAdmin, async (req, res) => {
     if (!existing) return res.status(404).json({ error: 'Target not found.' });
     await db.collection('targets').deleteOne({ id });
     await logActivity(db, req.session.user, 'DELETE',
-      `Target removed: ${existing.type === 'monthly' ? `${existing.month}/${existing.year}` : existing.year} — ${existing.targetCount} partnerships`);
+      `Target removed: ${existing.type === 'monthly' ? `${existing.month}/${existing.year}` : existing.year} — ${existing.targetCount} partnerships`, { category: 'Target', status: 'success' });
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Failed to delete target:', err);
@@ -11427,7 +11478,7 @@ app.post('/api/ai-insights', aiInsightsLimiter, requireStaffAccess, async (req, 
     // Only a real request (Generate / Refresh) is audited. The Reports page's automatic cache check on every
     // load never reaches the AI and used to add an audit entry each time, flooding the Audit Trail.
     if (req.body.generate || req.body.forceRefresh) await logActivity(db, req.session.user, 'AI_INSIGHT_REQUEST', `AI strategic insights requested (${result.cacheStatus || 'n/a'})`, {
-      category: 'AI_INSIGHT', status: outcome,
+      category: 'Analytics', status: outcome,
       details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
     });
     res.json(result);
@@ -11450,7 +11501,7 @@ app.post('/api/ai-insights/executive-briefing', aiInsightsLimiter, requireStaffA
     // Only a real request (Generate Briefing / Refresh) is audited. The Dashboard's automatic cache check on
     // every page load never reaches the AI and used to add an audit entry each time, flooding the Audit Trail.
     if (req.body.generate || req.body.forceRefresh) await logActivity(db, req.session.user, 'AI_BRIEFING_REQUEST', `Executive briefing requested (${result.cacheStatus || 'n/a'})`, {
-      category: 'AI_INSIGHT', status: outcome,
+      category: 'Analytics', status: outcome,
       details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
     });
     res.json(result);
@@ -11502,7 +11553,7 @@ app.post('/api/ai-insights/ask', aiInsightsLimiter, requireStaffAccess, async (r
     // value) and cache/outcome metadata, matching the no-raw-content audit convention already
     // established for the other two AI routes above.
     await logActivity(db, req.session.user, 'AI_ASK_REQUEST', `AI analytics question asked (intent: ${result.intent || 'none'}, ${outcome})`, {
-      category: 'AI_INSIGHT', status: outcome,
+      category: 'Analytics', status: outcome,
       details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus, intent: result.intent }
     });
     res.json(result);
@@ -11543,7 +11594,7 @@ app.post('/api/targets/:id/ai-suggestion', aiInsightsLimiter, requireStaffAccess
 
     const outcome = result.aiBlocked ? 'blocked' : (result.error ? 'error' : (result.suggestion ? 'success' : 'cache_miss'));
     await logActivity(db, req.session.user, 'AI_INSIGHT_REQUEST', `AI target suggestion requested for ${target.year} (${result.cacheStatus || 'n/a'})`, {
-      category: 'AI_INSIGHT', status: outcome,
+      category: 'Analytics', status: outcome,
       details: { modelIdentifier: process.env.GEMINI_MODEL || aiInsightService.GEMINI_MODEL_DEFAULT, cacheStatus: result.cacheStatus }
     });
     res.json(result);
@@ -11788,7 +11839,7 @@ app.post('/api/achievements', requireStaffAccess, (req, res) => {
         await db.collection('achievements').updateOne({ id: entry.id }, { $set: saved });
         Object.assign(entry, saved);
       }
-      await logActivity(db, req.session.user, 'ADD', `Achievement added: ${entry.title}`);
+      await logActivity(db, req.session.user, 'ADD', `Achievement added: ${entry.title}`, { category: 'Achievement', status: 'success' });
       // 2026-11 (email-for-every-notification audit): achievements had no notification at all — the only
       // other viewers are Admin/Staff colleagues (this section is staff-only), so this just lets them
       // know without having to notice it themselves on the Dashboard. Excludes the actor.
@@ -11894,7 +11945,7 @@ app.patch('/api/achievements/:id', requireStaffAccess, (req, res) => {
       }
       await db.collection('achievements').updateOne({ id }, { $set: patch });
       const updated = await db.collection('achievements').findOne({ id });
-      await logActivity(db, req.session.user, 'EDIT', `Achievement updated: ${updated.title}`);
+      await logActivity(db, req.session.user, 'EDIT', `Achievement updated: ${updated.title}`, { category: 'Achievement', status: 'success' });
       res.json({ success: true, achievement: updated });
     } catch (err) {
       console.error('❌ Achievement edit error:', err);
@@ -11924,7 +11975,7 @@ app.delete('/api/achievements/:id', requireStaffAccess, async (req, res) => {
       await deleteAchievementFile(db, existing);
     }
     await db.collection('achievements').deleteOne({ id });
-    await logActivity(db, req.session.user, 'DELETE', `Achievement deleted: ${existing.title}`);
+    await logActivity(db, req.session.user, 'DELETE', `Achievement deleted: ${existing.title}`, { category: 'Achievement', status: 'success' });
     res.json({ success: true, message: 'Achievement deleted successfully.' });
   } catch (err) {
     console.error('❌ Achievement delete error:', err);

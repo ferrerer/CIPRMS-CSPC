@@ -284,26 +284,78 @@
 
         <!-- Document Request Details Modal -->
         <div class="modal fade" id="dr-detail-modal" tabindex="-1" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title"><i class="ri-file-shield-2-line me-2 text-primary"></i>Document Request Details</h5>
+                        <h5 class="modal-title"><i class="ri-file-shield-2-line me-2 text-primary"></i>Document Request Details <span class="text-muted fw-normal fs-14 ms-1" id="drd-id">—</span></h5>
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
-                    <div class="modal-body">
-                        <div class="row g-3">
-                            <div class="col-6"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Request #</label><div class="fw-bold fs-13" id="drd-id">—</div></div>
-                            <div class="col-6"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Document Type</label><div class="fw-bold fs-13" id="drd-type">—</div></div>
-                            <div class="col-6"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Institution</label><div class="fw-bold fs-13" id="drd-inst">—</div></div>
-                            <div class="col-6"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Date Submitted</label><div class="fw-bold fs-13" id="drd-date">—</div></div>
-                            <div class="col-6"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Last Updated</label><div class="fw-bold fs-13" id="drd-updated">—</div></div>
-                            <div class="col-6"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Current Stage</label><div class="fw-bold fs-13" id="drd-stage">—</div></div>
-                            <div class="col-6"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Administrator</label><div class="fw-bold fs-13" id="drd-admin">—</div></div>
-                            <div class="col-12"><label class="input-label text-muted fs-10 fw-bold text-uppercase d-block mb-1">Workflow Progress</label><div id="drd-progress" class="d-flex flex-wrap gap-3">—</div></div>
-                            <div class="col-12"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Purpose</label><div class="text-muted fs-13" id="drd-purpose">—</div></div>
-                            <div class="col-12"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Remarks (CIRL)</label><div class="text-muted fs-13" id="drd-remark">—</div></div>
-                            <div class="col-12"><label class="input-label text-muted fs-10 fw-bold text-uppercase">Attached Documents</label><div id="drd-docs">—</div></div>
+                    <div class="modal-body drd">
+                        <!-- Header: institution + dates on the left, current stage on the right -->
+                        <div class="drd-head">
+                            <div class="min-w-0">
+                                <div class="drd-label">Institution</div>
+                                <div class="drd-inst" id="drd-inst">—</div>
+                                <div class="drd-sub">
+                                    <span><i class="ri-calendar-line me-1"></i>Submitted <span id="drd-date">—</span></span>
+                                    <span><i class="ri-history-line me-1"></i>Updated <span id="drd-updated">—</span></span>
+                                </div>
+                            </div>
+                            <div class="text-end flex-shrink-0">
+                                <div class="drd-label">Current Stage</div>
+                                <div id="drd-stage">—</div>
+                            </div>
                         </div>
+
+                        <!-- Workflow stepper -->
+                        <div class="drd-section">Workflow Progress</div>
+                        <div id="drd-progress">—</div>
+
+                        <!-- Requested documents, one per line -->
+                        <div class="drd-section">Documents Requested <span class="text-muted fw-normal" id="drd-type-count"></span></div>
+                        <ol class="drd-doclist" id="drd-type"></ol>
+
+                        <!-- Other details -->
+                        <div class="drd-section">Other Details</div>
+                        <div class="row g-3">
+                            <div class="col-sm-6"><div class="drd-label">Purpose</div><div class="drd-box" id="drd-purpose">—</div></div>
+                            <div class="col-sm-6"><div class="drd-label">Remarks (CIRL)</div><div class="drd-box" id="drd-remark">—</div></div>
+                            <div class="col-sm-6"><div class="drd-label">Handled By</div><div class="drd-value" id="drd-admin">—</div></div>
+                            <div class="col-sm-6"><div class="drd-label">Attached Documents</div><div id="drd-docs">—</div></div>
+                        </div>
+                        <style>
+                            /* Document Request Details (2026-11-25): grouped layout — same style as the partner's Request Details. */
+                            .drd { font-size: .875rem; }
+                            .drd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+                                padding: .9rem 1rem; border-radius: .5rem; background: var(--vz-light, #f3f6f9); }
+                            .drd-inst { font-size: 1.05rem; font-weight: 600; color: var(--vz-heading-color, #212529); word-break: break-word; }
+                            .drd-sub { display: flex; flex-wrap: wrap; gap: .25rem 1rem; color: var(--vz-secondary-color, #878a99); font-size: .8125rem; margin-top: .2rem; }
+                            .drd-label { font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+                                color: var(--vz-secondary-color, #878a99); margin-bottom: .25rem; }
+                            .drd-value { font-weight: 500; }
+                            .drd-section { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                                color: var(--vz-primary, #405189); border-bottom: 1px solid var(--vz-border-color, #e9ebec);
+                                padding-bottom: .35rem; margin: 1.1rem 0 .75rem; }
+                            .drd-box { white-space: pre-wrap; word-break: break-word; padding: .5rem .75rem; border-radius: .375rem;
+                                border: 1px solid var(--vz-border-color, #e9ebec); min-height: 2.25rem; }
+                            .drd-doclist { margin: 0; padding-left: 1.25rem; }
+                            .drd-doclist li { padding: .3rem 0; border-bottom: 1px dashed var(--vz-border-color, #e9ebec); font-weight: 500; }
+                            .drd-doclist li:last-child { border-bottom: 0; }
+                            /* Stepper: circles joined by a line; done = green check, current = blue ring, upcoming = grey. */
+                            .drd-steps { display: flex; list-style: none; margin: 0; padding: 0; }
+                            .drd-step { flex: 1 1 0; position: relative; text-align: center; font-size: .75rem; color: var(--vz-secondary-color, #878a99); }
+                            .drd-step::before { content: ""; position: absolute; top: 13px; left: -50%; width: 100%; height: 2px; background: var(--vz-border-color, #e9ebec); z-index: 0; }
+                            .drd-step:first-child::before { display: none; }
+                            .drd-step .dot { position: relative; z-index: 1; width: 28px; height: 28px; margin: 0 auto .35rem; border-radius: 50%;
+                                display: flex; align-items: center; justify-content: center; font-size: 15px;
+                                background: var(--vz-card-bg, #fff); border: 2px solid var(--vz-border-color, #ced4da); color: var(--vz-secondary-color, #878a99); }
+                            .drd-step.done { color: var(--vz-success, #0ab39c); }
+                            .drd-step.done::before, .drd-step.current::before { background: var(--vz-success, #0ab39c); }
+                            .drd-step.done .dot { background: var(--vz-success, #0ab39c); border-color: var(--vz-success, #0ab39c); color: #fff; }
+                            .drd-step.current { color: var(--vz-primary, #405189); font-weight: 600; }
+                            .drd-step.current .dot { border-color: var(--vz-primary, #405189); color: var(--vz-primary, #405189); box-shadow: 0 0 0 4px rgba(64, 81, 137, .12); }
+                            @media (max-width: 575.98px) { .drd-step { font-size: .65rem; } .drd-step .dot { width: 24px; height: 24px; font-size: 13px; } .drd-step::before { top: 11px; } }
+                        </style>
                     </div>
                     <div class="modal-footer" id="drd-footer">
                         <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
@@ -408,13 +460,14 @@
     }
 
     function statusBadgeClass(status) {
-        if (status === 'Approved' || status === 'Fulfilled' || status === 'Completed') return 'bg-success-subtle text-success';
+        if (status === 'Approved' || status === 'Fulfilled') return 'bg-success-subtle text-success';
         if (status === 'Rejected') return 'bg-danger-subtle text-danger';
         if (status === 'Withdrawn') return 'bg-secondary-subtle text-secondary';
         if (status === 'Draft') return 'bg-light text-dark';
         if (status === 'Under Review' || status === 'Preparing') return 'bg-info-subtle text-info';
         if (status === 'Awaiting for Approval') return 'bg-primary-subtle text-primary';
-        if (status === 'Release') return 'bg-dark-subtle text-dark';
+        if (status === 'Release') return 'bg-release-subtle text-release';
+        if (status === 'Completed') return 'bg-completed-subtle text-completed';
         return 'bg-warning-subtle text-warning'; // Pending / Received and any other undecided state
     }
 
@@ -455,15 +508,14 @@
         // including it is fully done, so nothing should render as merely
         // "current" (in progress) the way an intermediate stage does.
         var isFinal = canonicalStatus === 'Completed';
-        return DR_WORKFLOW_STATUSES.map(function (s, i) {
+        var STEP_LABEL = { 'Awaiting for Approval': 'For Approval', 'Release': 'For Release' };
+        return '<ol class="drd-steps">' + DR_WORKFLOW_STATUSES.map(function (s, i) {
             var done = isFinal ? true : i < idx;
             var current = !isFinal && i === idx;
-            var icon = done ? '<i class="ri-checkbox-circle-fill text-success me-1"></i>'
-                : current ? '<i class="ri-record-circle-fill text-primary me-1"></i>'
-                : '<i class="ri-checkbox-blank-circle-line text-muted me-1"></i>';
-            var cls = current ? 'fw-semibold text-primary' : (done ? 'text-success' : 'text-muted');
-            return '<div class="fs-13 ' + cls + '">' + icon + escapeHtml(s) + '</div>';
-        }).join('');
+            var icon = done ? '<i class="ri-check-line"></i>' : (current ? '<i class="ri-loader-4-line"></i>' : (i + 1));
+            return '<li class="drd-step' + (done ? ' done' : current ? ' current' : '') + '" title="' + escapeHtml(s) + '">' +
+                '<div class="dot">' + icon + '</div>' + escapeHtml(STEP_LABEL[s] || s) + '</li>';
+        }).join('') + '</ol>';
     }
 
     function fmtWhen(iso, fallback) {
@@ -494,7 +546,7 @@
                 ? '<button type="button" class="btn btn-sm btn-soft-primary" title="Preview: ' + escapeHtml(it.filename) + '" onclick="openDraftPreviewModal(\'' + key + '\', ' + idx + ')"><i class="ri-eye-line"></i></button>'
                 : '';
             return '<div class="d-flex align-items-center gap-1 mb-1">' +
-                '<span class="text-truncate fs-12" style="max-width:100px;" title="' + escapeHtml(it.filename) + '">' + escapeHtml(it.filename) + '</span>' +
+                '<span class="text-truncate fs-12" style="max-width:220px;" title="' + escapeHtml(it.filename) + '">' + escapeHtml(it.filename) + '</span>' +
                 previewBtn +
                 '<a href="' + escapeHtml(it.link) + '" download="' + escapeHtml(it.filename) + '" class="btn btn-sm btn-soft-success" title="Download: ' + escapeHtml(it.filename) + '"><i class="ri-download-2-line"></i></a>' +
                 '</div>';
@@ -735,7 +787,7 @@
                 '<td class="text-muted">#' + r.id + '</td>' +
                 '<td>' + escapeHtml(r.institution) + '</td>' +
                 '<td style="max-width:200px;">' + renderExpandable(r.documentType, 60) + '</td>' +
-                '<td><span class="badge ' + statusBadgeClass(cs) + '">' + cs + '</span></td>' +
+                '<td><span class="badge table-pill ' + statusBadgeClass(cs) + '">' + escapeHtml(cs) + '</span></td>' +
                 '<td>' + (r.date || '—') + '</td>' +
                 '<td>' + fmtWhen(r.updatedAt, r.date) + '</td>' +
                 '<td>' + (r.decidedBy || '—') + '</td>' +
@@ -750,13 +802,19 @@
         currentDRDetailId = id;
         var cs = r.canonicalStatus || r.status;
         document.getElementById('drd-id').textContent = '#' + r.id;
-        document.getElementById('drd-type').textContent = r.documentType || '—';
+        // One requested document per line (documentTypes array; older requests only have the joined string).
+        var docTypes = (Array.isArray(r.documentTypes) && r.documentTypes.length) ? r.documentTypes
+            : (r.documentType ? [r.documentType] : []);
+        document.getElementById('drd-type').innerHTML = docTypes.length
+            ? docTypes.map(function (t) { return '<li>' + escapeHtml(t) + '</li>'; }).join('')
+            : '<li class="text-muted">—</li>';
+        document.getElementById('drd-type-count').textContent = docTypes.length > 1 ? '(' + docTypes.length + ')' : '';
         document.getElementById('drd-inst').textContent = r.institution || '—';
         // No Status field here: it is already the Status column of the My Document Requests table (and Workflow Progress below).
         document.getElementById('drd-date').textContent = r.date || '—';
         document.getElementById('drd-updated').textContent = fmtWhen(r.updatedAt, r.date);
-        document.getElementById('drd-stage').textContent = DR_STAGE_LABEL[cs] || cs;
-        document.getElementById('drd-stage').className = 'fs-13 ' + stageTextClass(cs).replace('fw-semibold', 'fw-bold');
+        // Current stage as the same status pill the table uses.
+        document.getElementById('drd-stage').innerHTML = '<span class="badge table-pill ' + statusBadgeClass(cs) + '">' + escapeHtml(DR_STAGE_LABEL[cs] || cs) + '</span>';
         document.getElementById('drd-admin').textContent = r.decidedBy || '—';
         document.getElementById('drd-progress').innerHTML = drProgressChecklistHtml(cs);
         document.getElementById('drd-purpose').textContent = r.notes || '—';
@@ -951,7 +1009,7 @@
             body.innerHTML = docs.map(function (d) {
                 var badge = d.status === 'Needs Review' ? 'bg-warning-subtle text-warning' : 'bg-success-subtle text-success';
                 var label = d.status === 'Needs Review' ? 'Pending Verification' : 'Verified';
-                return '<tr class="doc-file-row"><td>' + escapeHtml(d.title) + '</td><td><span class="badge ' + badge + '">' + label + '</span></td></tr>';
+                return '<tr class="doc-file-row"><td>' + escapeHtml(d.title) + '</td><td><span class="badge table-pill ' + badge + '">' + label + '</span></td></tr>';
             }).join('');
         });
     }
@@ -965,15 +1023,10 @@
     var myCollegeReports = [];
     var crOpenAfterLoad = null;
     var CR_MAX_BYTES = 10 * 1024 * 1024;
-    var CR_STATUS = {
-        'Pending': { label: 'Sent to CIRL', cls: 'bg-warning-subtle text-warning' },
-        'Under Review': { label: 'CIRL needs more information', cls: 'bg-info-subtle text-info' },
-        'Approved': { label: 'Recorded in Registry', cls: 'bg-success-subtle text-success' },
-        'Rejected': { label: 'Not recorded', cls: 'bg-danger-subtle text-danger' }
-    };
+    // Status shown exactly like the partner's and Admin's pages: Pending / Under Review / Approved / Rejected,
+    // same pill and colors (statusBadgeClass) — no college-report-specific wording.
     function crStatusBadge(s) {
-        var m = CR_STATUS[s] || { label: s || '—', cls: 'bg-light text-body' };
-        return '<span class="badge ' + m.cls + '">' + escapeHtml(m.label) + '</span>';
+        return '<span class="badge table-pill ' + statusBadgeClass(s) + '">' + escapeHtml(s || '—') + '</span>';
     }
     function crRef(id) { return '#REQ-' + String(id).padStart(3, '0'); }
     function crDate(v) {
@@ -1096,7 +1149,7 @@
         CIPRMS.api('/api/requests/' + id + '/documents', { method: 'POST', body: fd, quiet: true }).then(function (res) {
             btn.disabled = false;
             if (!res.ok) { showToast(res.error || 'Could not send.', '#f06548'); return; }
-            showToast('Sent to CIRL.', '#0ab39c');
+            showToast('Sent to CIRL. Status: Pending.', '#0ab39c');
             loadCollegeReports();
         });
     }

@@ -139,13 +139,13 @@
       });
   }
   var CDR_BADGE = {
-      'Pending': 'bg-secondary-subtle text-secondary',
+      'Pending': 'bg-warning-subtle text-warning',
       'Submitted': 'bg-info-subtle text-info',
-      'Returned for Revision': 'bg-warning-subtle text-warning',
+      'Returned for Revision': 'bg-danger-subtle text-danger',
       'Completed': 'bg-success-subtle text-success'
   };
   function cdrBadge(status) {
-      return '<span class="badge ' + (CDR_BADGE[status] || 'bg-secondary-subtle text-secondary') + '">' + escapeHtml(status) + '</span>';
+      return '<span class="badge table-pill ' + (CDR_BADGE[status] || 'bg-secondary-subtle text-secondary') + '">' + escapeHtml(status) + '</span>';
   }
   function fmtDate(iso) {
       if (!iso) return '';

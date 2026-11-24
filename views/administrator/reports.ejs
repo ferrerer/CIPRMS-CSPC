@@ -111,10 +111,6 @@
     .aud-filter-item .form-control[type=date] { width: auto; }
     /* Filters and search are normal-size controls — same as User Management's role filter and search box. */
     .aud-filter-clear { flex: 0 0 auto; }
-    .aud-clear-link { color: #000; text-decoration: none; font-size: .875rem; font-weight: 500; padding: .47rem .9rem;
-      border: 1px solid #adb5bd; border-radius: var(--vz-border-radius-sm, .2rem); background: #e9ecef; }
-    .aud-clear-link:hover, .aud-clear-link:focus { color: #000; text-decoration: none; background: #dee2e6; border-color: #868e96; }
-    [data-bs-theme="dark"] .aud-clear-link { color: #fff; background: #3a4252; border-color: #5c6577; }
     .aud-filter-search { flex: 0 0 320px; max-width: 100%; margin-left: auto; display: flex; align-items: center; }
     .aud-filter-search > .search-box { flex: 1 1 auto; min-width: 0; }
     @media (max-width: 575.98px) { .aud-filter-search { flex: 1 1 100%; max-width: none; margin-left: 0; } }
@@ -702,7 +698,7 @@
                                                      ADD/EDIT/DELETE/etc. rows have no category/status and simply don't match either filter, exactly
                                                      like a Role filter already didn't match a legacy record with no stored email. -->
                                                 <!-- One compact row (same layout as Monitoring's filters): Action, Category, Status, Role, Date
-                                                     From/To, a boxed Clear, and Search (label on its left) at the right end. -->
+                                                     From/To, Clear Filters (same button as Monitoring), and Search (label on its left) at the right end. -->
                                                 <div class="aud-filter-row mb-3">
                                                     <div class="aud-filter-item aud-filter-wide">
                                                         <label class="form-label fs-12 mb-1" for="audit-filter-action">Action</label>
@@ -728,7 +724,19 @@
                                                         <select id="audit-filter-category" class="form-select" onchange="applyAuditFilters()">
                                                             <option value="">All Categories</option>
                                                             <option value="Authentication">Authentication</option>
+                                                            <option value="User Management">User Management</option>
+                                                            <option value="Partnership">Partnership</option>
+                                                            <option value="Partnership Request">Partnership Request</option>
+                                                            <option value="Document Request">Document Request</option>
+                                                            <option value="College Request">College Request</option>
+                                                            <option value="Document">Document</option>
+                                                            <option value="Report">Report</option>
+                                                            <option value="Analytics">Analytics</option>
+                                                            <option value="Achievement">Achievement</option>
+                                                            <option value="Target">Target</option>
+                                                            <option value="Calendar">Calendar</option>
                                                             <option value="Security">Security</option>
+                                                            <option value="System">System</option>
                                                         </select>
                                                     </div>
                                                     <div class="aud-filter-item">
@@ -759,7 +767,7 @@
                                                         <input type="date" id="audit-filter-to" class="form-control" onchange="applyAuditFilters()">
                                                     </div>
                                                     <div class="aud-filter-clear">
-                                                        <button type="button" class="btn btn-link btn-sm aud-clear-link" onclick="resetAuditFilters()" title="Clear all filters">Clear</button>
+                                                        <button type="button" class="btn btn-soft-primary" onclick="resetAuditFilters()" title="Clear all filters"><i class="ri-refresh-line me-1"></i>Clear Filters</button>
                                                     </div>
                                                     <div class="aud-filter-search">
                                                         <div class="search-box">
@@ -1084,7 +1092,7 @@
                     { name: 'Record / Details', width: '21%' },
                     { name: 'Performed By', width: '10%', formatter: (cell) => cell || 'Unknown' },
                     { name: 'Role', width: '11%', formatter: (cell) => cell ? gridjs.html(`<span class="badge ${roleBadge[cell] || 'bg-secondary-subtle text-secondary'}">${formatRole(cell)}</span>`) : '—' },
-                    { name: 'IP Address', width: '10%', formatter: (cell) => cell || '—' },
+                    { name: 'IP Address', width: '10%', formatter: (cell) => (cell === '::1' ? '127.0.0.1 (localhost)' : (cell || '—')) },
                     { name: 'Date & Time', width: '12%' }
                 ],
                 data: logs.map((a, i) => [i + 1, a.action, a.category, a.status, displayRoleText(a.record), a.by, a.role, a.ip, a.date]),

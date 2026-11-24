@@ -361,6 +361,9 @@
     .req-legend-item::before { content: ""; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; margin-right: .4rem; }
     /* Status indicator: a small dot in the status's own color before the text (Pending, Under Review, Approved…). */
     .req-fixed-cols .req-status-cell .badge::before { content: ""; display: inline-block; width: .55rem; height: .55rem; border-radius: 50%; background: currentColor; margin-right: .4rem; vertical-align: middle; position: relative; top: -1px; }
+    /* View modal's Status: plain colored text (no box, no dot), same size/weight as the Requests/Monitoring table. */
+    .req-status-plain .badge { background: transparent !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; font-size: .8125rem; font-weight: 500; }
+    .req-status-plain .badge::before { content: none; }
     /* Document Requests' Status dropdown: same larger text as the status badges above. */
     .req-fixed-cols .dr-status-select { font-size: .8125rem; padding-top: .3rem; padding-bottom: .3rem; }
     .dr-status-select {
@@ -619,7 +622,7 @@
                           </select>
                           <span class="text-muted fs-12 ms-auto" id="pr-count"></span>
                           <% if (typeof user !== 'undefined' && user && ['Administrator', 'Staff'].includes(user.role)) { %>
-                          <button type="button" class="btn btn-sm btn-primary" id="pr-initiate-btn" onclick="openPRInitiateModal()">
+                          <button type="button" class="btn btn-sm btn-success" id="pr-initiate-btn" onclick="openPRInitiateModal()">
                             <i class="ri-add-line me-1"></i>Request Partnership
                           </button>
                           <% } %>
@@ -671,7 +674,7 @@
                           <span class="text-muted fs-12" id="dr-count"></span>
                           <!-- Same layout as the Partnership / College Requests tabs: the button sits right before the search bar.
                                Document Requests tab only (Administrator/Staff; LAU never reaches this tab). -->
-                          <button type="button" class="btn btn-sm btn-primary" id="dr-esign-btn" onclick="openEsignModal()">
+                          <button type="button" class="btn btn-sm btn-success" id="dr-esign-btn" onclick="openEsignModal()">
                             <i class="ri-quill-pen-line me-1"></i>Add E-Sign
                           </button>
                         </div>
@@ -716,7 +719,7 @@
                             <option>Completed</option>
                           </select>
                           <span class="text-muted fs-12 ms-auto me-2" id="cdr-count"></span>
-                          <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#cdr-create-modal">
+                          <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#cdr-create-modal">
                             <i class="ri-add-line align-bottom me-1"></i> New Request
                           </button>
                         </div>
@@ -1438,8 +1441,8 @@
         'Received': 'bg-warning-subtle text-warning',
         'Preparing': 'bg-info-subtle text-info',
         'Awaiting for Approval': 'bg-primary-subtle text-primary',
-        'Release': 'bg-dark-subtle text-dark',
-        'Completed': 'bg-success-subtle text-success'
+        'Release': 'bg-release-subtle text-release',
+        'Completed': 'bg-completed-subtle text-completed'
       };
       return m[s] || 'bg-secondary-subtle text-secondary';
     }
@@ -2110,7 +2113,7 @@
           </div>
           <div class="col-sm-6">
             <p class="detail-label">Status</p>
-            <div>${statusBadge(r.status || 'Pending')}</div>
+            <div class="req-status-cell req-status-plain">${statusBadge(r.status || 'Pending')}</div>
           </div>
         </div>
         ${notes !== '—' ? `
@@ -2120,7 +2123,7 @@
         <div class="d-flex align-items-center justify-content-between border rounded p-3 mb-3">
           <div>
             <p class="detail-label mb-1">Draft & Supporting Documents</p>
-            <p class="text-muted fs-12 mb-0">${(r.attachmentLink ? 1 : 0) + (r.supportingDocuments || []).length} version(s) on file</p>
+            <p class="text-muted fs-12 mb-0">${draftVersionCount(r)} version(s) on file</p>
           </div>
           <button type="button" class="btn btn-soft-primary btn-sm" onclick="openDraftModal('${uid}')">
             <i class="ri-file-list-3-line me-1"></i>View Draft
@@ -2262,7 +2265,7 @@
     var ROLE_LABEL = {
       'Administrator': 'Administrator', 'Staff': 'CIRL Staff',
       'Auth. Personnel': 'College Dean', 'potential_partner': 'Partner',
-      'Requester': 'Requester'
+      'Requester': 'Requester', 'LAU': 'LAU'
     };
 
     function fileKind(filename, mime) {
@@ -2448,7 +2451,7 @@
         ${avatar}
         <div class="flex-grow-1 border rounded p-3 draft-card">
           ${header}
-          <div class="fs-13 fw-medium mt-1">${escapeHtml(item.filename)}${sizeStr ? ` <span class="text-muted fs-12">(${sizeStr})</span>` : ''}${item.linked ? ' <span class="badge bg-info-subtle text-info fs-10"><i class="ri-link me-1"></i>Linked from Document Library</span>' : ''}</div>
+          <div class="fs-13 fw-medium mt-1">${escapeHtml(item.filename)}${sizeStr ? ` <span class="text-muted fs-12">(${sizeStr})</span>` : ''}${item.linked ? ' <span class="badge bg-info-subtle text-info fs-10"><i class="ri-link me-1"></i>Linked from Document Library</span>' : ''}${item.internal ? ' <span class="badge bg-secondary-subtle text-secondary fs-10" title="Sent through the LAU review — not visible to the partner"><i class="ri-lock-line me-1"></i>Internal (LAU)</span>' : ''}</div>
           ${item.note ? `<div class="fs-13 text-muted mt-1 fst-italic">"${escapeHtml(item.note)}"</div>` : ''}
           <div class="d-flex align-items-center flex-wrap gap-2 mt-2">
             ${previewBtn}
@@ -2467,18 +2470,42 @@
           link: r.attachmentLink, note: 'Initial submission', fileType: '', fileSize: 0
         });
       }
+      const fmtWhen = (v) => v
+        ? new Date(v).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : '—';
+      const later = [];
       (r.supportingDocuments || []).forEach(d => {
-        items.push({
+        later.push({
           uploadedBy: d.uploadedBy || 'Unknown',
           role: d.uploaderRole || 'Reviewer',
-          when: d.uploadedAt
-            ? new Date(d.uploadedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
-            : '—',
+          when: fmtWhen(d.uploadedAt), at: d.uploadedAt || '',
           filename: d.originalFilename || 'Document', link: d.fileLink,
           note: d.note || '', fileType: d.fileType, fileSize: d.fileSize
         });
       });
-      return items;
+      // Files sent through the LAU review (2026-11-25): they live in r.lauReviews (internal — the server only
+      // sends that field to Admin/Staff/LAU, never to the partner), so they were missing from this draft
+      // list and its version count. Only entries with an actual file count as a draft version.
+      lauDraftFiles(r).forEach(d => {
+        later.push({
+          uploadedBy: d.submittedBy || 'LAU',
+          role: d.authorRole || 'LAU',
+          when: fmtWhen(d.submittedAt), at: d.submittedAt || '',
+          filename: d.originalFilename || 'Document', link: d.fileLink,
+          note: [d.status ? 'LAU review: ' + d.status : '', d.note || ''].filter(Boolean).join(' — '),
+          fileType: d.fileType, fileSize: d.fileSize, internal: true
+        });
+      });
+      later.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      return items.concat(later);
+    }
+
+    // LAU review entries that carry a file (a status/note-only entry is not a draft version).
+    function lauDraftFiles(r) {
+      return (r.lauReviews || []).filter(d => d && d.fileLink);
+    }
+    function draftVersionCount(r) {
+      return (r.attachmentLink ? 1 : 0) + (r.supportingDocuments || []).length + lauDraftFiles(r).length;
     }
 
     function renderDraftTimeline(r) {
@@ -2860,6 +2887,7 @@
           if (!r.lauReviews) r.lauReviews = [];
           r.lauReviews.push(res.data.review);
           renderLauReviewList(r);
+          renderDraftTimeline(r);   // a file sent here is also a draft version (see buildDraftTimelineItems)
         }
         fileInput.value = '';
         noteInput.value = '';
@@ -3392,9 +3420,9 @@
     var CDR_TOTAL_COUNT = 0;
     var CDR_DEANS = [];
     var CDR_BADGE = {
-      'Pending': 'bg-secondary-subtle text-secondary',
+      'Pending': 'bg-warning-subtle text-warning',
       'Submitted': 'bg-info-subtle text-info',
-      'Returned for Revision': 'bg-warning-subtle text-warning',
+      'Returned for Revision': 'bg-danger-subtle text-danger',
       'Completed': 'bg-success-subtle text-success'
     };
     // Legends: the text-color class only (no box), so the dot and label match the status column exactly.

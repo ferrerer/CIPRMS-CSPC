@@ -204,18 +204,56 @@
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
-                        <div id="pr-details-summary" class="row g-2 fs-13 mb-0">
-                            <div class="col-6"><span class="text-muted">Institution</span><div class="fw-semibold" id="pr-det-inst"></div></div>
-                            <div class="col-6"><span class="text-muted">Country</span><div class="fw-semibold" id="pr-det-country"></div></div>
-                            <div class="col-4"><span class="text-muted">Agreement Type</span><div id="pr-det-type"></div></div>
-                            <div class="col-4"><span class="text-muted">Nature</span><div id="pr-det-nature"></div></div>
-                            <div class="col-4"><span class="text-muted">Category</span><div id="pr-det-category"></div></div>
-                            <div class="col-4"><span class="text-muted">Status</span><div id="pr-det-status"></div></div>
-                            <div class="col-4"><span class="text-muted">Proposed Start</span><div id="pr-det-start"></div></div>
-                            <div class="col-4"><span class="text-muted">Proposed End</span><div id="pr-det-end"></div></div>
-                            <div class="col-12"><span class="text-muted">Notes</span><div id="pr-det-notes"></div></div>
-                            <div class="col-12"><span class="text-muted">Started by</span><div id="pr-det-initiator"></div></div>
+                        <div id="pr-details-summary" class="prd">
+                            <!-- Header: institution + country on the left, status on the right -->
+                            <div class="prd-head">
+                                <div class="min-w-0">
+                                    <div class="prd-label">Institution</div>
+                                    <div class="prd-inst" id="pr-det-inst"></div>
+                                    <div class="prd-sub"><i class="ri-map-pin-line me-1"></i><span id="pr-det-country"></span></div>
+                                </div>
+                                <div class="text-end flex-shrink-0">
+                                    <div class="prd-label">Status</div>
+                                    <div id="pr-det-status"></div>
+                                </div>
+                            </div>
+                            <!-- Agreement details -->
+                            <div class="prd-section">Agreement</div>
+                            <div class="row g-3">
+                                <div class="col-sm-4"><div class="prd-label">Agreement Type</div><div class="prd-value" id="pr-det-type"></div></div>
+                                <div class="col-sm-4"><div class="prd-label">Nature</div><div class="prd-value" id="pr-det-nature"></div></div>
+                                <div class="col-sm-4"><div class="prd-label">Category</div><div class="prd-value" id="pr-det-category"></div></div>
+                            </div>
+                            <!-- Proposed validity -->
+                            <div class="prd-section">Proposed Validity</div>
+                            <div class="row g-3">
+                                <div class="col-sm-4"><div class="prd-label">Start</div><div class="prd-value" id="pr-det-start"></div></div>
+                                <div class="col-sm-4"><div class="prd-label">End</div><div class="prd-value" id="pr-det-end"></div></div>
+                                <div class="col-sm-4"><div class="prd-label">Duration</div><div class="prd-value" id="pr-det-duration"></div></div>
+                            </div>
+                            <!-- Notes + who started it -->
+                            <div class="prd-section">Other Details</div>
+                            <div class="row g-3">
+                                <div class="col-sm-8"><div class="prd-label">Notes</div><div class="prd-notes" id="pr-det-notes"></div></div>
+                                <div class="col-sm-4"><div class="prd-label">Started By</div><div class="prd-value" id="pr-det-initiator"></div></div>
+                            </div>
                         </div>
+                        <style>
+                            /* Request Details (2026-11-25): grouped, labelled layout instead of a loose grid. */
+                            .prd { font-size: .875rem; }
+                            .prd-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;
+                                padding: .9rem 1rem; border-radius: .5rem; background: var(--vz-light, #f3f6f9); }
+                            .prd-inst { font-size: 1.05rem; font-weight: 600; color: var(--vz-heading-color, #212529); word-break: break-word; }
+                            .prd-sub { color: var(--vz-secondary-color, #878a99); font-size: .8125rem; margin-top: .15rem; }
+                            .prd-label { font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+                                color: var(--vz-secondary-color, #878a99); margin-bottom: .2rem; }
+                            .prd-value { font-weight: 500; color: var(--vz-body-color, #212529); }
+                            .prd-section { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                                color: var(--vz-primary, #405189); border-bottom: 1px solid var(--vz-border-color, #e9ebec);
+                                padding-bottom: .35rem; margin: 1.1rem 0 .75rem; }
+                            .prd-notes { white-space: pre-wrap; word-break: break-word; padding: .5rem .75rem; border-radius: .375rem;
+                                border: 1px solid var(--vz-border-color, #e9ebec); min-height: 2.25rem; }
+                        </style>
                         <div id="pr-details-no-draft-note" class="form-text mt-2" style="display:none;">No draft or document has been attached to this request yet.</div>
                     </div>
                     <div class="modal-footer">
@@ -383,13 +421,14 @@
     }
 
     function statusBadgeClass(status) {
-        if (status === 'Approved' || status === 'Fulfilled' || status === 'Completed') return 'bg-success-subtle text-success';
+        if (status === 'Approved' || status === 'Fulfilled') return 'bg-success-subtle text-success';
         if (status === 'Rejected') return 'bg-danger-subtle text-danger';
         if (status === 'Withdrawn') return 'bg-secondary-subtle text-secondary';
         if (status === 'Draft') return 'bg-light text-dark';
         if (status === 'Under Review' || status === 'Preparing') return 'bg-info-subtle text-info';
         if (status === 'Awaiting for Approval') return 'bg-primary-subtle text-primary';
-        if (status === 'Release') return 'bg-dark-subtle text-dark';
+        if (status === 'Release') return 'bg-release-subtle text-release';
+        if (status === 'Completed') return 'bg-completed-subtle text-completed';
         return 'bg-warning-subtle text-warning'; // Pending / Received and any other undecided state
     }
 
@@ -561,15 +600,36 @@
     }
 
     function populateDetailsSummary(r) {
-        document.getElementById('pr-details-modal-title').innerHTML = '<i class="ri-file-list-3-line me-2 text-primary"></i>Request Details — #' + r.id;
+        document.getElementById('pr-details-modal-title').innerHTML = '<i class="ri-file-list-3-line me-2 text-primary"></i>Request Details <span class="text-muted fw-normal fs-14 ms-1">#' + r.id + '</span>';
         document.getElementById('pr-det-inst').textContent = r.institution || '—';
         document.getElementById('pr-det-country').textContent = r.country || '—';
         document.getElementById('pr-det-type').textContent = r.type || '—';
         document.getElementById('pr-det-nature').textContent = r.nature || '—';
         document.getElementById('pr-det-category').textContent = r.category || '—';
         document.getElementById('pr-det-status').innerHTML = '<span class="badge table-pill ' + statusBadgeClass(r.status) + '">' + escapeHtml(r.status || '—') + '</span>';
-        document.getElementById('pr-det-start').textContent = r.startDate || '—';
-        document.getElementById('pr-det-end').textContent = r.endDate || '—';
+        // Dates as "Nov 21, 2026" (same as the tables) plus the proposed duration.
+        var toDate = function (v) {
+            if (!v) return null;
+            var d = new Date(String(v).length === 10 ? v + 'T00:00:00' : v);
+            return isNaN(d) ? null : d;
+        };
+        var fmtD = function (v) {
+            var d = toDate(v);
+            return d ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : (v || '—');
+        };
+        document.getElementById('pr-det-start').textContent = fmtD(r.startDate);
+        document.getElementById('pr-det-end').textContent = fmtD(r.endDate);
+        var durTxt = '—';
+        var ds = toDate(r.startDate), de = toDate(r.endDate);
+        if (ds && de && de > ds) {
+            var months = (de.getFullYear() - ds.getFullYear()) * 12 + (de.getMonth() - ds.getMonth()) + (de.getDate() >= ds.getDate() ? 0 : -1);
+            var y = Math.floor(months / 12), mo = months % 12;
+            var parts = [];
+            if (y) parts.push(y + ' year' + (y > 1 ? 's' : ''));
+            if (mo) parts.push(mo + ' month' + (mo > 1 ? 's' : ''));
+            durTxt = parts.length ? parts.join(', ') : 'Less than a month';
+        }
+        document.getElementById('pr-det-duration').textContent = durTxt;
         document.getElementById('pr-det-notes').textContent = r.notes || '—';
         // initiatedBy:'institution' (2026-11) — Admin/Staff started this request on the partner's behalf;
         // every other request was submitted by the partner themselves.
