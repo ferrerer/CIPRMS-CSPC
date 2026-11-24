@@ -32,13 +32,17 @@
   const ENTRIES = {
     active: { label: 'Active', badgeClass: 'bg-success-subtle text-success', hex: '#0ab39c' },
     // Deep orange (2026-11) — reads as "almost expired"; .bg-expiring-subtle/.text-expiring live in assets/css/status-expiring.css.
-    'expiring soon': { label: 'Expiring Soon', badgeClass: 'bg-expiring-subtle text-expiring', hex: '#f97316' },
+    'expiring soon': { label: 'Expiring Soon', badgeClass: 'bg-expiring-solid', hex: '#f97316' },   // solid orange (2026-11-24)
     expired: { label: 'Expired', badgeClass: 'bg-danger-subtle text-danger', hex: '#f06548' },
     inactive: { label: 'Inactive', badgeClass: 'bg-secondary-subtle text-secondary', hex: '#878a99' }
   };
   // Neutral, not accidentally alarming (not red) and not accidentally reassuring (not green) — an unknown or
   // missing status must never be guessed into looking like Active or Expired.
   const UNKNOWN = { label: null, badgeClass: 'bg-light text-dark', hex: '#878a99' };
+
+  function escapeHtml(v) {
+    return String(v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
+  }
 
   function entryFor(status) {
     return ENTRIES[normalize(status)] || UNKNOWN;
@@ -56,6 +60,35 @@
     isKnownStatus: function (status) { return !!ENTRIES[normalize(status)]; },
     // Stable canonical order for anything presenting all four together (e.g. a legend) — always
     // Active, Expiring Soon, Expired, Inactive, regardless of the order they happen to appear in one dataset.
-    ORDER: ['Active', 'Expiring Soon', 'Expired', 'Inactive']
+    ORDER: ['Active', 'Expiring Soon', 'Expired', 'Inactive'],
+    // The partnership Status / Days Left badges, in the admin Monitoring registry's format — used by every page
+    // that shows them (registry + View modal, Lifecycle, Reports, partner Renewal Status), so all roles see the
+    // same thing. `days` = days left until the end date (null/undefined when unknown).
+    //   Expired                     → solid red pill with a ✖ icon
+    //   Expiring Soon               → solid orange pill with an alarm icon (≤ 14 days: slightly darker orange + a gentle pulse, "Critical")
+    //   anything else               → the light status pill from badgeClass() above
+    statusBadgeHtml: function (status, days) {
+      var label = escapeHtml(status || '—');
+      if (normalize(status) === 'expired') return '<span class="badge table-pill bg-danger" title="This partnership has expired"><i class="ri-close-circle-fill me-1"></i>Expired</span>';
+      if (normalize(status) === 'expiring soon') {
+        var critical = typeof days === 'number' && days <= 14;
+        return '<span class="badge table-pill ' + (critical ? 'bg-critical-solid status-alarm" title="Critical: ' + days + ' day(s) left"' : 'bg-expiring-solid"') + '><i class="ri-alarm-warning-fill me-1"></i>' + label + '</span>';
+      }
+      return '<span class="badge table-pill ' + entryFor(status).badgeClass + '">' + label + '</span>';
+    },
+    daysLeftBadgeHtml: function (days, status) {
+      if (normalize(status) === 'expired' || (typeof days === 'number' && days < 0)) return '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>';
+      if (typeof days !== 'number' || isNaN(days)) return '—';
+      if (days <= 14) return '<span class="badge table-pill bg-critical-solid"><i class="ri-alarm-warning-fill me-1"></i>Critical (' + days + 'd)</span>';
+      if (days <= 90) return '<span class="badge table-pill bg-expiring-solid"><i class="ri-alarm-warning-fill me-1"></i>' + days + ' days</span>';
+      return '<span class="badge table-pill bg-success-subtle text-success">' + days + ' days</span>';
+    },
+    // Whole days from today to an end date (string or Date); null when it can't be parsed.
+    daysUntil: function (end) {
+      if (!end) return null;
+      var e = new Date(end); if (isNaN(e)) return null;
+      var t = new Date(); t.setHours(0, 0, 0, 0); e.setHours(0, 0, 0, 0);
+      return Math.round((e - t) / 86400000);
+    }
   };
 }));

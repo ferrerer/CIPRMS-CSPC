@@ -116,9 +116,7 @@
       /* Partnerships about to expire (14 days or less): alarming red Status with a gentle pulse. */
       /* Solid orange (Expiring Soon) — clearly different from the solid red Expired badge. */
       .bg-expiring-solid { background-color: #f97316 !important; color: #fff !important; }
-      .status-alarm { animation: statusAlarmPulse 1.6s ease-in-out infinite; }
-      @keyframes statusAlarmPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, .6); } 50% { box-shadow: 0 0 0 5px rgba(249, 115, 22, 0); } }
-      @media (prefers-reduced-motion: reduce) { .status-alarm { animation: none; } }
+      /* .status-alarm (Critical pulse) now lives in assets/css/status-expiring.css, shared by every page. */
       .mon-filter-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-end; }
       /* Compact, fixed-width filters on the left; the search box sits at the right end and takes the rest. */
       .mon-filter-search { flex: 0 0 auto; order: 99; margin-left: auto; }
@@ -340,12 +338,10 @@
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 pt-3">
         <div class="d-flex flex-wrap gap-3 align-items-center">
           <span class="text-muted fs-12 fw-semibold text-uppercase me-1">Legend:</span>
-          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-success-subtle text-success">Active</span> Valid &amp; in effect</span>
-          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-expiring-subtle text-expiring">Expiring</span> Within 90 days</span>
-          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-expiring-solid"><i class="ri-alarm-warning-fill me-1"></i>Critical</span> Expires within 14 days</span>
-          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span> Needs renewal</span>
-          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-primary-subtle text-primary">MOA</span> Memorandum of Agreement</span>
-          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge bg-info-subtle text-info">MOU</span> Memorandum of Understanding</span>
+          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge table-pill bg-success-subtle text-success">Active</span> Valid &amp; in effect</span>
+          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge table-pill bg-expiring-solid"><i class="ri-alarm-warning-fill me-1"></i>Expiring Soon</span> Within 90 days</span>
+          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge table-pill bg-critical-solid status-alarm"><i class="ri-alarm-warning-fill me-1"></i>Critical</span> Expires within 14 days</span>
+          <span class="d-flex align-items-center gap-1 fs-12"><span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span> Needs renewal</span>
         </div>
         <div id="reg-pagination" class="ms-auto"></div>
         </div>
@@ -625,7 +621,7 @@
                 </div>
               </div>
               <div class="d-flex align-items-start gap-3 mt-4">
-                <button type="button" class="btn btn-success btn-label right ms-auto nexttab nexttab" data-nexttab="add-step2-tab">
+                <button type="button" class="btn btn-success btn-label right ms-auto nexttab" data-nexttab="add-step2-tab">
                   <i class="ri-arrow-right-line label-icon align-middle fs-16 ms-2"></i>Next: Agreement Details
                 </button>
               </div>
@@ -681,7 +677,7 @@
                 <button type="button" class="btn btn-light btn-label previestab" data-previous="add-step1-tab">
                   <i class="ri-arrow-left-line label-icon align-middle fs-16 me-2"></i>Back
                 </button>
-                <button type="button" class="btn btn-success btn-label right ms-auto nexttab nexttab" data-nexttab="add-step3-tab">
+                <button type="button" class="btn btn-success btn-label right ms-auto nexttab" data-nexttab="add-step3-tab">
                   <i class="ri-arrow-right-line label-icon align-middle fs-16 ms-2"></i>Next: CSPC-CIRL Details
                 </button>
               </div>
@@ -727,7 +723,7 @@
                 <button type="button" class="btn btn-light btn-label previestab" data-previous="add-step2-tab">
                   <i class="ri-arrow-left-line label-icon align-middle fs-16 me-2"></i>Back
                 </button>
-                <button type="button" class="btn btn-primary btn-label right ms-auto" onclick="submitPartnership()">
+                <button type="button" class="btn btn-success btn-label right ms-auto" onclick="submitPartnership()">
                   <i class="ri-save-line label-icon align-middle fs-16 ms-2"></i>Save Partnership
                 </button>
               </div>
@@ -1160,10 +1156,10 @@
 <script src="/js/ciprms-pagination.js"></script>
 <!-- Needed by monitoringGenerateReport()'s in-page report preview (registry-gridjs.init.js) for the same
      status badge colors Reports & Analytics' own preview uses — see assets/js/shared/status-colors.js. -->
-<script src="/velzon/assets/js/shared/status-colors.js?v=20261121b"></script>
+<script src="/velzon/assets/js/shared/status-colors.js?v=20261124c"></script>
 <!-- gridjs init — same script the standalone Registry page used; Monitoring
      is now this page's only home, see docs/SYSTEM_AUDIT_2026-07-16.md -->
-<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261123l"></script>
+<script src="/velzon/assets/js/pages/registry-gridjs.init.js?v=20261124f"></script>
 <!-- App js -->
 <script src="/velzon/assets/js/app.js"></script>
 <script src="/js/ciprms-uploader.js"></script>

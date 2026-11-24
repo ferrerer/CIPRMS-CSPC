@@ -1,0 +1,80 @@
+/* Pagination styles only (< Previous / Next >), copied from ciprms-bridge.css lines 724-796 and 890-908,
+   for pages that don't load the whole bridge stylesheet (partner and personnel Monitoring). */
+/* ── Standard Bootstrap & Custom Pagination ────────────────── */
+.pagination {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 6px !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.pagination .page-item {
+    margin: 0 !important;
+    padding: 0 !important;
+    list-style: none !important;
+}
+
+.pagination .page-link {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 34px !important;
+    height: 34px !important;
+    padding: 0 8px !important;
+    border: none !important;
+    background: transparent !important;
+    color: var(--vz-body-color, #495057) !important;
+    font-size: 0.875rem !important;
+    font-weight: 600 !important;
+    border-radius: 50% !important;
+    transition: all 0.2s ease-in-out !important;
+    text-decoration: none !important;
+    box-shadow: none !important;
+}
+
+/* Active Page — Circular Blue Badge */
+.pagination .page-item.active .page-link,
+.pagination .page-link.active {
+    background-color: #5b73e8 !important;
+    color: #ffffff !important;
+    border-radius: 50% !important;
+    font-weight: 700 !important;
+    box-shadow: 0 2px 6px rgba(91, 115, 232, 0.4) !important;
+}
+
+/* Hover for inactive page numbers */
+.pagination .page-item:not(.active):not(.disabled) .page-link:hover {
+    background-color: rgba(91, 115, 232, 0.12) !important;
+    color: #5b73e8 !important;
+}
+
+/* Previous & Next Buttons */
+.pagination .page-link-prev,
+.pagination .page-link-next {
+    border-radius: 6px !important;
+    padding: 0 12px !important;
+    min-width: auto !important;
+    font-weight: 600 !important;
+}
+
+.pagination .page-item.disabled .page-link {
+    opacity: 0.35 !important;
+    cursor: not-allowed !important;
+    background: transparent !important;
+}
+
+/* Ellipsis Item */
+.pagination .page-item.ellipsis-item .page-link,
+.pagination .page-item.disabled.ellipsis-item .page-link {
+    opacity: 0.7 !important;
+    cursor: default !important;
+    background: transparent !important;
+    min-width: 24px !important;
+}
+
+[data-bs-theme="dark"] .pagination .page-link { color: #e9ecef !important; }
+[data-bs-theme="dark"] .pagination .page-item.active .page-link,
+[data-bs-theme="dark"] .pagination .page-link.active { background-color: #5b73e8 !important; color: #ffffff !important; }
+[data-bs-theme="dark"] .pagination .page-item:not(.active):not(.disabled) .page-link:hover { background-color: rgba(255, 255, 255, 0.12) !important; color: #ffffff !important; }

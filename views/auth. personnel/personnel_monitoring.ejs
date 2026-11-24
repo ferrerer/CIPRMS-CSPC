@@ -10,7 +10,11 @@
     <link href="/velzon/assets/css/icons.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/app.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/custom.min.css" rel="stylesheet" type="text/css" />
+    <link href="/velzon/assets/css/ciprms-pagination.css?v=20261124a" rel="stylesheet" type="text/css" />
 <style>
+        /* The Previous/Next row appears only when the table has more than 10 rows (pagination rendered). */
+        .pager-row:has(> [id$="-pagination"]:empty) { display: none !important; }
+
     /* Cancel-request confirmation opens over the Document Request Details modal: one layer above it and its backdrop. */
     .modal.dr-cancel-stack { z-index: 1065; }
     .modal-backdrop.dr-cancel-backdrop { z-index: 1060; }
@@ -130,15 +134,15 @@
                                         <thead class="table-light">
                                             <tr>
                                                 <th>Report #</th><th>Partner Institution</th><th>Country</th><th>Agreement</th>
-                                                <th>Validity</th><th>Date Sent</th><th>Status</th><th class="text-end">Actions</th>
+                                                <th>Validity</th><th>Days Left</th><th>Date Sent</th><th>Status</th><th class="text-end">Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody id="cr-report-body">
-                                            <tr><td colspan="8" class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></td></tr>
+                                            <tr><td colspan="9" class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></td></tr>
                                         </tbody>
                                     </table>
                                 </div>
-                                <div id="cr-pagination" class="p-3"></div>
+                                <div class="pager-row d-flex justify-content-end p-3"><div id="cr-pagination"></div></div>
                             </div>
                         </div>
                     </div>
@@ -158,16 +162,16 @@
                                         <thead class="table-light">
                                             <tr>
                                                 <th>Request #</th><th>Institution</th><th>Document Type</th><th>Status</th>
-                                                <th>Date Submitted</th><th>Last Updated</th><th>Current Stage</th>
+                                                <th>Date Submitted</th><th>Last Updated</th>
                                                 <th>Administrator</th><th>Remarks</th><th class="text-end">Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody id="dr-monitor-body">
-                                            <tr><td colspan="10" class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></td></tr>
+                                            <tr><td colspan="9" class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></td></tr>
                                         </tbody>
                                     </table>
                                 </div>
-                                <div id="dr-pagination" class="p-3"></div>
+                                <div class="pager-row d-flex justify-content-end p-3"><div id="dr-pagination"></div></div>
                             </div>
                         </div>
                     </div>
@@ -326,6 +330,7 @@
 <script src="/velzon/assets/libs/node-waves/waves.min.js"></script>
 <script src="/velzon/assets/libs/feather-icons/feather.min.js"></script>
 <script src="/velzon/assets/js/app.js"></script>
+<script src="/velzon/assets/js/shared/status-colors.js?v=20261124c"></script>
 <script>
     function showToast(msg, bg) {
         var t = document.getElementById('mon-toast');
@@ -407,10 +412,16 @@
         if (status === 'Rejected') return 'bg-danger-subtle text-danger';
         if (status === 'Withdrawn') return 'bg-secondary-subtle text-secondary';
         if (status === 'Draft') return 'bg-light text-dark';
-        if (status === 'Preparing') return 'bg-info-subtle text-info';
+        if (status === 'Under Review' || status === 'Preparing') return 'bg-info-subtle text-info';
         if (status === 'Awaiting for Approval') return 'bg-primary-subtle text-primary';
         if (status === 'Release') return 'bg-dark-subtle text-dark';
         return 'bg-warning-subtle text-warning'; // Pending / Received and any other undecided state
+    }
+
+    // Current Stage text in the same color as its Status badge (text-* part of statusBadgeClass).
+    function stageTextClass(status) {
+        var m = /text-\w+/.exec(statusBadgeClass(status));
+        return (m ? m[0] : 'text-body') + ' fw-semibold';
     }
 
     // Document Request workflow (2026-09-04): a 6-stage pipeline
@@ -682,19 +693,6 @@
     var crCurrentPage = 1, crItemsPerPage = 10;
     var drCurrentPage = 1, drItemsPerPage = 10;
 
-    function buildPageList(current, total) {
-        var maxVisible = 5;
-        if (total <= maxVisible + 2) return Array.from({length: total}, function(_, i){ return i + 1; });
-        var start = Math.max(1, current - Math.floor(maxVisible / 2));
-        var end = start + maxVisible - 1;
-        if (end > total) { end = total; start = Math.max(1, end - maxVisible + 1); }
-        var pages = [];
-        for (var i = start; i <= end; i++) pages.push(i);
-        if (start > 1) { pages.unshift('...'); pages.unshift(1); }
-        if (end < total) { pages.push('...'); pages.push(total); }
-        return pages;
-    }
-
     function buildPaginationHtml(current, total, onClickFn) {
         if (total <= 1) return '';
         var pageItem = function(label, page, opts) {
@@ -706,14 +704,10 @@
             var click = opts.disabled || opts.ellipsis ? '' : 'onclick="' + onClickFn + '(' + page + ')"';
             return '<li class="page-item' + disabled + active + isEllipsis + '"><a class="page-link' + isPrevNext + '" href="javascript:void(0)" ' + click + '>' + label + '</a></li>';
         };
+        // Previous / Next only (no numbered page buttons) — same as the admin Requests page.
         var html = pageItem('&lsaquo; Previous', current - 1, { disabled: current === 1, isPrev: true });
-        buildPageList(current, total).forEach(function(p) {
-            html += (p === '...')
-                ? pageItem('&hellip;', null, { ellipsis: true, disabled: true })
-                : pageItem(p, p, { active: p === current });
-        });
         html += pageItem('Next &rsaquo;', current + 1, { disabled: current === total, isNext: true });
-        return '<div class="d-flex justify-content-end mb-3"><ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul></div>';
+        return '<ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul>';
     }
 
     function goToCRPage(p) { crCurrentPage = p; renderCollegeReports(); }
@@ -723,7 +717,7 @@
         var body = document.getElementById('dr-monitor-body');
         var pagEl = document.getElementById('dr-pagination');
         if (!myDocRequests.length) {
-            body.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No document requests yet.</td></tr>';
+            body.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No document requests yet.</td></tr>';
             if (pagEl) pagEl.innerHTML = '';
             return;
         }
@@ -744,7 +738,6 @@
                 '<td><span class="badge ' + statusBadgeClass(cs) + '">' + cs + '</span></td>' +
                 '<td>' + (r.date || '—') + '</td>' +
                 '<td>' + fmtWhen(r.updatedAt, r.date) + '</td>' +
-                '<td>' + (DR_STAGE_LABEL[cs] || cs) + '</td>' +
                 '<td>' + (r.decidedBy || '—') + '</td>' +
                 '<td class="fs-12" style="max-width:220px;">' + renderExpandable(r.remark, 60) + '</td>' +
                 '<td class="text-end text-nowrap">' + actions + '</td></tr>';
@@ -763,6 +756,7 @@
         document.getElementById('drd-date').textContent = r.date || '—';
         document.getElementById('drd-updated').textContent = fmtWhen(r.updatedAt, r.date);
         document.getElementById('drd-stage').textContent = DR_STAGE_LABEL[cs] || cs;
+        document.getElementById('drd-stage').className = 'fs-13 ' + stageTextClass(cs).replace('fw-semibold', 'fw-bold');
         document.getElementById('drd-admin').textContent = r.decidedBy || '—';
         document.getElementById('drd-progress').innerHTML = drProgressChecklistHtml(cs);
         document.getElementById('drd-purpose').textContent = r.notes || '—';
@@ -899,7 +893,7 @@
         return CIPRMS.api('/api/document-requests/mine', { quiet: true }).then(function (res) {
             if (!res.ok || !Array.isArray(res.data)) {
                 if (live) return false;   // (false = try again later)
-                document.getElementById('dr-monitor-body').innerHTML = '<tr><td colspan="10" class="text-center text-danger py-4">Failed to load requests.</td></tr>';
+                document.getElementById('dr-monitor-body').innerHTML = '<tr><td colspan="9" class="text-center text-danger py-4">Failed to load requests.</td></tr>';
                 return;
             }
             var previous = {};
@@ -988,11 +982,16 @@
         return isNaN(d) ? escapeHtml(v) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     }
 
+    // Days left before the agreement expires — same badges as the admin Monitoring registry's Days Left column.
+    function crDaysLeft(end) {
+        return CIPRMS_STATUS_COLORS.daysLeftBadgeHtml(CIPRMS_STATUS_COLORS.daysUntil(end));
+    }
+
     function loadCollegeReports() {
         return CIPRMS.api('/api/requests/mine', { quiet: true }).then(function (res) {
             var body = document.getElementById('cr-report-body');
             if (!res.ok || !Array.isArray(res.data)) {
-                if (!myCollegeReports.length) body.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">Failed to load your reports.</td></tr>';
+                if (!myCollegeReports.length) body.innerHTML = '<tr><td colspan="9" class="text-center text-danger py-4">Failed to load your reports.</td></tr>';
                 return false;
             }
             myCollegeReports = res.data.filter(function (r) { return r.isCollegeReport; });
@@ -1007,7 +1006,7 @@
         var body = document.getElementById('cr-report-body');
         var pagEl = document.getElementById('cr-pagination');
         if (!myCollegeReports.length) {
-            body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No reports yet. Use <strong>Send Approved MOA/MOU to CIRL</strong> for an agreement your college signed on its own.</td></tr>';
+            body.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-4">No reports yet. Use <strong>Send Approved MOA/MOU to CIRL</strong> for an agreement your college signed on its own.</td></tr>';
             if (pagEl) pagEl.innerHTML = '';
             return;
         }
@@ -1023,6 +1022,7 @@
                 '<td>' + escapeHtml(r.country || '—') + '</td>' +
                 '<td><span class="badge bg-primary-subtle text-primary">' + escapeHtml(r.type || '—') + '</span></td>' +
                 '<td class="fs-13">' + crDate(r.startDate) + ' – ' + crDate(r.endDate) + '</td>' +
+                '<td class="text-nowrap">' + crDaysLeft(r.endDate) + '</td>' +
                 '<td class="fs-13">' + escapeHtml(r.date || '—') + '</td>' +
                 '<td>' + crStatusBadge(r.status) + '</td>' +
                 '<td class="text-end"><button type="button" class="btn btn-sm btn-soft-primary" onclick="openCollegeReport(' + r.id + ')"><i class="ri-eye-line me-1"></i>View</button></td>' +

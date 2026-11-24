@@ -717,6 +717,8 @@ function loadPartnerships(live) {
         unit:         p.unit || '',
         coordinator:  p.coordinator || '',
         partnerEmail: p.partnerEmail || '',
+        requestedBy:      p.requestedBy || '',
+        requestedByEmail: p.requestedByEmail || '',
         docLink:      p.docLink || '',
         startYear:    p.startYear || (p.start ? new Date(p.start).getFullYear() : ''),
         endYear:      p.endYear   || (p.end   ? new Date(p.end).getFullYear()   : ''),
@@ -773,20 +775,20 @@ function runOnce(btnSelector, label, fn) {
 
 
 function sbadge(s) {
-  var m = { 'Active':'bg-success-subtle text-success', 'Expiring Soon':'bg-expiring-subtle text-expiring', 'Expired':'bg-danger-subtle text-danger', 'Pending Approval':'bg-info-subtle text-info' };
+  var m = { 'Active':'bg-success-subtle text-success', 'Expiring Soon':'bg-expiring-solid', 'Expired':'bg-danger-subtle text-danger', 'Pending Approval':'bg-info-subtle text-info' };
   return '<span class="badge ' + (m[s]||'bg-secondary-subtle text-secondary') + '">' + s + '</span>';
 }
+
+// The registry's Status badge — shared by the table and the View modal so both always look the same.
+// Expiring Soon with 14 days or less: solid orange with an alarm icon and a gentle pulse.
+// Expired: solid red with a stop icon (no pulse — it has happened, not about to).
+function partnershipStatusBadge(p) { return CIPRMS_STATUS_COLORS.statusBadgeHtml(p.status, p.days); }
 
 // Days-remaining badge for the table's "Days Left" column — ported from the
 // former separate Monitoring/Lifecycle page's own table (2026-09-05 page
 // consolidation), so that validity information isn't lost when the two
 // tables were merged into one.
-function daysBadgeHtml(d, s) {
-  if (s === 'Expired') return '<span class="badge bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>';   // matches the Expired status
-  if (d <= 14)         return '<span class="badge bg-expiring-solid"><i class="ri-alarm-warning-fill me-1"></i>Critical (' + d + 'd)</span>';   // orange, never red like Expired
-  if (d <= 90)         return '<span class="badge bg-expiring-subtle text-expiring">' + d + ' days</span>';
-  return '<span class="badge bg-success-subtle text-success">' + d + ' days</span>';
-}
+function daysBadgeHtml(d, s) { return CIPRMS_STATUS_COLORS.daysLeftBadgeHtml(d, s); }   // shared format: assets/js/shared/status-colors.js
 
 // DSS Smart Alerts — ported from the former separate Monitoring/Lifecycle
 // page (2026-09-05 consolidation); same data source (`partnerships`), so the
@@ -983,7 +985,6 @@ function monRenderReportPreview(data) {
     recHtml = '<tr><td colspan="10" class="text-center text-muted py-3">No partnerships found matching the selected filters.</td></tr>';
   } else {
     records.forEach(function (p, i) {
-      var stBadge = CIPRMS_STATUS_COLORS.badgeClass(p.status);
       recHtml += '<tr>'
         + '<td>' + (i + 1) + '</td>'
         + '<td class="fw-semibold">' + escapeHtml(p.inst) + '</td>'
@@ -999,7 +1000,7 @@ function monRenderReportPreview(data) {
         + '<td><span class="badge bg-light text-body border">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
         + '<td>' + escapeHtml(p.start || '—') + '</td>'
         + '<td>' + escapeHtml(p.end || '—') + '</td>'
-        + '<td>' + (p.status === 'Expired' ? '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>' : '<span class="badge table-pill ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span>') + '</td>'   // Monitoring-style status badge
+        + '<td>' + CIPRMS_STATUS_COLORS.statusBadgeHtml(p.status, typeof p.days === 'number' ? p.days : CIPRMS_STATUS_COLORS.daysUntil(p.end)) + '</td>'   // Monitoring-style status badge
         + '</tr>';
     });
   }
@@ -1083,13 +1084,8 @@ function buildGrid() {
     // .table-pill (assets/css/status-expiring.css) makes the table's Days Left / Status badges larger.
     // On the verge of expiring (Expiring Soon with 14 days or less): the Status itself raises the alarm —
     // solid red, alarm icon and a gentle pulse — instead of the ordinary orange 'Expiring Soon'.
-    var critical = p.status === 'Expiring Soon' && p.days <= 14;
-    var statusBadge = (critical
-      ? '<span class="badge bg-expiring-solid status-alarm" title="Critical: ' + p.days + ' day(s) left"><i class="ri-alarm-warning-fill me-1"></i>' + p.status + '</span>'
-      : p.status === 'Expired'   // already expired: solid red with a stop icon (no pulse — it has happened, not about to)
-        ? '<span class="badge bg-danger" title="This partnership has expired"><i class="ri-close-circle-fill me-1"></i>Expired</span>'
-        : sbadge(p.status)).replace('class="badge ', 'class="badge table-pill ');
-    var daysBadge   = daysBadgeHtml(p.days, p.status).replace('class="badge ', 'class="badge table-pill ');
+    var statusBadge = partnershipStatusBadge(p);
+    var daysBadge   = daysBadgeHtml(p.days, p.status);
     var endColor    = p.status==='Expired'?'#dc2626':p.status==='Expiring Soon'?'#ea580c':'#15803d';
     var instHtml    = escapeHtml(p.inst)+(p.coordinator?'<div class="text-muted fs-11"><i class="ri-user-line me-1"></i>'+escapeHtml(p.coordinator)+'</div>':'');
     var countryHtml = escapeHtml(p.country)+'<div class="text-muted fs-11"><i class="ri-map-pin-line me-1"></i>'+escapeHtml(p.region)+'</div>';
@@ -1197,7 +1193,8 @@ function openViewModal(id) {
   currentViewPartnershipId = id;
   document.getElementById('view-title').textContent = p.inst;
   var safeDocLink = sanitizeUrl(p.docLink);
-  var safePartnerEmail = escapeHtml(p.partnerEmail || '');
+  // Partner Email: the requesting partner's account email; falls back to the contact email typed into the form.
+  var safePartnerEmail = escapeHtml(p.requestedByEmail || p.partnerEmail || '');
   document.getElementById('view-body').innerHTML =
     '<div class="row g-3">'
     +'<div class="col-sm-6"><div class="text-muted fs-12">Institution</div><div class="fw-semibold">'+escapeHtml(p.inst)+'</div></div>'
@@ -1208,10 +1205,13 @@ function openViewModal(id) {
     +'<div class="col-sm-6"><div class="text-muted fs-12">Category</div><div class="fw-semibold">'+escapeHtml(p.cat)+'</div></div>'
     +'<div class="col-sm-6"><div class="text-muted fs-12">Start Date</div><div class="fw-semibold">'+escapeHtml(p.start)+'</div></div>'
     +'<div class="col-sm-6"><div class="text-muted fs-12">End Date</div><div class="fw-semibold">'+escapeHtml(p.end)+'</div></div>'
-    +'<div class="col-sm-6"><div class="text-muted fs-12">Status</div><div>'+sbadge(p.status)+'</div></div>'
+    +'<div class="col-sm-6"><div class="text-muted fs-12">Status</div><div>'+partnershipStatusBadge(p)+'</div></div>'
     +'<div class="col-sm-6"><div class="text-muted fs-12">Responsible Unit</div><div class="fw-semibold">'+escapeHtml(Array.isArray(p.unit)?p.unit.join(', '):p.unit)+'</div></div>'
     +'<div class="col-sm-6"><div class="text-muted fs-12">CIRL Coordinator</div><div class="fw-semibold">'+(p.coordinator?escapeHtml(p.coordinator):'—')+'</div></div>'
-    +'<div class="col-sm-6"><div class="text-muted fs-12">Partner Email</div><div>'+(p.partnerEmail?'<a href="mailto:'+safePartnerEmail+'">'+safePartnerEmail+'</a>':'—')+'</div></div>'
+    +'<div class="col-sm-6"><div class="text-muted fs-12">Requested By</div><div class="fw-semibold">'+(p.requestedBy
+        ? escapeHtml(p.requestedBy)
+        : '<span class="text-muted fw-normal">— Added directly (no partner request)</span>')+'</div></div>'
+    +'<div class="col-sm-6"><div class="text-muted fs-12">Partner Email</div><div>'+(safePartnerEmail?'<a href="mailto:'+safePartnerEmail+'">'+safePartnerEmail+'</a>':'—')+'</div></div>'
     +'<div class="col-sm-12"><div class="text-muted fs-12">Document Link</div><div>'+(safeDocLink?'<a href="'+safeDocLink+'" target="_blank" rel="noopener noreferrer">'+escapeHtml(p.docLink)+'</a>':(p.docLink?'— Invalid link':'— Not uploaded'))+'</div></div>'
     +'<div class="col-sm-12"><div class="text-muted fs-12">Remarks</div><div>'+(p.remarks?escapeHtml(p.remarks):'—')+'</div></div>'
     +'</div>';

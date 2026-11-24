@@ -10,7 +10,11 @@
     <link href="/velzon/assets/css/icons.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/app.min.css" rel="stylesheet" type="text/css" />
     <link href="/velzon/assets/css/custom.min.css" rel="stylesheet" type="text/css" />
+    <link href="/velzon/assets/css/ciprms-pagination.css?v=20261124a" rel="stylesheet" type="text/css" />
     <style>
+        /* The Previous/Next row appears only when the table has more than 10 rows (pagination rendered). */
+        .pager-row:has(> [id$="-pagination"]:empty) { display: none !important; }
+
         /* Bordered grid with fixed column widths — same look as the Administrator Requests tables
            (administrator/partnership_requests.ejs .req-fixed-cols): columns don't shift between pages and
            long text wraps inside its cell. */
@@ -124,20 +128,20 @@
                             <div class="card-body">
                                 <div class="table-responsive">
                                     <table class="table table-hover req-fixed-cols table-bordered align-middle mb-0">
-                                        <colgroup><col style="width:20%"><col style="width:10%"><col style="width:11%"><col style="width:11%"><col style="width:12%"><col style="width:12%"><col style="width:11%"><col style="width:13%"></colgroup>
+                                        <colgroup><col style="width:25%"><col style="width:13%"><col style="width:15%"><col style="width:15%"><col style="width:16%"><col style="width:16%"></colgroup>
                                         <thead class="table-light">
                                             <tr>
-                                                <th>Institution</th><th>Request Type</th><th>Status</th>
-                                                <th>Date Submitted</th><th>Last Updated</th><th>Current Stage</th>
-                                                <th>Administrator</th><th class="text-center">Actions</th>
+                                                <th>Institution</th><th>Nature</th><th>Status</th>
+                                                <th>Date Submitted</th><th>Last Updated</th>
+                                                <th class="text-center">Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody id="pr-monitor-body">
-                                            <tr><td colspan="8" class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></td></tr>
+                                            <tr><td colspan="6" class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></td></tr>
                                         </tbody>
                                     </table>
                                 </div>
-                                <div id="pr-pagination" class="p-3"></div>
+                                <div class="pager-row d-flex justify-content-end p-3"><div id="pr-pagination"></div></div>
                             </div>
                         </div>
                     </div>
@@ -154,20 +158,20 @@
                             <div class="card-body">
                                 <div class="table-responsive">
                                     <table class="table table-hover req-fixed-cols table-bordered align-middle mb-0">
-                                        <colgroup><col style="width:18%"><col style="width:22%"><col style="width:6%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:10%"></colgroup>
+                                        <colgroup><col style="width:20%"><col style="width:26%"><col style="width:7%"><col style="width:12%"><col style="width:12%"><col style="width:12%"><col style="width:11%"></colgroup>
                                         <thead class="table-light">
                                             <tr>
                                                 <th>Institution</th><th>Notes</th><th>Files</th><th>Status</th>
-                                                <th>Date Submitted</th><th>Last Updated</th><th>Administrator</th>
+                                                <th>Date Submitted</th><th>Last Updated</th>
                                                 <th class="text-center">Actions</th>
                                             </tr>
                                         </thead>
                                         <tbody id="moa-monitor-body">
-                                            <tr><td colspan="8" class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></td></tr>
+                                            <tr><td colspan="7" class="text-center text-muted py-4"><div class="spinner-border text-primary" role="status"></div></td></tr>
                                         </tbody>
                                     </table>
                                 </div>
-                                <div id="moa-pagination" class="p-3"></div>
+                                <div class="pager-row d-flex justify-content-end p-3"><div id="moa-pagination"></div></div>
                             </div>
                         </div>
                     </div>
@@ -335,6 +339,7 @@
 <script src="/velzon/assets/libs/node-waves/waves.min.js"></script>
 <script src="/velzon/assets/libs/feather-icons/feather.min.js"></script>
 <script src="/velzon/assets/js/app.js"></script>
+<script src="/velzon/assets/js/shared/status-colors.js?v=20261124c"></script>
 <script>
     function showToast(msg, bg) {
         var t = document.getElementById('mon-toast');
@@ -382,20 +387,13 @@
         if (status === 'Rejected') return 'bg-danger-subtle text-danger';
         if (status === 'Withdrawn') return 'bg-secondary-subtle text-secondary';
         if (status === 'Draft') return 'bg-light text-dark';
-        if (status === 'Preparing') return 'bg-info-subtle text-info';
+        if (status === 'Under Review' || status === 'Preparing') return 'bg-info-subtle text-info';
         if (status === 'Awaiting for Approval') return 'bg-primary-subtle text-primary';
         if (status === 'Release') return 'bg-dark-subtle text-dark';
         return 'bg-warning-subtle text-warning'; // Pending / Received and any other undecided state
     }
 
-    // "Current Stage" is a human-readable phase name derived from the same
-    // `status` field the Status column already shows — not a separate piece
-    // of backend state — so the two columns never disagree.
-    var PR_STAGE_LABEL = {
-        'Draft': 'Draft — Not Submitted', 'Pending': 'Awaiting Review',
-        'Under Review': 'Under Review by CIRL', 'Approved': 'Approved',
-        'Rejected': 'Rejected', 'Withdrawn': 'Withdrawn'
-    };
+
     function fmtWhen(iso, fallback) {
         if (!iso) return fallback || '—';
         var d = new Date(iso);
@@ -569,7 +567,7 @@
         document.getElementById('pr-det-type').textContent = r.type || '—';
         document.getElementById('pr-det-nature').textContent = r.nature || '—';
         document.getElementById('pr-det-category').textContent = r.category || '—';
-        document.getElementById('pr-det-status').innerHTML = '<span class="badge ' + statusBadgeClass(r.status) + '">' + escapeHtml(r.status || '—') + '</span>';
+        document.getElementById('pr-det-status').innerHTML = '<span class="badge table-pill ' + statusBadgeClass(r.status) + '">' + escapeHtml(r.status || '—') + '</span>';
         document.getElementById('pr-det-start').textContent = r.startDate || '—';
         document.getElementById('pr-det-end').textContent = r.endDate || '—';
         document.getElementById('pr-det-notes').textContent = r.notes || '—';
@@ -709,19 +707,6 @@
     var prCurrentPage = 1, prItemsPerPage = 10;
     var moaCurrentPage = 1, moaItemsPerPage = 10;
 
-    function buildPageList(current, total) {
-        var maxVisible = 5;
-        if (total <= maxVisible + 2) return Array.from({length: total}, function(_, i){ return i + 1; });
-        var start = Math.max(1, current - Math.floor(maxVisible / 2));
-        var end = start + maxVisible - 1;
-        if (end > total) { end = total; start = Math.max(1, end - maxVisible + 1); }
-        var pages = [];
-        for (var i = start; i <= end; i++) pages.push(i);
-        if (start > 1) { pages.unshift('...'); pages.unshift(1); }
-        if (end < total) { pages.push('...'); pages.push(total); }
-        return pages;
-    }
-
     function buildPaginationHtml(current, total, onClickFn) {
         if (total <= 1) return '';
         var pageItem = function(label, page, opts) {
@@ -733,14 +718,10 @@
             var click = opts.disabled || opts.ellipsis ? '' : 'onclick="' + onClickFn + '(' + page + ')"';
             return '<li class="page-item' + disabled + active + isEllipsis + '"><a class="page-link' + isPrevNext + '" href="javascript:void(0)" ' + click + '>' + label + '</a></li>';
         };
+        // Previous / Next only (no numbered page buttons) — same as the admin Requests page.
         var html = pageItem('&lsaquo; Previous', current - 1, { disabled: current === 1, isPrev: true });
-        buildPageList(current, total).forEach(function(p) {
-            html += (p === '...')
-                ? pageItem('&hellip;', null, { ellipsis: true, disabled: true })
-                : pageItem(p, p, { active: p === current });
-        });
         html += pageItem('Next &rsaquo;', current + 1, { disabled: current === total, isNext: true });
-        return '<div class="d-flex justify-content-end mb-3"><ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul></div>';
+        return '<ul class="pagination pagination-custom align-items-center m-0">' + html + '</ul>';
     }
 
     function goToPRPage(p) { prCurrentPage = p; renderPRTable(); }
@@ -751,7 +732,7 @@
         var pagEl = document.getElementById('pr-pagination');
         var prs = partnershipOnly(myRequests);
         if (!prs.length) {
-            body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No partnership requests yet.</td></tr>';
+            body.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">No partnership requests yet.</td></tr>';
             if (pagEl) pagEl.innerHTML = '';
             return;
         }
@@ -769,12 +750,11 @@
                 '<button class="btn btn-sm btn-soft-info" onclick="openDetailsModal(' + r.id + ')" title="View details"><i class="ri-eye-line me-1"></i>View</button>';
             return '<tr data-pr-id="' + r.id + '"' + (flashPRIds.has(r.id) ? ' class="rt-flash"' : '') + '>' +
                 '<td>' + (escapeHtml(r.institution) || '<span class="text-muted">(untitled draft)</span>') + '</td>' +
-                '<td>' + (r.isRenewal ? 'Renewal' : 'Partnership') + '</td>' +
+                '<td>' + escapeHtml((Array.isArray(r.nature) ? r.nature.join(', ') : r.nature) || '—') +
+                    (r.isRenewal ? ' <span class="badge bg-info-subtle text-info ms-1">Renewal</span>' : '') + '</td>' +
                 '<td><span class="badge table-pill ' + statusBadgeClass(r.status) + '">' + r.status + '</span></td>' +
                 '<td>' + (r.date || '—') + '</td>' +
                 '<td>' + fmtWhen(r.updatedAt, r.date) + '</td>' +
-                '<td>' + (PR_STAGE_LABEL[r.status] || r.status) + '</td>' +
-                '<td>' + (r.decidedBy || '—') + '</td>' +
                 '<td class="text-center">' + actions + '</td></tr>';
         }).join('');
     }
@@ -808,7 +788,7 @@
         var pagEl = document.getElementById('moa-pagination');
         var current = submissionsOnly(myRequests).filter(function (r) { return r.status !== 'Draft'; });
         if (!current.length && !legacySubmissions.length) {
-            body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No MOA/MOU submissions yet. Use <strong>New Submission</strong> to send CIRL your MOA/MOU files or notes.</td></tr>';
+            body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No MOA/MOU submissions yet. Use <strong>New Submission</strong> to send CIRL your MOA/MOU files or notes.</td></tr>';
             if (pagEl) pagEl.innerHTML = '';
             return;
         }
@@ -823,7 +803,6 @@
                 '<td><span class="badge table-pill ' + statusBadgeClass(r.status) + '">' + escapeHtml(r.status) + '</span></td>' +
                 '<td>' + (r.date || '—') + '</td>' +
                 '<td>' + fmtWhen(r.updatedAt, r.date) + '</td>' +
-                '<td>' + escapeHtml(r.decidedBy || '—') + '</td>' +
                 '<td class="text-center">' + actions + '</td></tr>');
         });
         legacySubmissions.forEach(function (d) {
@@ -835,7 +814,6 @@
                 '<td><span class="badge table-pill ' + statusBadgeClass(cs) + '">' + escapeHtml(cs) + '</span></td>' +
                 '<td>' + (d.date || '—') + '</td>' +
                 '<td>' + fmtWhen(d.updatedAt, d.date) + '</td>' +
-                '<td>' + escapeHtml(d.decidedBy || '—') + '</td>' +
                 '<td class="text-center"><span class="text-muted fs-12">Earlier submission</span></td></tr>');
         });
         var totalPages = Math.ceil(allRows.length / moaItemsPerPage);
@@ -864,8 +842,8 @@
         return CIPRMS.api('/api/requests/mine', { quiet: true }).then(function (res) {
             if (!res.ok || !Array.isArray(res.data)) {
                 if (live) return false;   // a background refresh never wipes what is on screen (false = try again later)
-                document.getElementById('pr-monitor-body').innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">Failed to load requests.</td></tr>';
-                document.getElementById('moa-monitor-body').innerHTML = '<tr><td colspan="8" class="text-center text-danger py-4">Failed to load submissions.</td></tr>';
+                document.getElementById('pr-monitor-body').innerHTML = '<tr><td colspan="6" class="text-center text-danger py-4">Failed to load requests.</td></tr>';
+                document.getElementById('moa-monitor-body').innerHTML = '<tr><td colspan="7" class="text-center text-danger py-4">Failed to load submissions.</td></tr>';
                 return;
             }
             var requests = res.data;
@@ -970,16 +948,11 @@
             // (Institution, Country/Region, Nature, Start, End, Days Left, Status) plus the renewal action.
             var rows = partnerships.map(function (p) {
                 var status = p.status || 'Unknown';
-                var badge = status === 'Expired' ? 'bg-danger-subtle text-danger' : status === 'Expiring Soon' ? 'bg-expiring-subtle text-expiring' : status === 'Active' ? 'bg-success-subtle text-success' : 'bg-secondary-subtle text-secondary';
                 var inst = p.inst || p.institution || '';
                 var nature = Array.isArray(p.nature) ? p.nature.join(', ') : (p.nature || '');
                 var endDate = new Date(p.end);
                 var days = isNaN(endDate) ? null : Math.ceil((endDate - new Date()) / 86400000);
-                var daysHtml = status === 'Expired' ? '<span class="badge table-pill bg-danger-subtle text-danger">Expired</span>'
-                    : days === null ? '—'
-                    : days <= 14 ? '<span class="badge table-pill bg-danger">Critical (' + days + 'd)</span>'
-                    : days <= 90 ? '<span class="badge table-pill bg-expiring-subtle text-expiring">' + days + ' days</span>'
-                    : '<span class="badge table-pill bg-success-subtle text-success">' + days + ' days</span>';
+                var daysHtml = CIPRMS_STATUS_COLORS.daysLeftBadgeHtml(days, status);   // same format as the admin registry
                 var endColor = status === 'Expired' ? '#dc2626' : status === 'Expiring Soon' ? '#ea580c' : '#15803d';
                 var actionHtml = pendingRenewalIds.has(p.id)
                     ? '<span class="badge bg-info-subtle text-info fs-13 px-3 py-2">Renewal Requested</span>'
@@ -991,7 +964,7 @@
                     '<td class="text-nowrap">' + escapeHtml(p.start || '—') + '</td>' +
                     '<td class="text-nowrap"><span style="color:' + endColor + ';font-weight:600">' + escapeHtml(p.end || '—') + '</span></td>' +
                     '<td>' + daysHtml + '</td>' +
-                    '<td><span class="badge table-pill ' + badge + '">' + escapeHtml(status) + '</span></td>' +
+                    '<td>' + CIPRMS_STATUS_COLORS.statusBadgeHtml(status, days) + '</td>' +
                     '<td class="text-center">' + actionHtml + '</td>' +
                     '</tr>';
             }).join('');

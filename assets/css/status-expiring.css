@@ -26,3 +26,29 @@
 
 /* Solid orange "Expiring Soon" (critical: 14 days or less) — clearly different from the solid red Expired badge. */
 .bg-expiring-solid { background-color: #f97316 !important; color: #fff !important; }
+
+/* Every light (subtle) status pill in the partnership tables and View modals — Active, Pending, Under Review,
+   Approved, Rejected… — gets bold text (no border/outline), so all statuses are equally visible.
+   Same text size as the other cells. */
+.badge.table-pill[class*="-subtle"] { font-weight: 600; }
+/* Expiring Soon's orange: a slightly darker text and stronger tint than the base token, for contrast. */
+.badge.table-pill.bg-expiring-subtle {
+    background-color: rgba(249, 115, 22, 0.2) !important;
+    color: #c2410c !important;
+}
+[data-bs-theme="dark"] .badge.table-pill.bg-expiring-subtle {
+    background-color: rgba(249, 115, 22, 0.3) !important;
+    color: #fdba74 !important;
+}
+
+/* Critical (Expiring Soon, 14 days or less) Status badge: a gentle orange pulse — on every page that shows it. */
+.status-alarm { animation: statusAlarmPulse 1.6s ease-in-out infinite; }
+@keyframes statusAlarmPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, .6); } 50% { box-shadow: 0 0 0 5px rgba(249, 115, 22, 0); } }
+@media (prefers-reduced-motion: reduce) { .status-alarm { animation: none; } }
+
+/* Critical (Expiring Soon with 14 days or less): a slightly darker orange — clearly different from the regular
+   solid-orange Expiring Soon (15–90 days) and still not the red used for Expired. */
+.bg-critical-solid { background-color: #dc4f0b !important; color: #fff !important; }
+.bg-critical-solid.status-alarm { animation-name: statusCriticalPulse; }
+@keyframes statusCriticalPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(220, 79, 11, .6); } 50% { box-shadow: 0 0 0 5px rgba(220, 79, 11, 0); } }
+@media (prefers-reduced-motion: reduce) { .bg-critical-solid.status-alarm { animation: none; } }
