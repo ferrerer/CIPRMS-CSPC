@@ -28,7 +28,7 @@
          cirl.js require()'s server-side for PDF generation, loaded here as a plain global (CIPRMS_STATUS_COLORS)
          so the Custom Report Builder preview's badges/swatches and the exported PDF can never disagree on
          what color a given status is. -->
-    <script src="/velzon/assets/js/shared/status-colors.js?v=20261121b"></script>
+    <script src="/velzon/assets/js/shared/status-colors.js?v=20261124c"></script>
     <!-- Custom Report Builder — searchable Country filter (2026-09-23). Same visual language (rounded corners,
          shadow, bounded/scrollable results, hover highlight, dark-mode variant) as the Registry page's Country
          combobox, defined independently here since this is a separate template with its own CSS. -->
@@ -1616,7 +1616,6 @@
                     // Was its own inline ternary that defaulted anything not Active/Expiring Soon — including
                     // "Inactive" and any unexpected value — to the danger/red color. Now the one shared mapping
                     // every other status color in this page (and the exported PDF) also reads from.
-                    var stBadge = CIPRMS_STATUS_COLORS.badgeClass(p.status);
                     recHtml += '<tr>'
                         + '<td>' + (i + 1) + '</td>'
                         + '<td class="fw-semibold">' + escapeHtml(p.inst) + '</td>'
@@ -1632,7 +1631,7 @@
                         + '<td><span class="badge bg-light text-body border">' + escapeHtml((Array.isArray(p.unit) ? p.unit.join(', ') : p.unit) || '—') + '</span></td>'
                         + '<td>' + escapeHtml(p.start || '—') + '</td>'
                         + '<td>' + escapeHtml(p.end || '—') + '</td>'
-                        + '<td>' + (p.status === 'Expired' ? '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>' : '<span class="badge table-pill ' + stBadge + '">' + escapeHtml(p.status || '—') + '</span>') + '</td>'   // Monitoring-style status badge
+                        + '<td>' + CIPRMS_STATUS_COLORS.statusBadgeHtml(p.status, CIPRMS_STATUS_COLORS.daysUntil(p.end)) + '</td>'   // Monitoring-style status badge
                         + '</tr>';
                 });
             }
@@ -2075,9 +2074,8 @@
         }
         // Status badge in the same format as the Monitoring registry: rounded table pill, Active green, Expiring Soon
         // orange, Inactive grey — and Expired as a solid red badge with a ✖ icon.
-        function monitoringStatusBadge(status) {
-            if (status === 'Expired') return '<span class="badge table-pill bg-danger"><i class="ri-close-circle-fill me-1"></i>Expired</span>';
-            return '<span class="badge table-pill ' + statusBadgeClass(status) + '">' + escapeHtml(status || '—') + '</span>';
+        function monitoringStatusBadge(status, end) {
+            return CIPRMS_STATUS_COLORS.statusBadgeHtml(status, CIPRMS_STATUS_COLORS.daysUntil(end));
         }
 
         // Builds one configuration card's HTML. Mirrors exactly the 8 fields the
@@ -2341,7 +2339,7 @@
             tbody.innerHTML = records.map(function (p) {
                 return '<tr>' +
                     '<td class="fw-semibold">' + escapeHtml(p.inst || '—') + '<div class="text-muted fs-11">' + escapeHtml(p.country || '—') + '</div></td>' +
-                    '<td>' + monitoringStatusBadge(p.status) + '</td>' +
+                    '<td>' + monitoringStatusBadge(p.status, p.end) + '</td>' +
                     '</tr>';
             }).join('');
         }

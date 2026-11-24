@@ -89,17 +89,9 @@ fetch('/api/partnerships')
     document.getElementById('urgent-list').innerHTML = '<li class="list-group-item px-3 py-3 text-danger fs-12">Could not load data.</li>';
   });
 
-function daysBadgeHtml(d, s) {
-    if (s === 'Expired') return '<span class="badge bg-danger-subtle text-danger">Expired</span>';
-    if (d <= 14)         return '<span class="badge bg-danger">Critical (' + d + 'd)</span>';
-    if (d <= 90)         return '<span class="badge bg-warning-subtle text-warning">' + d + ' days</span>';
-    return '<span class="badge bg-success-subtle text-success">' + d + ' days</span>';
-}
-
-function statusBadgeHtml(s) {
-    var map = { Active: 'bg-success-subtle text-success', 'Expiring Soon': 'bg-expiring-subtle text-expiring', Expired: 'bg-danger-subtle text-danger' };
-    return '<span class="badge ' + (map[s] || 'bg-secondary-subtle text-secondary') + '">' + escapeHtml(s) + '</span>';
-}
+// Same Days Left / Status badges as the admin Monitoring registry (assets/js/shared/status-colors.js).
+function daysBadgeHtml(d, s) { return CIPRMS_STATUS_COLORS.daysLeftBadgeHtml(d, s); }
+function statusBadgeHtml(s, d) { return CIPRMS_STATUS_COLORS.statusBadgeHtml(s, d); }
 
 function typeBadgeHtml(t) {
     var cls = t === 'MOU' ? 'bg-info-subtle text-info' : 'bg-primary-subtle text-primary';
@@ -130,7 +122,7 @@ function buildGrid() {
             p.cat,
             p.end,
             gridjs.html(daysBadgeHtml(p.days, p.status)),
-            gridjs.html(statusBadgeHtml(p.status)),
+            gridjs.html(statusBadgeHtml(p.status, p.days)),
             gridjs.html((function () {
                 // Renew/Edit/Delete are Administrator-only; View/Remind stay
                 // available to everyone (read-only). POST/PATCH/DELETE
@@ -334,7 +326,7 @@ function openViewModal(id) {
         + '<div class="col-sm-6"><div class="text-muted fs-12 text-uppercase fw-semibold">Institution</div><div class="fw-bold">' + escapeHtml(p.inst) + '</div></div>'
         + '<div class="col-sm-6"><div class="text-muted fs-12 text-uppercase fw-semibold">Type</div><div>' + typeBadgeHtml(p.type) + '</div></div>'
         + '<div class="col-sm-6"><div class="text-muted fs-12 text-uppercase fw-semibold">Category</div><div class="fw-bold">' + escapeHtml(p.cat) + '</div></div>'
-        + '<div class="col-sm-6"><div class="text-muted fs-12 text-uppercase fw-semibold">Status</div><div>' + statusBadgeHtml(p.status) + '</div></div>'
+        + '<div class="col-sm-6"><div class="text-muted fs-12 text-uppercase fw-semibold">Status</div><div>' + statusBadgeHtml(p.status, p.days) + '</div></div>'
         + '<div class="col-sm-6"><div class="text-muted fs-12 text-uppercase fw-semibold">Start Date</div><div class="fw-bold">' + escapeHtml(p.start) + '</div></div>'
         + '<div class="col-sm-6"><div class="text-muted fs-12 text-uppercase fw-semibold">Expiry Date</div><div class="fw-bold">' + escapeHtml(p.end) + '</div></div>'
         + '<div class="col-sm-12"><div class="text-muted fs-12 text-uppercase fw-semibold">Days Remaining</div><div class="fw-bold">' + (p.status === 'Expired' ? 'None' : p.days + ' days') + '</div></div>'

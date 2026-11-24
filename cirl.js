@@ -1420,6 +1420,18 @@ app.get('/api/partnerships', requireUploader, async (req, res) => {
       return res.json(await partnershipsOwnedBy(db, req.session.user.email));
     }
     const docs = await db.collection('partnerships').find({}).sort({ id: -1 }).toArray();
+    // Who requested it: a partnership saved from an approved request carries sourceRequestId — attach that
+    // request's submitter (name + account email) so the registry's View modal can show the requesting partner.
+    const srcIds = [...new Set(docs.map(d => d.sourceRequestId).filter(id => id !== undefined && id !== null))];
+    if (srcIds.length) {
+      const srcReqs = await db.collection('requests')
+        .find({ id: { $in: srcIds } }, { projection: { id: 1, submittedByEmail: 1, requestedBy: 1 } }).toArray();
+      const byId = new Map(srcReqs.map(r => [r.id, r]));
+      docs.forEach(d => {
+        const r = byId.get(d.sourceRequestId);
+        if (r) { d.requestedByEmail = r.submittedByEmail || ''; d.requestedBy = r.requestedBy || ''; }
+      });
+    }
     res.json(docs);
   } catch (err) {
     console.error(err);
