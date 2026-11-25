@@ -28,6 +28,7 @@ const { updateDocument, archiveToDocumentLibrary, archiveRequestRecordToLibrary,
 const pendingUploadService = require('./services/pendingUploadService');
 const signatureService = require('./services/signatureService');
 const documentStorageService = require('./services/documentStorageService');
+const driveSyncService = require('./services/driveSyncService');
 const downloadTokenService = require('./services/downloadTokenService');
 const pdfTableHelper = require('./services/pdfTableHelper');
 const excelFormatHelper = require('./services/excelFormatHelper');
@@ -4543,6 +4544,24 @@ app.patch('/api/documents/:id', requirePersonnel, announce('document'), async (r
     }
     const updated = await updateDocument(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'The document you are trying to update could not be found.' });
+    // 2026-11 bidirectional sync (Phase 4): a title change is CIPRMS's "rename this document" action —
+    // propagate it to the actual Drive filename too (preserving the extension), not just the in-app title.
+    // Fire-and-forget, same pattern as every other Drive write here: never blocks this response, and
+    // updatedLocallyAt is stamped synchronously so driveSyncService's conflict check sees it even if the
+    // background Drive call is still in flight when the next sync pass runs.
+    if (req.body.title !== undefined && doc.driveFileId) {
+      const ext = path.extname(doc.originalFilename || doc.fileLink || '') || '';
+      const newDriveName = `${updated.title}${ext}`;
+      db.collection('documents').updateOne({ id: doc.id }, { $set: { updatedLocallyAt: new Date().toISOString() } }).catch(() => {});
+      documentStorageService.renameFile(db, doc.driveFileId, newDriveName)
+        .then(() => db.collection('documents').updateOne({ id: doc.id },
+          { $set: { originalFilename: newDriveName, syncStatus: 'synced', lastSyncedAt: new Date().toISOString(), syncError: null } }))
+        .catch((err2) => {
+          console.error('⚠️  Document Library: Drive rename propagation failed:', documentStorageService.describeGoogleError(err2));
+          db.collection('documents').updateOne({ id: doc.id },
+            { $set: { syncStatus: 'error', syncError: 'Could not rename this file in Google Drive.' } }).catch(() => {});
+        });
+    }
     res.json({ success: true, document: updated });
   } catch (err) {
     console.error('❌ Document metadata update error:', err);
@@ -4577,12 +4596,38 @@ app.get('/api/document-folders/mine', requireUploader, async (req, res) => {
 app.post('/api/document-folders', requireUploader, async (req, res) => {
   const name = (req.body.name || '').trim();
   if (!name) return res.status(400).json({ error: 'Folder name is required.' });
+  // 2026-11 bidirectional sync (Phase 5) — optional parentFolderId makes this a subfolder, nesting under an
+  // existing CIPRMS folder the same way Drive's own folder tree nests. Omitted/null means top-level, exactly
+  // as every folder behaved before nesting existed.
+  const parentFolderId = req.body.parentFolderId != null ? parseInt(req.body.parentFolderId, 10) : null;
   try {
     const db = getDb();
+    let parentDriveFolderId = null;
+    if (parentFolderId != null) {
+      const parent = await db.collection('documentfolders').findOne({ id: parentFolderId });
+      if (!parent) return res.status(400).json({ error: 'Parent folder not found.' });
+      parentDriveFolderId = parent.driveFolderId || null;
+    }
     const folder = await insertWithNextId(db.collection('documentfolders'), (id) => ({
       id, name, ownerEmail: req.session.user.email, archived: false,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(), parentFolderId, driveFolderId: null,
+      syncStatus: 'pending', lastSyncedAt: null, syncError: null
     }));
+    // Propagated to Drive in the background — never blocks folder creation on a Drive round trip. Falls back
+    // to the Document Library root if the parent folder has no Drive counterpart yet (e.g. Drive isn't
+    // connected, or the parent's own Drive creation is still pending) — documentStorageService.createFolder()
+    // already defaults to the root in that case.
+    documentStorageService.createFolder(db, name, parentDriveFolderId)
+      .then((driveFolderId) => {
+        if (!driveFolderId) return; // Drive isn't connected — stays CIPRMS-only
+        return db.collection('documentfolders').updateOne({ id: folder.id },
+          { $set: { driveFolderId, syncStatus: 'synced', lastSyncedAt: new Date().toISOString() } });
+      })
+      .catch((err) => {
+        console.error('⚠️  Document Library: Drive folder creation failed:', documentStorageService.describeGoogleError(err));
+        db.collection('documentfolders').updateOne({ id: folder.id },
+          { $set: { syncStatus: 'error', syncError: 'Could not create this folder in Google Drive.' } }).catch(() => {});
+      });
     res.json({ success: true, folder });
   } catch (err) {
     console.error('❌ Create document folder error:', err);
@@ -4609,6 +4654,28 @@ app.patch('/api/document-folders/:id', requireUploader, async (req, res) => {
     if (req.body.archived !== undefined) updates.archived = !!req.body.archived;
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No valid fields to update.' });
     await db.collection('documentfolders').updateOne({ id }, { $set: updates });
+    // 2026-11 bidirectional sync (Phases 4/7) — propagate a rename/archive/restore to the matching Drive
+    // folder, fire-and-forget. Archiving a CIPRMS folder has always meant a soft, reversible state (there is
+    // no hard-delete route for folders at all) — trashing (not permanently deleting) its Drive folder keeps
+    // that same soft/reversible guarantee on the Drive side.
+    if (folder.driveFolderId) {
+      db.collection('documentfolders').updateOne({ id }, { $set: { updatedLocallyAt: new Date().toISOString() } }).catch(() => {});
+      const tasks = [];
+      if (updates.name) tasks.push(documentStorageService.renameFile(db, folder.driveFolderId, updates.name));
+      if (updates.archived !== undefined) {
+        tasks.push(updates.archived
+          ? documentStorageService.trashFile(db, folder.driveFolderId)
+          : documentStorageService.restoreFile(db, folder.driveFolderId));
+      }
+      Promise.all(tasks)
+        .then(() => db.collection('documentfolders').updateOne({ id },
+          { $set: { syncStatus: 'synced', lastSyncedAt: new Date().toISOString(), syncError: null } }))
+        .catch((err2) => {
+          console.error('⚠️  Document Library: Drive folder update propagation failed:', documentStorageService.describeGoogleError(err2));
+          db.collection('documentfolders').updateOne({ id },
+            { $set: { syncStatus: 'error', syncError: 'Could not update this folder in Google Drive.' } }).catch(() => {});
+        });
+    }
     res.json({ success: true, folder: await db.collection('documentfolders').findOne({ id }) });
   } catch (err) {
     console.error('❌ Update document folder error:', err);
@@ -4626,7 +4693,14 @@ app.patch('/api/documents/:id/organize', requireUploader, announce('document'), 
     const db = getDb();
     const doc = await db.collection('documents').findOne({ id });
     if (!doc) return res.status(404).json({ error: 'Document not found.' });
-    if (doc.uploadedByEmail !== req.session.user.email) {
+    // Administrator exception (2026-11 Document Library repair) — mirrors DELETE /api/documents/:id's own
+    // owner-or-Administrator rule exactly. Administrator/Staff share one Document Library (OWN_SCOPE_ROLES
+    // above), so most documents an Administrator views were uploaded by someone else (OCR pipeline, Staff,
+    // a request submitter); without this exception, the Archive/Restore/Move-to-folder button — rendered
+    // unconditionally for every document in views/administrator/documents.ejs — 403'd for almost everything
+    // an Administrator tried to organize. Staff keeps the pre-existing own-uploads-only restriction, same as
+    // DELETE already enforces.
+    if (doc.uploadedByEmail !== req.session.user.email && req.session.user.role !== 'Administrator') {
       return res.status(403).json({ error: 'You can only organize your own documents.' });
     }
     const updates = {};
@@ -4636,6 +4710,39 @@ app.patch('/api/documents/:id/organize', requireUploader, announce('document'), 
     if (req.body.archived !== undefined) updates.archived = !!req.body.archived;
     if (!Object.keys(updates).length) return res.status(400).json({ error: 'No valid fields to update.' });
     await db.collection('documents').updateOne({ id }, { $set: updates });
+    // 2026-11 bidirectional sync (Phases 4/7) — propagate a move/archive/restore to the matching Drive file,
+    // fire-and-forget (never blocks this response). Archive here has always meant soft/reversible (the
+    // document record itself is never deleted), so this trashes (recoverable) rather than permanently
+    // deletes the Drive file — same guarantee documentStorageService.deleteDocument() now gives DELETE
+    // /api/documents/:id.
+    if (doc.driveFileId) {
+      db.collection('documents').updateOne({ id }, { $set: { updatedLocallyAt: new Date().toISOString() } }).catch(() => {});
+      const resolveDriveFolderId = async (cirlFolderId) => {
+        if (cirlFolderId == null) return null; // null -> documentStorageService resolves this to the Drive root
+        const f = await db.collection('documentfolders').findOne({ id: cirlFolderId });
+        return (f && f.driveFolderId) || null;
+      };
+      const tasks = [];
+      if (updates.folderId !== undefined) {
+        tasks.push(
+          Promise.all([resolveDriveFolderId(updates.folderId), resolveDriveFolderId(doc.folderId)])
+            .then(([newDriveFolderId, oldDriveFolderId]) => documentStorageService.moveFile(db, doc.driveFileId, newDriveFolderId, oldDriveFolderId))
+        );
+      }
+      if (updates.archived !== undefined) {
+        tasks.push(updates.archived
+          ? documentStorageService.trashFile(db, doc.driveFileId)
+          : documentStorageService.restoreFile(db, doc.driveFileId));
+      }
+      Promise.all(tasks)
+        .then(() => db.collection('documents').updateOne({ id },
+          { $set: { syncStatus: 'synced', lastSyncedAt: new Date().toISOString(), syncError: null } }))
+        .catch((err2) => {
+          console.error('⚠️  Document Library: Drive organize propagation failed:', documentStorageService.describeGoogleError(err2));
+          db.collection('documents').updateOne({ id },
+            { $set: { syncStatus: 'error', syncError: 'Could not update this file in Google Drive.' } }).catch(() => {});
+        });
+    }
     res.json({ success: true, document: await db.collection('documents').findOne({ id }) });
   } catch (err) {
     console.error('❌ Organize document error:', err);
@@ -4666,6 +4773,41 @@ app.delete('/api/documents/:id', requireUploader, announce('document'), async (r
   } catch (err) {
     console.error('❌ Delete document error:', err);
     res.status(500).json({ error: 'Unable to delete the document right now. Please try again.' });
+  }
+});
+
+// ── DRIVE SYNC (bidirectional sync, 2026-11) ──────────────────────────────────────────────────────
+// Manual "Sync now" (Document Library UI) — Administrator/Staff only (the two roles the shared library
+// itself is for). The same reconciliation pass also runs automatically every LIFECYCLE_CHECK_INTERVAL_MS
+// (see runLifecycleCheck's own setInterval below) — this route exists so an Admin/Staff user doesn't have
+// to wait up to an hour to see a change just made directly in Drive.
+app.post('/api/documents/sync-drive', requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    const result = await driveSyncService.runDriveSync(db);
+    res.json(result);
+  } catch (err) {
+    console.error('❌ Drive sync error:', err);
+    res.status(500).json({ ok: false, error: 'Sync failed unexpectedly. Please try again.' });
+  }
+});
+
+// Last-sync time + outstanding conflict count, for the Document Library's own status banner — reads the
+// same googleDocsIntegration record runDriveSync() itself writes to, never triggers a sync.
+app.get('/api/documents/sync-status', requireStaffAccess, async (req, res) => {
+  try {
+    const db = getDb();
+    const integration = await db.collection('googleDocsIntegration').findOne({});
+    const conflictCount = await db.collection('sync_conflicts').countDocuments({ resolved: false });
+    res.json({
+      connected: !!integration,
+      lastDriveSyncAt: (integration && integration.lastDriveSyncAt) || null,
+      lastDriveSyncSummary: (integration && integration.lastDriveSyncSummary) || null,
+      openConflictCount: conflictCount
+    });
+  } catch (err) {
+    console.error('❌ Drive sync status error:', err);
+    res.status(500).json({ error: 'Unable to load sync status right now.' });
   }
 });
 
@@ -9277,6 +9419,21 @@ async function runLifecycleCheck() {
   } catch (err) {
     console.error('❌ Lifecycle check failed:', err.message);
   }
+  // Document Library <-> Drive reconciliation (2026-11, pragmatic periodic-sync scope) — piggybacks on this
+  // same hourly tick/startup-catch-up rather than its own separate timer, and is independently try/caught so
+  // a Drive outage can never break the (unrelated) partnership lifecycle checks above, or vice versa. A
+  // no-op, not an error, when Drive isn't connected (runDriveSync() returns { ok:false, reason:'not_connected' }).
+  try {
+    const db = getDb();
+    const result = await driveSyncService.runDriveSync(db);
+    if (result.ok && (result.foldersSeen || result.filesSeen || result.conflicts.length || result.errors.length)) {
+      console.log(`✓ Drive sync: ${result.filesSeen} file(s), ${result.foldersSeen} folder(s) reconciled` +
+        (result.conflicts.length ? `, ${result.conflicts.length} conflict(s)` : '') +
+        (result.errors.length ? `, ${result.errors.length} error(s)` : '') + '.');
+    }
+  } catch (err) {
+    console.error('❌ Drive sync failed:', err.message);
+  }
 }
 
 // Manual trigger (admin only) — lets an admin force a check immediately instead
@@ -11159,12 +11316,22 @@ app.get('/uploads/documents/:filename', requireFileAccess, async (req, res) => {
       try {
         const stream = await documentStorageService.downloadDocument(db, doc.driveFileId);
         res.set('Content-Type', EXT_MIME_TYPES[path.extname(filename).toLowerCase()] || 'application/octet-stream');
-        stream.on('error', (err) => { deanDownloadFailed = true; if (!res.headersSent) res.status(404).send('Not found'); });
+        // 2026-11 Document Library repair — distinguish WHY the Drive read failed (truly gone/never shared,
+        // vs. an expired connection, vs. a transient API/timeout error) instead of a blanket 404, without
+        // ever leaking the technical detail (that half still goes to describeGoogleError()'s console log only).
+        stream.on('error', (err) => {
+          deanDownloadFailed = true;
+          if (!res.headersSent) {
+            const { httpStatus, publicMessage } = documentStorageService.classifyGoogleError(err);
+            res.status(httpStatus).send(publicMessage);
+          }
+        });
         stream.pipe(res);
       } catch (err) {
         deanDownloadFailed = true;
         console.error('❌ Document Library: Drive download failed:', documentStorageService.describeGoogleError(err));
-        res.status(404).send('Not found');
+        const { httpStatus, publicMessage } = documentStorageService.classifyGoogleError(err);
+        res.status(httpStatus).send(publicMessage);
       }
       return;
     }
@@ -11716,8 +11883,11 @@ async function saveAchievementFile(db, achievementId, file) {
   }
   const fileType = EXT_MIME_TYPES[ext.toLowerCase()] || file.mimetype || 'application/octet-stream';
   if (!process.env.JEST_WORKER_ID) {
+    // 2026-11 Drive filename preservation fix — same reasoning as documentLibraryService.js's
+    // uploadToDriveInBackground(): Drive should show the file's real original name, not the generated
+    // local-disk name (which exists only to avoid local filename collisions).
     fs.promises.readFile(permanentPath)
-      .then((buffer) => documentStorageService.uploadDocument(db, buffer, permanentName, fileType))
+      .then((buffer) => documentStorageService.uploadDocument(db, buffer, file.originalname || permanentName, fileType))
       .then((driveFileId) => {
         if (!driveFileId) return; // Drive isn't connected — stays on local disk, same as Document Library
         return db.collection('achievements').updateOne({ id: achievementId }, { $set: { driveFileId } })
@@ -11995,11 +12165,17 @@ app.get('/uploads/achievements/:filename', requireStaffAccess, async (req, res) 
       try {
         const stream = await documentStorageService.downloadDocument(db, achievement.driveFileId);
         res.set('Content-Type', achievement.fileType || EXT_MIME_TYPES[path.extname(filename).toLowerCase()] || 'application/octet-stream');
-        stream.on('error', () => { if (!res.headersSent) res.status(404).send('Not found'); });
+        stream.on('error', (err) => {
+          if (!res.headersSent) {
+            const { httpStatus, publicMessage } = documentStorageService.classifyGoogleError(err);
+            res.status(httpStatus).send(publicMessage);
+          }
+        });
         stream.pipe(res);
       } catch (err) {
         console.error('❌ Achievements: Drive download failed:', documentStorageService.describeGoogleError(err));
-        res.status(404).send('Not found');
+        const { httpStatus, publicMessage } = documentStorageService.classifyGoogleError(err);
+        res.status(httpStatus).send(publicMessage);
       }
       return;
     }

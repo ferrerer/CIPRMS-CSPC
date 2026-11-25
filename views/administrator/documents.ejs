@@ -267,6 +267,23 @@
                                 </div>
                             </div>
                         </div>
+
+                        <% if (typeof user !== 'undefined' && user && (user.role === 'Administrator' || user.role === 'Staff')) { %>
+                        <!-- Google Drive sync status (2026-11 bidirectional sync) -->
+                        <div class="card">
+                            <div class="card-header align-items-center d-flex">
+                                <h4 class="card-title mb-0 flex-grow-1"><i class="ri-refresh-line me-1 align-bottom"></i>Drive Sync</h4>
+                                <button class="btn btn-soft-primary btn-sm" id="sync-now-btn" onclick="syncDriveNow()"><i class="ri-loop-right-line me-1"></i>Sync now</button>
+                            </div>
+                            <div class="card-body">
+                                <p class="text-muted fs-12 mb-1" id="sync-last-synced">Last synced: checking…</p>
+                                <p class="fs-12 mb-0 d-none" id="sync-conflict-note">
+                                    <i class="ri-error-warning-line text-warning align-bottom me-1"></i>
+                                    <span id="sync-conflict-count">0</span> item(s) need review — changed in both CIPRMS and Drive.
+                                </p>
+                            </div>
+                        </div>
+                        <% } %>
                     </div>
 
                     <!-- Main Grid Area -->
@@ -581,6 +598,7 @@
         applyViewState(); // reflect the persisted view immediately, before data loads
         loadFolders();
         loadDocuments();
+        if (document.getElementById('sync-last-synced')) loadSyncStatus();
 
         // A document this account uploaded was just archived (a fresh OCR upload) or updated/archived elsewhere —
         // re-read the library so the grid/list and the Nature-of-Partnership pills reflect it without a full page
@@ -822,6 +840,61 @@
             : currentType === 'Achievements' ? ACHIEVEMENTS_OPTION : currentTag;
     }
 
+    // ── Google Drive sync status/control (2026-11 bidirectional sync) ───────────
+    function formatSyncTime(iso) {
+        if (!iso) return 'never';
+        const d = new Date(iso);
+        return isNaN(d.getTime()) ? 'never' : d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    function loadSyncStatus() {
+        return fetch('/api/documents/sync-status').then(r => r.json()).then(data => {
+            const el = document.getElementById('sync-last-synced');
+            if (!el) return;
+            if (!data.connected) {
+                el.textContent = 'Google Drive is not connected.';
+            } else {
+                el.textContent = 'Last synced: ' + formatSyncTime(data.lastDriveSyncAt);
+            }
+            const note = document.getElementById('sync-conflict-note');
+            const countEl = document.getElementById('sync-conflict-count');
+            if (note && countEl) {
+                if (data.openConflictCount > 0) {
+                    countEl.textContent = data.openConflictCount;
+                    note.classList.remove('d-none');
+                } else {
+                    note.classList.add('d-none');
+                }
+            }
+        }).catch(() => { /* best-effort status display — never blocks the rest of the page */ });
+    }
+
+    function syncDriveNow() {
+        const btn = document.getElementById('sync-now-btn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="ri-loader-4-line me-1"></i>Syncing…'; }
+        fetch('/api/documents/sync-drive', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.ok === false && data.reason === 'not_connected') {
+                    showToast('Google Drive is not connected. An Administrator can connect it in Settings → Integrations.', '#f06548');
+                } else if (data.ok === false) {
+                    showToast(data.error || 'Sync failed. Please try again.', '#f06548');
+                } else {
+                    const parts = [];
+                    if (data.filesSeen) parts.push(data.filesSeen + ' file(s)');
+                    if (data.foldersSeen) parts.push(data.foldersSeen + ' folder(s)');
+                    let msg = '<i class="ri-checkbox-circle-line me-1"></i>Synced' + (parts.length ? ': ' + parts.join(', ') : '');
+                    if (data.conflicts && data.conflicts.length) msg += ' — ' + data.conflicts.length + ' conflict(s) need review.';
+                    showToast(msg, data.conflicts && data.conflicts.length ? '#f7b84b' : undefined);
+                    loadDocuments();
+                    loadFolders();
+                }
+                loadSyncStatus();
+            })
+            .catch(() => showToast('Sync failed. Please try again.', '#f06548'))
+            .finally(() => { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="ri-loop-right-line me-1"></i>Sync now'; } });
+    }
+
     // ── Folders — real, per-owner, backed by /api/document-folders* ─────────────
     function loadFolders() {
         return fetch('/api/document-folders/mine').then(r => r.json()).then(data => {
@@ -837,6 +910,36 @@
         loadPage();
     }
 
+    // Drive sync badge for one folder row — mirrors the Drive-connection state onto each folder so an
+    // Administrator/Staff can see, at a glance, which folders exist only in CIPRMS (never synced, e.g. Drive
+    // wasn't connected when created) vs. mirrored to Drive vs. failed to sync.
+    function folderSyncBadge(f) {
+        if (f.syncStatus === 'error') return '<i class="ri-error-warning-fill text-danger" title="' + escHtml(f.syncError || 'Sync error') + '" style="font-size:12px;"></i>';
+        if (f.driveFolderId) return '<i class="ri-checkbox-circle-fill text-success" title="Synced to Google Drive" style="font-size:12px;"></i>';
+        return '<i class="ri-cloud-off-line text-muted" title="Not yet synced to Google Drive" style="font-size:12px;"></i>';
+    }
+
+    // Nested rendering (2026-11 bidirectional sync, Phase 5 — folder hierarchy mirrors Drive's own tree).
+    // Depth-first, indented by parentFolderId; a folder with no parent (or whose parent is itself archived/
+    // missing) renders at the top level rather than disappearing, so a broken chain never hides a folder.
+    function renderFolderRows(folders, parentId, depth) {
+        return folders.filter(f => (f.parentFolderId || null) === parentId).map(f => {
+            const indent = depth * 16;
+            const row = `
+          <a href="#" class="list-group-item list-group-item-action ${currentFolder === f.id ? 'active' : ''}" style="padding-left:${12 + indent}px;" onclick="filterFolder(${f.id});return false;">
+            <i class="ri-folder-2-fill text-info folder-icon"></i>
+            <span class="flex-grow-1 text-truncate">${escHtml(f.name)}</span>
+            <span class="me-1">${folderSyncBadge(f)}</span>
+            <span class="folder-actions">
+              <i class="ri-add-line" title="New subfolder" onclick="event.stopPropagation();event.preventDefault();createFolderPrompt(${f.id})"></i>
+              <i class="ri-pencil-line" title="Rename" onclick="event.stopPropagation();event.preventDefault();renameFolderPrompt(${f.id})"></i>
+              <i class="ri-archive-line" title="Archive folder" onclick="event.stopPropagation();event.preventDefault();toggleFolderArchive(${f.id}, true)"></i>
+            </span>
+          </a>`;
+            return row + renderFolderRows(folders, f.id, depth + 1).join('');
+        });
+    }
+
     function renderFolderList() {
         const container = document.getElementById('folder-list-group');
         const activeFolders = allFolders.filter(f => !f.archived);
@@ -849,17 +952,7 @@
           <a href="#" class="list-group-item list-group-item-action ${currentFolder === 'unfiled' ? 'active' : ''}" onclick="filterFolder('unfiled');return false;">
             <i class="ri-file-3-line text-muted folder-icon"></i> Unfiled
           </a>`;
-        activeFolders.forEach(f => {
-            html += `
-          <a href="#" class="list-group-item list-group-item-action ${currentFolder === f.id ? 'active' : ''}" onclick="filterFolder(${f.id});return false;">
-            <i class="ri-folder-2-fill text-info folder-icon"></i>
-            <span class="flex-grow-1 text-truncate">${escHtml(f.name)}</span>
-            <span class="folder-actions">
-              <i class="ri-pencil-line" title="Rename" onclick="event.stopPropagation();event.preventDefault();renameFolderPrompt(${f.id})"></i>
-              <i class="ri-archive-line" title="Archive folder" onclick="event.stopPropagation();event.preventDefault();toggleFolderArchive(${f.id}, true)"></i>
-            </span>
-          </a>`;
-        });
+        html += renderFolderRows(activeFolders, null, 0).join('');
         html += `
           <div class="dropdown-divider"></div>
           <a href="#" class="list-group-item list-group-item-action ${currentFolder === 'archived' ? 'active' : ''}" onclick="filterFolder('archived');return false;">
@@ -914,11 +1007,14 @@
         });
     }
 
-    async function createFolderPrompt() {
-        const name = await askName('New Folder', 'Folder name', '', 'Create Folder');
+    // parentFolderId (2026-11 nesting): omitted for the sidebar's own "New" button (top-level folder); passed
+    // when called from a folder row's own "+" icon, creating a subfolder nested under that folder instead.
+    async function createFolderPrompt(parentFolderId) {
+        const name = await askName(parentFolderId ? 'New Subfolder' : 'New Folder', 'Folder name', '', 'Create Folder');
         if (!name) return;
         fetch('/api/document-folders', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name.trim() })
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name.trim(), parentFolderId: parentFolderId || null })
         }).then(r => r.json()).then(data => {
             if (data.success) { loadFolders(); showToast('<i class="ri-checkbox-circle-line me-1"></i>Folder created.'); }
             else showToast(data.error || 'Failed to create folder.', '#f06548');
@@ -995,10 +1091,21 @@
         });
     }
 
+    // Flattens the nested folder tree into dropdown-friendly order, indenting a subfolder's name under its
+    // parent (2026-11 nesting) so "Move to folder" still reads as a hierarchy even in a plain <select>.
+    function flattenFoldersForDropdown(folders, parentId, depth, out) {
+        folders.filter(f => (f.parentFolderId || null) === parentId).forEach(f => {
+            out.push({ id: f.id, label: (depth ? '— '.repeat(depth) : '') + f.name });
+            flattenFoldersForDropdown(folders, f.id, depth + 1, out);
+        });
+        return out;
+    }
+
     function folderOptionsHtml(doc) {
         let opts = `<option value="" ${doc.folderId == null ? 'selected' : ''}>Unfiled</option>`;
-        allFolders.filter(f => !f.archived).forEach(f => {
-            opts += `<option value="${f.id}" ${doc.folderId === f.id ? 'selected' : ''}>${escHtml(f.name)}</option>`;
+        const ordered = flattenFoldersForDropdown(allFolders.filter(f => !f.archived), null, 0, []);
+        ordered.forEach(f => {
+            opts += `<option value="${f.id}" ${doc.folderId === f.id ? 'selected' : ''}>${escHtml(f.label)}</option>`;
         });
         return opts;
     }
@@ -1044,7 +1151,7 @@
                                     <span class="avatar-title bg-light rounded fs-3"><i class="${icon}"></i></span>
                                 </div>
                                 <div class="flex-grow-1 overflow-hidden">
-                                    <h5 class="fs-14 mb-1 text-truncate" title="${escHtml(doc.title)}">${escHtml(doc.title)}</h5>
+                                    <h5 class="fs-14 mb-1 text-truncate" title="${escHtml(doc.title)}">${escHtml(doc.title)} ${docSyncBadgeHtml(doc)}</h5>
                                     <p class="text-muted fs-12 mb-0 text-truncate" title="${escHtml(doc.institution || doc.partner || '')}">${escHtml(doc.institution || doc.partner || '')}</p>
                                     ${doc.duplicateAcknowledged ? '<span class="badge bg-warning-subtle text-warning fs-10 mt-1" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line me-1"></i>Acknowledged duplicate</span>' : ''}
                                 </div>
@@ -1088,6 +1195,16 @@
         if (doc.type === 'Partner Activities') return 'Partner Activities';
         return '—';
     }
+    // Per-document Drive sync status (2026-11 bidirectional sync, Phase 8) — mirrors folderSyncBadge()'s
+    // same three states. A document with no driveFileId at all (e.g. Drive was never connected, or this
+    // record predates the Drive integration) shows nothing — "not applicable" is not the same as "pending".
+    function docSyncBadgeHtml(doc) {
+        if (doc.syncStatus === 'conflict') return '<i class="ri-git-branch-line text-warning" title="Changed in both CIPRMS and Drive — needs review" style="font-size:12px;"></i>';
+        if (doc.syncStatus === 'error') return '<i class="ri-error-warning-fill text-danger" title="' + escHtml(doc.syncError || 'Sync error') + '" style="font-size:12px;"></i>';
+        if (doc.driveFileId) return '<i class="ri-checkbox-circle-fill text-success" title="Synced to Google Drive" style="font-size:12px;"></i>';
+        return '';
+    }
+
     function docNatureBadge(nature) {
         return ({
             'Research': 'bg-info-subtle text-info',
@@ -1122,7 +1239,7 @@
             return `
                 <tr>
                     <td><span class="avatar-title bg-light rounded fs-4" style="width:36px;height:36px;display:inline-flex"><i class="${icon}"></i></span></td>
-                    <td title="${escHtml(doc.title)}">${escHtml(doc.title)}${doc.duplicateAcknowledged ? ' <span class="badge bg-warning-subtle text-warning fs-10" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line"></i></span>' : ''}</td>
+                    <td title="${escHtml(doc.title)}">${escHtml(doc.title)} ${docSyncBadgeHtml(doc)}${doc.duplicateAcknowledged ? ' <span class="badge bg-warning-subtle text-warning fs-10" title="Uploaded anyway despite a duplicate warning"><i class="ri-error-warning-line"></i></span>' : ''}</td>
                     <td title="${escHtml(doc.institution || doc.partner || '')}">${escHtml(doc.institution || doc.partner || '—')}</td>
                     <td title="${escHtml(doc.type || '')}">${escHtml(doc.type)}</td>
                     <td><span class="badge ${natureBadge} fs-10" title="${escHtml(nature)}">${escHtml(nature)}</span></td>

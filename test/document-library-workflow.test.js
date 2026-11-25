@@ -170,6 +170,46 @@ test('Document organize: a user cannot move or archive another user\'s document'
   expect(archiveRes.status).toBe(403);
 });
 
+// 2026-11 Document Library repair — Administrator/Staff share ONE Document Library (OWN_SCOPE_ROLES
+// excludes both), so most documents an Administrator views were uploaded by someone else entirely. The
+// organize route's ownership check used to 403 that unconditionally; this mirrors DELETE /api/documents/:id's
+// own pre-existing owner-or-Administrator exception.
+test('Document organize: an Administrator CAN move/archive/restore a document uploaded by someone else (shared library)', async () => {
+  const reqRes = await partnerAgent.post('/api/document-requests').send({
+    institution: 'CCS', documentType: 'MOA', notes: 'jesttest admin-organize-shared'
+  });
+  createdDocRequestIds.push(reqRes.body.request.id);
+  const libRes = await partnerAgent.get('/api/documents/mine');
+  const sharedDoc = libRes.body.find(d => d.requestType === 'document' && d.requestId === reqRes.body.request.id);
+  expect(sharedDoc).toBeTruthy(); // uploaded by partnerAgent's own test account, not adminAgent's — a genuinely shared-library case
+
+  const archiveRes = await adminAgent.patch(`/api/documents/${sharedDoc.id}/organize`).send({ archived: true });
+  expect(archiveRes.status).toBe(200);
+  expect(archiveRes.body.document.archived).toBe(true);
+
+  const restoreRes = await adminAgent.patch(`/api/documents/${sharedDoc.id}/organize`).send({ archived: false });
+  expect(restoreRes.status).toBe(200);
+  expect(restoreRes.body.document.archived).toBe(false);
+});
+
+// Staff keeps the pre-existing own-uploads-only restriction — same asymmetry DELETE already has
+// (Administrator bypasses ownership, Staff does not). This is NOT a regression: Staff's rights are
+// unchanged by the fix above, only Administrator's are.
+test('Document organize: Staff still cannot move/archive another user\'s document (restriction preserved)', async () => {
+  const staffAgent = request.agent(app);
+  await loginAs(staffAgent, await createTestUser({ role: 'Staff' }));
+
+  const reqRes = await partnerAgent.post('/api/document-requests').send({
+    institution: 'CCS', documentType: 'MOA', notes: 'jesttest staff-organize-restricted'
+  });
+  createdDocRequestIds.push(reqRes.body.request.id);
+  const libRes = await partnerAgent.get('/api/documents/mine');
+  const sharedDoc = libRes.body.find(d => d.requestType === 'document' && d.requestId === reqRes.body.request.id);
+
+  const archiveRes = await staffAgent.patch(`/api/documents/${sharedDoc.id}/organize`).send({ archived: true });
+  expect(archiveRes.status).toBe(403);
+});
+
 test('Document folders and organize routes require a session', async () => {
   expect((await request(app).get('/api/document-folders/mine')).status).toBe(302);
   expect((await request(app).post('/api/document-folders').send({ name: 'nope' })).status).toBe(302);

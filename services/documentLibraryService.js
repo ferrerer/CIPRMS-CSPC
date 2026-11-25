@@ -359,7 +359,13 @@ async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, 
   // entirely under Jest: the existing test suite's local-disk assertions (e.g.
   // test/partnership-document-persistence.test.js) expect the file to stay on disk, unaffected by this.
   if (!process.env.JEST_WORKER_ID) {
-    uploadToDriveInBackground(db, doc.id, permanentPath, permanentName, EXT_MIME_TYPES[ext.toLowerCase()]);
+    // 2026-11 Drive filename preservation fix: the file UPLOADED TO DRIVE must be named after what the user
+    // actually uploaded (originalName), not permanentName (the generated "<timestamp>-<hex>.<ext>" the local
+    // disk copy uses to avoid local filename collisions — a disk-only concern that never needs to leak into
+    // Drive's own name, since Drive tolerates multiple files sharing one name in the same folder without any
+    // overwrite risk). Falls back to permanentName only on the rare path with no original name at all (never
+    // silently drop the upload over a missing display name).
+    uploadToDriveInBackground(db, doc.id, permanentPath, originalName || permanentName, EXT_MIME_TYPES[ext.toLowerCase()]);
   }
 
   return { documentId: doc.id, fileLink: doc.fileLink };
@@ -371,6 +377,7 @@ async function archiveToDocumentLibrary(tempFilePath, originalName, extraction, 
 // token — the document simply stays on local disk exactly as it always did before Drive storage existed;
 // logged for visibility, never thrown, never surfaced to whichever request triggered the original upload
 // (which has already finished and responded by the time this runs).
+// `filename` is the DISPLAY name Drive will show (the original upload name, not the local on-disk name).
 function uploadToDriveInBackground(db, documentId, localPath, filename, mimeType) {
   fsp.readFile(localPath)
     .then((buffer) => documentStorageService.uploadDocument(db, buffer, filename, mimeType))

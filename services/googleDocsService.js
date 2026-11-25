@@ -68,6 +68,50 @@ function describeGoogleError(err) {
   return raw;
 }
 
+// Error classification for routes that serve a file back to an end user (2026-11 Document Library repair),
+// distinct from describeGoogleError() above: that function's strings are written for an Administrator
+// reading Settings → Integrations or a server log (they name env vars like GOOGLE_TOKEN_ENCRYPTION_KEY) —
+// too technical/revealing to send to whoever is just trying to open a Document Library file. Each category
+// carries its own safe, generic publicMessage and the HTTP status a file-serving route should respond with.
+// A caller that already knows the category (e.g. documentStorageService.downloadDocument()'s own
+// "not connected" check) can set err.driveErrorCategory before throwing, which this reads first — every
+// other case is inferred from the Google API error's HTTP code/message, the same signals describeGoogleError()
+// already keys off.
+const DRIVE_ERROR_CATEGORIES = {
+  not_connected: { httpStatus: 503, publicMessage: 'Google Drive is not connected. An Administrator can reconnect it in Settings → Integrations.' },
+  auth_expired: { httpStatus: 503, publicMessage: 'The Google Drive connection needs to be reauthorized. An Administrator can reconnect it in Settings → Integrations.' },
+  folder_error: { httpStatus: 503, publicMessage: 'The connected Google account could not access its Document Library folder in Drive. An Administrator should check the connection in Settings → Integrations.' },
+  // Google's Drive API deliberately returns the same 404 whether a file was deleted or the connected
+  // account simply has no access to it (so an unauthorized caller can never probe which files exist) — this
+  // message is worded to cover both possibilities honestly, rather than implying a certainty the API itself
+  // does not provide.
+  not_found: { httpStatus: 404, publicMessage: "This file isn't accessible with the currently connected Google account. It may have been removed, or it may belong to a previously connected account that was never shared with this one." },
+  forbidden: { httpStatus: 403, publicMessage: 'The connected Google account does not have permission to access this file.' },
+  timeout: { httpStatus: 504, publicMessage: 'Google Drive did not respond in time. Please try again.' },
+  api_error: { httpStatus: 502, publicMessage: 'Google Drive returned an unexpected error. Please try again, or contact an Administrator if this continues.' }
+};
+
+function classifyGoogleError(err) {
+  if (err && err.driveErrorCategory && DRIVE_ERROR_CATEGORIES[err.driveErrorCategory]) {
+    return { category: err.driveErrorCategory, ...DRIVE_ERROR_CATEGORIES[err.driveErrorCategory] };
+  }
+  const raw = (err && err.message) || String(err || 'Unknown error');
+  const code = err && (err.code || (err.response && err.response.status));
+  let category;
+  if (/Unsupported state|unable to authenticate data|Malformed encrypted payload|Invalid authentication tag|invalid_grant/i.test(raw)) {
+    category = 'auth_expired';
+  } else if (code === 404 || /File not found|notFound/i.test(raw)) {
+    category = 'not_found';
+  } else if (code === 403 || /insufficient.*(scope|permission)/i.test(raw)) {
+    category = 'forbidden';
+  } else if (/timeout|aborted due to timeout|TimeoutError/i.test(raw)) {
+    category = 'timeout';
+  } else {
+    category = 'api_error';
+  }
+  return { category, ...DRIVE_ERROR_CATEGORIES[category] };
+}
+
 function buildOAuthClient(redirectUri) {
   return new google.auth.OAuth2({
     clientId: process.env.GOOGLE_CLIENT_ID,
@@ -314,6 +358,7 @@ module.exports = {
   getIntegration,
   disconnect,
   describeGoogleError,
+  classifyGoogleError,
   createAgreementDoc,
   reshareDoc,
   buildAgreementHtml,
